@@ -59,6 +59,22 @@ test('typed Journal schema rejects unknown instructions, invalid units and missi
   const wrong = signal(); wrong.legs[0].quantityUnit = 'dollars'; assert.throws(() => signalSnapshot(wrong), /quantity unit/);
   const missing = signal(); delete missing.legs[0].asset.observedAtUtc; assert.throws(() => signalSnapshot(missing), /asset clock/);
   const bad = signal(); bad.legs[0].quantity = Infinity; assert.throws(() => signalSnapshot(bad), /quantity/);
-  const settings = { version: 1, enabled: false, executionEnabled: false, source: 'local', notebookIds: [], section: '', instructions: 'x'.repeat(1001), intervalSeconds: 60, accountId: null, authorizationId: null };
+  const settings = { version: 1, enabled: false, executionEnabled: false, source: 'local', notebookIds: [], section: '', instructions: 'x'.repeat(1001), intervalSeconds: 60, accountId: null, risk: { maxSlippagePct: null, maxOrderUsd: null, maxTicketUsd: null, maxLeverage: null, minVolume24hUsd: null, together: true }, maxSignalAgeSeconds: 900 };
   assert.throws(() => settingsInput(settings), /custom instructions/);
+  assert.throws(() => settingsInput({ ...settings, instructions: '', authorizationId: null }), /Unsupported request field/);
+  assert.throws(() => settingsInput({ ...settings, instructions: '', risk: { ...settings.risk, maxOrderUsd: -1 } }), /maximum order size/);
+});
+test('a preview.1 policy setting is retired on open and execution restarts off', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'flusso-migrate-test-')), key = randomBytes(32);
+  try {
+    const first = await openStore({ directory, encryptionKey: Buffer.from(key) });
+    first.put('settings', 'main', { ...first.settings(), executionEnabled: true, authorizationId: 'old', policy: { instrumentId: 'coinbase:spot:BTC-USD' }, maxSignalAgeSeconds: 120, risk: undefined });
+    first.close();
+    const second = await openStore({ directory, encryptionKey: Buffer.from(key) });
+    const settings = second.settings();
+    assert.equal('policy' in settings, false); assert.equal('authorizationId' in settings, false);
+    assert.equal(settings.executionEnabled, false); assert.equal(settings.maxSignalAgeSeconds, 900);
+    assert.deepEqual(settings.risk, { maxSlippagePct: null, maxOrderUsd: null, maxTicketUsd: null, maxLeverage: null, minVolume24hUsd: null, together: true });
+    second.close();
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });

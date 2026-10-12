@@ -1,6 +1,6 @@
 {
   "name": "flusso-listener",
-  "version": "0.2.0-preview.1",
+  "version": "0.2.0-preview.2",
   "description": "A private local Journal and bounded signal listener for your Flusso account.",
   "type": "module",
   "private": true,

@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const MAX_PAGES = 50;
@@ -6,8 +7,8 @@ const PROFILE_CACHE_MS = 120000;
 const UUID = /^[a-f\d]{8}-[a-f\d]{4}-[1-5][a-f\d]{3}-[89ab][a-f\d]{3}-[a-f\d]{12}$/i;
 const KEY = /^[!-~]{8,160}$/;
 const SCOPES = ['mcp:read', 'mcp:write', 'offline_access'];
-const POLICY_KEYS = ['instrumentId', 'marketFamily', 'side', 'orderType', 'baseAsset', 'quoteAsset', 'maxBaseQuantity', 'maxLimitPrice', 'maxOrderQuoteNotionalUsd', 'maxDailyQuoteNotionalUsd', 'maxLifetimeQuoteNotionalUsd', 'startsAtUtc', 'expiresAtUtc', 'maxAdmittedRuns', 'slotPolicy'];
-const RUN_KEYS = ['schemaVersion', 'hourlySlotUtc', 'baseQuantity', 'limitPrice'];
+const ORDER_TIMEOUT_MS = 120000;
+const LINE_STATUSES = ['submitted', 'blocked', 'unknown', 'not_sent'];
 
 export class CloudError extends Error {
   constructor(code, message, status = 0) { super(message); this.name = 'CloudError'; this.code = code; this.status = status; }
@@ -15,10 +16,8 @@ export class CloudError extends Error {
 
 function fail(code, message, status) { throw new CloudError(code, message, status); }
 function object(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
-function positive(value) { return typeof value === 'number' && Number.isFinite(value) && value > 0; }
 function sourceIdentity(value, maximum) { return typeof value === 'string' && value.length <= maximum && value.trim().length > 0 && value === value.trim() && !/\p{Cc}/u.test(value); }
-function exactKeys(value, keys) { return object(value) && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key)); }
-function id(value) { if (typeof value !== 'string' || !UUID.test(value)) fail('invalid_identity', 'Use an owned canonical account or authorization identifier.'); return value; }
+function id(value) { if (typeof value !== 'string' || !UUID.test(value)) fail('invalid_identity', 'Use an owned canonical account identifier.'); return value; }
 function retryKey(value) { if (typeof value !== 'string' || !KEY.test(value)) fail('invalid_retry_key', 'One original retry key is required.'); return value; }
 function safeEndpoint(value, origin, path) {
   let url;
@@ -62,78 +61,28 @@ function rpcPayload(text, contentType, requestId) {
   fail('response_invalid', 'Flusso did not return the requested response.');
 }
 
-function policyValid(policy) {
-  return exactKeys(policy, POLICY_KEYS)
-    && typeof policy.instrumentId === 'string' && /^[a-z0-9][a-z0-9._-]*:(?:spot:)?[^:\s]+$/.test(policy.instrumentId)
-    && policy.marketFamily === 'spot_crypto' && policy.side === 'buy' && policy.orderType === 'limit'
-    && policy.baseAsset === 'BTC' && policy.quoteAsset === 'USD' && policy.slotPolicy === 'current_utc_hour'
-    && ['maxBaseQuantity', 'maxLimitPrice', 'maxOrderQuoteNotionalUsd', 'maxDailyQuoteNotionalUsd', 'maxLifetimeQuoteNotionalUsd'].every((key) => positive(policy[key]))
-    && policy.maxDailyQuoteNotionalUsd >= policy.maxOrderQuoteNotionalUsd && policy.maxLifetimeQuoteNotionalUsd >= policy.maxDailyQuoteNotionalUsd
-    && Number.isInteger(policy.maxAdmittedRuns) && policy.maxAdmittedRuns > 0 && policy.maxAdmittedRuns <= 2147483647
-    && Number.isFinite(Date.parse(policy.startsAtUtc)) && Date.parse(policy.expiresAtUtc) > Date.parse(policy.startsAtUtc);
-}
-
-function hour(now) { const date = new Date(now); date.setUTCMinutes(0, 0, 0); return date.toISOString().replace('.000Z', 'Z'); }
-function runValid(body) { return exactKeys(body, RUN_KEYS) && body.schemaVersion === 'product.prompt_trading_run_request.v1' && /^\d{4}-\d{2}-\d{2}T\d{2}:00:00Z$/.test(body.hourlySlotUtc) && positive(body.baseQuantity) && positive(body.limitPrice); }
 function equalId(left, right) { return typeof left === 'string' && typeof right === 'string' && left.toLowerCase() === right.toLowerCase(); }
+function short(value, maximum = 300) { return typeof value === 'string' ? value.replace(/\p{Cc}/gu, ' ').trim().slice(0, maximum) : ''; }
 
-function assertGrant(grant, accountId, authorizationId = null) {
-  if (!object(grant) || grant.schemaVersion !== 'product.prompt_trading_authorization.v1' || !equalId(grant.accountId, accountId)
-    || !UUID.test(grant.authorizationId ?? '') || authorizationId !== null && !equalId(grant.authorizationId, authorizationId)
-    || !policyValid(grant.policy) || !/^[a-f\d]{64}$/.test(grant.policyHash ?? '')
-    || !['active', 'revoked', 'expired', 'session_revoked'].includes(grant.status)) fail('policy_response_invalid', 'The server policy did not match the owned account and supported bounds.');
-  return grant;
+function batchLines(receipt, accountId, key, orders) {
+  if (!object(receipt) || receipt.schemaVersion !== 'product.manual_order_batch.v1' || !equalId(receipt.accountId, accountId)
+    || receipt.idempotencyKey !== key || !Array.isArray(receipt.orders) || receipt.orders.length !== orders.length) return null;
+  const lines = receipt.orders.map((line, index) => object(line) && LINE_STATUSES.includes(line.status)
+    && line.instrumentId === orders[index].instrumentId && line.side === orders[index].side
+    && line.quantity === orders[index].quantity && line.limitPrice === orders[index].limitPrice
+    && line.submitted === (line.status === 'submitted') && typeof line.riskAccepted === 'boolean'
+    ? { instrumentId: line.instrumentId, side: line.side, quantity: line.quantity, limitPrice: line.limitPrice, status: line.status,
+      orderId: typeof line.orderId === 'string' ? line.orderId : null, canonicalInstrumentId: typeof line.canonicalInstrumentId === 'string' ? line.canonicalInstrumentId : null,
+      commandId: typeof line.commandId === 'string' ? line.commandId : null, submitted: line.submitted, riskAccepted: line.riskAccepted, riskCode: typeof line.riskCode === 'string' ? short(line.riskCode, 80) : null, message: short(line.message) }
+    : null);
+  return lines.every(Boolean) ? lines : null;
 }
 
-function assertRun(receipt, accountId, authorizationId, key, body = null) {
-  if (!object(receipt) || receipt.schemaVersion !== 'product.prompt_trading_run.v1' || !equalId(receipt.accountId, accountId)
-    || !equalId(receipt.authorizationId, authorizationId) || receipt.idempotencyKey !== key
-    || !UUID.test(receipt.runId ?? '') || !/^[a-f\d]{64}$/.test(receipt.policyHash ?? '')
-    || !['planned', 'submitted', 'blocked', 'unknown'].includes(receipt.status)
-    || receipt.submitted !== (receipt.status === 'submitted') || typeof receipt.riskAccepted !== 'boolean'
-    || receipt.commandId !== null && !UUID.test(receipt.commandId ?? '')
-    || receipt.commandId === null && receipt.status !== 'blocked'
-    || body !== null && receipt.hourlySlotUtc !== body.hourlySlotUtc
-    || !Number.isFinite(Date.parse(receipt.asOfUtc))) fail('run_response_invalid', 'The execution response could not be bound to the original request.');
-  return receipt;
-}
-
-/** Notes and model output select data only. This helper never creates authority. */
-export function buildRunRequest({ entry, settings, now = Date.now() }) {
-  const review = (reason) => ({ eligible: false, reason });
-  if (!object(entry) || entry.status !== 'watching' || !object(settings) || !policyValid(settings.policy)) return review('Choose an active server-approved policy and a watching signal.');
-  const policy = settings.policy;
-  if (now < Date.parse(policy.startsAtUtc) || now >= Date.parse(policy.expiresAtUtc)) return review('The approved policy is outside its active window.');
-  if (Array.isArray(settings.notebookIds) && settings.notebookIds.length && !settings.notebookIds.includes(entry.notebookId)) return review('This notebook is outside the listener selection.');
-  const signal = entry.signal;
-  if (!object(signal) || signal.schemaVersion !== 'product.journal_signal.v1' || signal.quality !== 'fresh' || !Array.isArray(signal.legs) || signal.legs.length !== 1) return review('Execution requires one fresh structured signal; prose, degraded observations, and paired signals remain for review.');
-  if (!sourceIdentity(signal.sourceOperationId, 160) || !sourceIdentity(signal.sourceRecordId, 256)
-    || signal.strategyDefinitionId != null && !sourceIdentity(signal.strategyDefinitionId, 256)) return review('Record a stable source operation and signal record identity before unattended execution. Notes without a source identity remain for review.');
-  const leg = signal.legs[0]; const asset = leg?.asset;
-  if (!object(asset) || asset.assetGroup !== 'spot' || asset.instrumentType !== 'spot' || asset.instrumentId !== policy.instrumentId
-    || asset.quality !== 'fresh' || leg.side !== 'buy' || leg.direction === 'short') return review('This signal is outside the approved spot BTC/USD buy-limit policy.');
-  if (signal.action != null && !['buy', 'open', 'open_long'].includes(signal.action)) return review('This signal action needs review.');
-  const maximumAge = settings.maxSignalAgeSeconds ?? 120;
-  if (!Number.isFinite(maximumAge) || maximumAge < 1 || maximumAge > 900) return review('Choose a freshness limit between 1 and 900 seconds.');
-  const clocks = [signal.sourceAsOfUtc, asset.observedAtUtc];
-  if (clocks.some((value) => !Number.isFinite(Date.parse(value)) || Date.parse(value) > now || now - Date.parse(value) > maximumAge * 1000)) return review('The source timestamps are missing, future-dated, or outside the selected freshness limit.');
-  if (!positive(leg.quantity) || !['base', 'tokens'].includes(leg.quantityUnit) || leg.quantityAsset !== 'BTC' || !positive(leg.referencePrice)) return review('Record an explicit BTC base quantity and reference limit price; missing or ambiguous units require review.');
-  const body = { schemaVersion: 'product.prompt_trading_run_request.v1', hourlySlotUtc: hour(now), baseQuantity: leg.quantity, limitPrice: leg.referencePrice };
-  const notional = body.baseQuantity * body.limitPrice;
-  if (!Number.isFinite(notional) || body.baseQuantity > policy.maxBaseQuantity || body.limitPrice > policy.maxLimitPrice || notional > policy.maxOrderQuoteNotionalUsd) return review('The signal exceeds the approved quantity, price, or order budget.');
-  if (settings.budgetUsd != null && (!positive(settings.budgetUsd) || notional > settings.budgetUsd)) return review('The signal exceeds this listener’s selected budget.');
-  // The emitted source record is the identity. Editing prose, refreshing a source
-  // clock, changing a size, or mirroring a note cannot create another signal.
-  const signalIdentity = createHash('sha256').update(JSON.stringify({
-    schemaVersion: 'flusso.listener_signal_identity.v1',
-    strategyDefinitionId: signal.strategyDefinitionId ?? null,
-    sourceOperationId: signal.sourceOperationId, sourceRecordId: signal.sourceRecordId,
-    legs: signal.legs.map((item) => ({ instrumentId: item.asset.instrumentId,
-      nativeInstrumentId: item.asset.nativeInstrumentId ?? null,
-      assetGroup: item.asset.assetGroup, instrumentType: item.asset.instrumentType,
-      venue: item.asset.venue, side: item.side, direction: item.direction ?? null })),
-  })).digest('hex');
-  return { eligible: true, body, signalIdentity };
+/** One status for the whole ticket. Unknown or unsent lines require readback. */
+export function ticketStatus(lines) {
+  if (lines.some((line) => line.status === 'unknown' || line.status === 'not_sent')) return 'unknown';
+  if (lines.every((line) => line.status === 'submitted')) return 'submitted';
+  return lines.some((line) => line.status === 'submitted') ? 'partial' : 'blocked';
 }
 
 /** The vault stores the complete credential bundle in the operating-system vault. */
@@ -142,7 +91,6 @@ export function createCloudClient({ origin = 'https://flusso.stream', vault, fet
   if (url.protocol !== 'https:' || url.origin !== origin || url.username || url.password) fail('origin_invalid', 'Cloud connections require an exact HTTPS origin.');
   if (!vault || ['get', 'set', 'delete'].some((method) => typeof vault[method] !== 'function')) throw new TypeError('An operating-system vault adapter is required.');
   const vaultName = `flusso.listener.oauth:${origin}`;
-  const previews = new Map();
   let refreshPending = null; let connectionPending = false; let credentialGeneration = 0;
   let profileCache = null, profilePending = null;
   let vaultWrites = Promise.resolve();
@@ -156,9 +104,9 @@ export function createCloudClient({ origin = 'https://flusso.stream', vault, fet
     await vault.set(vaultName, JSON.stringify(value));
   });
 
-  async function request(endpoint, options = {}) {
+  async function request(endpoint, { timeoutMs = 20000, ...options } = {}) {
     let response;
-    try { response = await fetchImpl(endpoint, { redirect: 'error', signal: AbortSignal.timeout(20000), ...options }); }
+    try { response = await fetchImpl(endpoint, { redirect: 'error', signal: AbortSignal.timeout(timeoutMs), ...options }); }
     catch { fail('connection_unavailable', 'The cloud request did not return a definitive response.'); }
     const text = await readText(response);
     return { response, text };
@@ -169,7 +117,7 @@ export function createCloudClient({ origin = 'https://flusso.stream', vault, fet
     const result = parseJson(text);
     if (!response.ok) {
       if (result.error === 'invalid_grant' && generation === credentialGeneration) {
-        credentialGeneration += 1; previews.clear(); clearProfile(); await writeVault(() => vault.delete(vaultName));
+        credentialGeneration += 1; clearProfile(); await writeVault(() => vault.delete(vaultName));
       }
       fail(result.error === 'invalid_grant' ? 'connection_revoked' : 'authentication_failed', 'Flusso authorization failed. Reconnect in the browser.', response.status);
     }
@@ -196,11 +144,13 @@ export function createCloudClient({ origin = 'https://flusso.stream', vault, fet
     return refreshPending;
   }
 
-  async function mcp(name, args) {
+  async function mcp(name, args, { timeoutMs, beforeDispatch } = {}) {
     const credentials = await access();
     if (credentials.generation !== credentialGeneration) fail('connection_changed', 'This connection changed while the request was in progress.');
     const requestId = randomUUID();
-    const { response, text } = await request(`${origin}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${credentials.accessToken}`, 'mcp-protocol-version': '2025-06-18' }, body: JSON.stringify({ jsonrpc: '2.0', id: requestId, method: 'tools/call', params: { name, arguments: args } }) });
+    await beforeDispatch?.();
+    requireGeneration(credentials.generation);
+    const { response, text } = await request(`${origin}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${credentials.accessToken}`, 'mcp-protocol-version': '2025-06-18' }, body: JSON.stringify({ jsonrpc: '2.0', id: requestId, method: 'tools/call', params: { name, arguments: args } }), ...(timeoutMs ? { timeoutMs } : {}) });
     requireGeneration(credentials.generation);
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) clearProfile();
@@ -299,46 +249,21 @@ export function createCloudClient({ origin = 'https://flusso.stream', vault, fet
       if (generation !== credentialGeneration) fail('connection_changed', 'This connection changed while browser authorization was in progress.');
       if (answer?.state !== state || answer?.iss !== origin || answer.error || typeof answer.code !== 'string' || !answer.code || answer.code.length > 4096) fail('oauth_callback_invalid', 'The browser response did not match this connection request.');
       const connected = await token(tokenEndpoint, { grant_type: 'authorization_code', code: answer.code, redirect_uri: redirect.href, client_id: registration.client_id, code_verifier: verifier, resource: `${origin}/mcp` }, { clientId: registration.client_id, tokenEndpoint, scopes: SCOPES }, generation);
-      previews.clear(); await save(connected, generation);
+      await save(connected, generation);
       return status();
     } finally { connectionPending = false; await callback?.close?.(); }
   }
 
-  async function disconnect() { credentialGeneration += 1; previews.clear(); clearProfile(); await writeVault(() => vault.delete(vaultName)); }
+  async function disconnect() { credentialGeneration += 1; clearProfile(); await writeVault(() => vault.delete(vaultName)); }
 
-  async function discoverExecutionChoices() {
-    await requireOperations(['listTradingAccounts', 'getMarketFacts']);
-    // flusso.e9c4b572812f and flusso.ece3ad0dd6fa: reuse owned account and
-    // canonical market reads through Flusso. These choices never grant authority.
+  async function listAccounts() {
+    await requireOperations(['listTradingAccounts']);
+    // flusso.e9c4b572812f: reuse the owned account read. Choosing an account grants nothing.
     const directory = unwrap(await read('listTradingAccounts'));
     if (directory.schemaVersion !== 'product.trading_accounts.v1' || !Array.isArray(directory.rows)
       || directory.rows.length > 1000 || directory.rows.some((row) => !UUID.test(row?.id ?? '')
         || !sourceIdentity(row.displayName, 120) || !sourceIdentity(row.publicId, 100))) fail('account_response_invalid', 'Flusso returned an invalid owned account list.');
-    const result = { accounts: directory.rows, instruments: [], marketQuality: 'unavailable', marketAsOfUtc: null, complete: false, warning: null };
-    const instruments = new Map(), seen = new Set(); let cursor = null;
-    for (let page = 0; page < MAX_PAGES; page += 1) {
-      const response = await read('getMarketFacts', null, { assetGroup: 'spot', instrumentType: 'spot', q: 'BTC', limit: 100, ...(cursor ? { cursor } : {}) });
-      if (response.ok !== true) return { ...result, warning: 'Current market choices are unavailable. No instrument has been substituted; try again when Flusso market facts recover.' };
-      const facts = unwrap(response);
-      if (facts.schemaVersion !== 'product.market_facts.v1' || facts.assetGroup !== 'spot' || facts.sourceOwner !== 'frost_market_facts'
-        || !['fresh', 'stale', 'degraded', 'unavailable'].includes(facts.quality) || !Array.isArray(facts.rows) || facts.rows.length > 100
-        || typeof facts.hasMore !== 'boolean' || facts.hasMore !== (typeof facts.nextCursor === 'string' && facts.nextCursor.length > 0)
-        || facts.nextCursor != null && (facts.nextCursor.length > 2048 || seen.has(facts.nextCursor))) fail('market_response_invalid', 'Flusso returned an invalid market choice page.');
-      result.marketQuality = facts.quality; result.marketAsOfUtc = facts.asOfUtc ?? null;
-      if (facts.quality !== 'fresh') return { ...result, warning: 'Current market facts are not fresh. Wait for fresh canonical BTC/USD choices before creating a policy.' };
-      for (const row of facts.rows) {
-        if (!object(row) || !sourceIdentity(row.instrumentId, 256) || !sourceIdentity(row.venue, 64) || !sourceIdentity(row.symbol, 160)
-          || !['fresh', 'stale', 'degraded', 'unavailable'].includes(row.quality)) fail('market_response_invalid', 'Flusso returned an invalid market choice.');
-        // Only source-published spot BTC/USD identities are offered. Currency
-        // and identity matching do not calculate a financial value or price.
-        if (row.assetGroup === 'spot' && row.instrumentType === 'spot' && row.currency === 'USD'
-          && /^(?:BTC\/USD|BTC-USD|BTCUSD)$/.test(row.symbol)
-          && row.quality === 'fresh' && row.executable === true && row.indicative === false) instruments.set(row.instrumentId, row);
-      }
-      if (!facts.hasMore) return { ...result, instruments: [...instruments.values()], complete: true, warning: instruments.size ? null : 'Flusso has no fresh supported spot BTC/USD market choices right now.' };
-      cursor = facts.nextCursor; seen.add(cursor);
-    }
-    return { ...result, warning: 'The market selection exceeds the bounded scan. Narrow canonical market facts before creating a policy.' };
+    return directory.rows.map(({ id: accountId, displayName, publicId }) => ({ id: accountId, displayName, publicId }));
   }
 
   async function readJournal({ notebookIds = [] } = {}) {
@@ -375,79 +300,96 @@ export function createCloudClient({ origin = 'https://flusso.stream', vault, fet
     return { notebooks: selectedNotebooks, entries: [...entries.values()], complete: true, asOfUtc };
   }
 
-  async function listPolicies({ accountId }) {
-    id(accountId); await requireOperations(['listPromptTradingAuthorizations']);
-    const rows = []; const seen = new Set(); let cursor = null;
+  /**
+   * Places one ticket through Flusso's existing order list (flusso.214799013f6d).
+   * The owner turned on auto-trade for this connection, which is the approval the
+   * preview asks for; Flusso still checks ownership, plan, risk and venue terms.
+   * Freeze these orders/key before dispatch. Unknown results are read back only;
+   * automatic POST replay could create a previously unsent line.
+   */
+  async function submitOrders({ accountId, orders, idempotencyKey, reference = 'a Journal ticket' }, { canDispatch = async () => true } = {}) {
+    id(accountId); retryKey(idempotencyKey);
+    const generation = credentialGeneration;
+    orders = structuredClone(orders);
+    if (!Array.isArray(orders) || orders.length < 1 || orders.length > 6000) fail('orders_invalid', 'A ticket needs at least one order.');
+    const blocked = (message) => ({ status: 'blocked', lines: [], message });
+    try { await requireOperations(['submitManualFuturesLimitOrder']); }
+    catch (error) { if (error instanceof CloudError && error.code === 'operation_unavailable') return blocked('Your Flusso connection cannot place orders. Reconnect with write access and check that your plan includes live trading.'); throw error; }
+    const args = {
+      operationId: 'submitManualFuturesLimitOrder', pathParameters: { id: accountId }, headers: { 'Idempotency-Key': idempotencyKey },
+      body: { schemaVersion: 'product.manual_order_request.v3', orders, confirmation: {
+        accountId, operationType: 'manual_trade_requested',
+        expectedEffect: short(`Flusso Listener places ${orders.length} limit order${orders.length === 1 ? '' : 's'} from ${reference}.`, 1000),
+        riskImpact: 'Uses real funds. Each order is held to its own conditions, account risk and venue terms.',
+        rollbackPath: 'Cancel open orders or close the resulting positions in Flusso.' } },
+    };
+    // A preview sends nothing, so its failures are definitive refusals.
+    const preview = await mcp('act_in_flusso', args);
+    if (preview.error === 'operation_not_available') return blocked('Your Flusso plan or connection does not allow placing orders.');
+    if (preview.schemaVersion !== 'flusso.mcp_confirmation.v1' || preview.confirmationRequired !== true || typeof preview.confirmationToken !== 'string'
+      || preview.operation?.operationId !== args.operationId || preview.request?.method !== 'POST'
+      || preview.request?.path !== `/api/v1/me/trading-accounts/${accountId}/manual-orders`
+      || preview.request?.query !== null || preview.request?.headers?.['Idempotency-Key'] !== idempotencyKey
+      || !isDeepStrictEqual(preview.request?.body, args.body) || preview.effect?.liveTradingRequested !== true
+      || preview.effect?.destructive !== true || Date.parse(preview.expiresAtUtc) <= clock()
+      || !Number.isFinite(Date.parse(preview.expiresAtUtc))) {
+      return blocked(short(preview.message) || 'Flusso refused the order preview. No order was sent.');
+    }
+    let value, dispatched = false;
+    try { value = await mcp('act_in_flusso', { ...args, confirmed: true, confirmationToken: preview.confirmationToken }, { timeoutMs: ORDER_TIMEOUT_MS, beforeDispatch: async () => {
+      requireGeneration(generation);
+      if (!await canDispatch()) fail('execution_stopped', 'Auto-trade or its account changed before confirmation. No order was sent.');
+      requireGeneration(generation); dispatched = true;
+    } }); }
+    catch (error) {
+      if (!dispatched) return blocked(error instanceof CloudError && error.code === 'execution_stopped' ? error.message : 'The connection changed before confirmation. No order was sent.');
+      return { status: 'unknown', lines: [], message: 'Flusso did not confirm the result. The listener will use read-only checks; it will not resend this ticket.' };
+    }
+    const lines = batchLines(value.result, accountId, idempotencyKey, orders);
+    if (lines) return { status: ticketStatus(lines), lines, message: null };
+    if (value.result?.schemaVersion === 'product.error.v1' && value.status >= 400 && value.status < 500) {
+      return blocked(short(value.result.error?.message) || short(value.result.error?.code) || 'Flusso refused the orders.');
+    }
+    if (value.error === 'confirmation_invalid') return blocked('The order preview expired before it was confirmed. No order was sent.');
+    return { status: 'unknown', lines: [], message: 'Flusso did not return a clear result. The listener will use read-only checks; it will not resend this ticket.' };
+  }
+
+  /** Read only exact canonical order IDs retained in the original receipt. */
+  async function reconcileOrders(attempt) {
+    const previous = attempt.receipt;
+    if (!Array.isArray(previous?.lines) || previous.lines.length !== attempt.orders.length) return null;
+    const unresolved = previous.lines.filter(line => line.status === 'unknown' || line.status === 'not_sent');
+    // A missing receipt/ID is unknown, never evidence that an order was not sent.
+    if (!unresolved.length) return previous;
+    if (unresolved.some(line => !UUID.test(line.orderId ?? '') || !UUID.test(line.canonicalInstrumentId ?? '') || line.riskAccepted !== true)) return null;
+    await requireOperations(['getTradingAccountResource']);
+    const needed = new Map(unresolved.map(line => [line.orderId.toLowerCase(), line]));
+    const found = new Map(), seen = new Set(); let cursor = null;
     for (let page = 0; page < MAX_PAGES; page += 1) {
-      const result = unwrap(await read('listPromptTradingAuthorizations', { id: accountId }, { limit: 100, ...(cursor ? { cursor } : {}) }));
-      if (result.schemaVersion !== 'product.prompt_trading_authorizations.v1' || !equalId(result.accountId, accountId) || !Array.isArray(result.rows) || result.rows.length > 100) fail('policy_response_invalid', 'The server returned an invalid owned policy page.');
-      rows.push(...result.rows.map((grant) => assertGrant(grant, accountId)));
-      if (result.nextCursor === null) return rows;
-      if (typeof result.nextCursor !== 'string' || !result.nextCursor || result.nextCursor.length > 2048 || seen.has(result.nextCursor)) fail('policy_response_invalid', 'The policy cursor repeated or was invalid.');
+      // flusso.37f7160f47e1: reuse canonical account orders; never submit during recovery.
+      const result = unwrap(await read('getTradingAccountResource', { id: id(attempt.accountId), resource: 'orders' }, { limit: 100, ...(cursor ? { cursor } : {}) }));
+      if (result.schemaVersion !== 'canonical_orders.v1' || !equalId(result.accountId, attempt.accountId)
+        || !Array.isArray(result.rows) || typeof result.hasMore !== 'boolean'
+        || result.hasMore !== (typeof result.nextCursor === 'string' && result.nextCursor.length > 0)
+        || result.nextCursor != null && seen.has(result.nextCursor)) fail('order_readback_invalid', 'The canonical order readback was invalid.');
+      for (const row of result.rows) {
+        const line = needed.get(String(row?.id).toLowerCase());
+        const orderStatus = String(row?.status).toLowerCase().replaceAll('_', '');
+        if (line && row.instrumentId === line.canonicalInstrumentId && row.side === line.side
+          && row.requestedQuantity === line.quantity && row.limitPrice === line.limitPrice
+          && typeof row.externalOrderId === 'string' && row.externalOrderId.trim()
+          && ['pending', 'open', 'new', 'partiallyfilled', 'filled', 'canceled', 'cancelled', 'closed'].includes(orderStatus)) found.set(row.id.toLowerCase(), row);
+      }
+      if (found.size === needed.size) {
+        const lines = previous.lines.map(line => found.has(String(line.orderId).toLowerCase())
+          ? { ...line, status: 'submitted', submitted: true, message: `Canonical order readback: ${found.get(line.orderId.toLowerCase()).status}. Submission is not a fill.` } : line);
+        return { status: ticketStatus(lines), lines, message: null };
+      }
+      if (!result.hasMore) break;
       cursor = result.nextCursor; seen.add(cursor);
     }
-    fail('policy_scan_incomplete', 'The policy list exceeds the bounded scan.');
+    return null;
   }
 
-  async function getPolicy({ accountId, authorizationId }) {
-    id(accountId); id(authorizationId); await requireOperations(['getPromptTradingAuthorization']);
-    return assertGrant(unwrap(await read('getPromptTradingAuthorization', { id: accountId, authorizationId })), accountId, authorizationId);
-  }
-
-  async function previewPolicy({ accountId, policy, idempotencyKey, confirmation }) {
-    id(accountId); retryKey(idempotencyKey);
-    if (!policyValid(policy) || Date.parse(policy.expiresAtUtc) <= clock()) fail('policy_invalid', 'Use future, bounded spot BTC/USD buy-limit policy values.');
-    await requireOperations(['createPromptTradingAuthorization']);
-    const ownerConfirmation = confirmation ?? { accountId, operationType: 'prompt_trading_authorization_created', expectedEffect: 'Allow this listener to request spot BTC/USD buy-limit orders within these immutable limits.', riskImpact: 'Orders can spend the approved gross USD budgets. Risk and current venue permissions still apply.', rollbackPath: 'Revoke this authorization to stop future admissions; cancel outstanding orders separately.' };
-    const args = structuredClone({ operationId: 'createPromptTradingAuthorization', pathParameters: { id: accountId }, headers: { 'Idempotency-Key': idempotencyKey }, body: { schemaVersion: 'product.prompt_trading_authorization_create.v1', policy, confirmation: ownerConfirmation } });
-    const preview = await mcp('act_in_flusso', args);
-    if (preview.schemaVersion !== 'flusso.mcp_confirmation.v1' || preview.confirmationRequired !== true || typeof preview.confirmationToken !== 'string' || Date.parse(preview.expiresAtUtc) <= clock()
-      || preview.operation?.operationId !== args.operationId || preview.request?.path !== `/api/v1/me/trading-accounts/${accountId}/prompt-authorizations`
-      || !policyValid(preview.request.body?.policy) || POLICY_KEYS.some((name) => preview.request.body.policy[name] !== policy[name])) fail('policy_preview_invalid', 'The server preview did not match the requested policy.');
-    for (const [key, pending] of previews) if (pending.expiresAt <= clock()) previews.delete(key);
-    if (previews.size >= 20) fail('policy_preview_limit', 'Complete or wait for an existing approval preview before creating another.');
-    const previewId = randomUUID();
-    previews.set(previewId, { args, token: preview.confirmationToken, expiresAt: Date.parse(preview.expiresAtUtc), clientId: (await status()).clientId });
-    const { confirmationToken: _secret, ...visible } = preview;
-    return { ...visible, previewId };
-  }
-
-  /** Called only by the explicit GUI Approve action for the displayed preview. */
-  async function confirmPolicy(previewId) {
-    const preview = previews.get(previewId);
-    if (!preview || preview.expiresAt <= clock() || preview.clientId !== (await status()).clientId) fail('policy_preview_expired', 'Request a fresh policy preview before approving.');
-    previews.delete(previewId);
-    const result = unwrap(await mcp('act_in_flusso', { ...preview.args, confirmed: true, confirmationToken: preview.token }));
-    return assertGrant(result, preview.args.pathParameters.id);
-  }
-
-  async function runApprovedSignal({ accountId, authorizationId, body, idempotencyKey }) {
-    id(accountId); id(authorizationId); retryKey(idempotencyKey);
-    if (!runValid(body) || body.hourlySlotUtc !== hour(clock())) fail('run_invalid', 'Use the current UTC hour and exact positive base quantity and limit price.');
-    await requireOperations(['runPromptTradingAuthorization', 'getPromptTradingRunByKey']);
-    let value;
-    try {
-      value = await mcp('act_in_flusso', { operationId: 'runPromptTradingAuthorization', pathParameters: { id: accountId, authorizationId }, headers: { 'Idempotency-Key': idempotencyKey }, body });
-      if (value.result?.schemaVersion === 'product.prompt_trading_run.v1') return assertRun(value.result, accountId, authorizationId, idempotencyKey, body);
-      // A conflict can identify a previously accepted request. Without the
-      // canonical receipt it cannot establish a safe terminal outcome.
-      if (value.outcome === 'failed' && value.status >= 400 && value.status < 500 && value.status !== 409) return { status: 'blocked', submitted: false, riskAccepted: false, message: 'Flusso refused the request before returning a canonical run.', idempotencyKey };
-    } catch (error) {
-      if (error instanceof CloudError && error.code === 'connection_denied') return { status: 'blocked', submitted: false, riskAccepted: false, message: 'Reconnect or approve the required access before this request can be admitted.', idempotencyKey };
-    }
-    // Never retry a possibly delivered POST here. The caller has already saved its
-    // exact original attempt and must pause this policy until canonical readback.
-    return { status: 'unknown', submitted: false, message: 'The request may have reached execution. Preserve its body and original key, pause execution, and reconcile this exact run.', idempotencyKey };
-  }
-
-  async function reconcileRunByKey({ accountId, authorizationId, idempotencyKey }) {
-    id(accountId); id(authorizationId); retryKey(idempotencyKey);
-    await requireOperations(['getPromptTradingRunByKey']);
-    const value = await read('getPromptTradingRunByKey', { id: accountId, authorizationId }, null, { 'Idempotency-Key': idempotencyKey });
-    if (value.status === 404 && value.result?.error?.code === 'prompt_run_not_found') return null;
-    if (value.result?.schemaVersion === 'product.prompt_trading_run.v1') return assertRun(value.result, accountId, authorizationId, idempotencyKey);
-    fail('run_reconciliation_unavailable', 'The original run is still unresolved. Keep execution paused.');
-  }
-
-  return { status, profile, beginConnect, disconnect, capabilities, discoverExecutionChoices, readJournal, listPolicies, getPolicy, previewPolicy, confirmPolicy, runApprovedSignal, reconcileRunByKey };
+  return { status, profile, beginConnect, disconnect, capabilities, listAccounts, readJournal, submitOrders, reconcileOrders };
 }

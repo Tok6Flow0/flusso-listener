@@ -2,21 +2,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { startServer } from '../src/server.mjs';
-import { workspace, fakeCloud, note, accountId, authorizationId, policy, notebookId, now } from './helpers.mjs';
+import { workspace, fakeCloud, note, accountId, notebookId, now } from './helpers.mjs';
 
 async function appFixture(cloudOverrides = {}) {
-  const w = await workspace(), grant = { schemaVersion: 'product.prompt_trading_authorization.v1', accountId, authorizationId, status: 'active', policy, policyHash: 'a'.repeat(64) };
-  const cloud = fakeCloud({ confirmPolicy: async () => grant, getPolicy: async () => grant, previewPolicy: async value => ({ previewId: 'test-preview', request: { body: value } }), discoverExecutionChoices: async () => ({ accounts: [{ id: accountId, displayName: 'Test account' }], instruments: [{ instrumentId: policy.instrumentId, symbol: 'BTC/USD', venue: 'coinbase' }], complete: true }), ...cloudOverrides });
+  const w = await workspace();
+  const cloud = fakeCloud(cloudOverrides);
   const listener = { status: () => ({}), refresh: () => {}, tick: async () => {} };
   const app = await startServer({ store: w.store, cloud, listener, checkModel: async () => ({ installed: true }) });
   let csrf, cookie;
   const post = async (path, body, headers = {}) => fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie, 'x-flusso-csrf': csrf } : {}), ...headers }, body: JSON.stringify(body) });
   const unlock = async () => { const response = await post('/api/bootstrap', {}, { Authorization: 'Bearer ' + new URL(app.url).hash.slice(1) }); cookie = response.headers.get('set-cookie').split(';')[0]; csrf = (await response.json()).csrf; return response; };
-  return { ...w, app, cloud, grant, post, unlock, cookie: () => cookie, close: async () => { await app.close(); await w.close(); } };
+  return { ...w, app, cloud, post, unlock, cookie: () => cookie, close: async () => { await app.close(); await w.close(); } };
 }
 function deferred() { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; }
 function settingsBody(store, additions = {}) {
-  const { model: _model, listenerId: _listenerId, policy: _policy, maxSignalAgeSeconds: _age, ...body } = store.settings();
+  const { model: _model, listenerId: _listenerId, ...body } = store.settings();
   return { ...body, ...additions };
 }
 test('loopback GUI refuses wrong Host/Origin and unauthorized requests; session can reopen with private per-start launcher', async () => {
@@ -39,53 +39,61 @@ test('authorized local Journal save/readback and version conflict flow use the s
     assert.equal((await w.post('/api/entries', { ...note(w.store), execute: true })).status, 400);
   } finally { await w.close(); }
 });
-test('policy approval saves only the explicit server grant and leaves execution off', async () => {
-  const w = await appFixture(); try {
-    await w.unlock(); assert.equal((await w.post('/api/policy/approve', { previewId: 'test-preview' })).status, 200);
-    assert.equal(w.store.settings().authorizationId, authorizationId); assert.equal(w.store.settings().executionEnabled, false);
-    const s = w.store.settings(); const { model: _model, listenerId: _listenerId, policy: _policy, maxSignalAgeSeconds: _age, ...body } = s;
-    assert.equal((await w.post('/api/settings', { ...body, enabled: true, executionEnabled: true })).status, 200); assert.equal(w.store.settings().executionEnabled, true);
-    const choices = await fetch(w.app.origin + '/api/execution-choices', { headers: { Cookie: w.cookie() } }).then(row => row.json()); assert.equal(choices.accounts[0].id, accountId);
+test('auto-trade needs a write connection and an account this connection owns', async () => {
+  let scopes = ['mcp:read'];
+  const w = await appFixture({ status: async () => ({ connected: true, clientId: 'fixture-client', scopes }) }); try {
+    await w.unlock();
+    const risk = { maxSlippagePct: 3, maxOrderUsd: 100, maxTicketUsd: 200, maxLeverage: 10, minVolume24hUsd: null, together: true };
+    assert.equal((await w.post('/api/settings', settingsBody(w.store, { enabled: true, executionEnabled: true, accountId, risk }))).status, 400);
+    scopes = ['mcp:read', 'mcp:write'];
+    for (const field of ['maxOrderUsd', 'maxTicketUsd', 'maxLeverage'])
+      assert.equal((await w.post('/api/settings', settingsBody(w.store, { enabled: true, executionEnabled: true, accountId, risk: { ...risk, [field]: null } }))).status, 400);
+    assert.equal((await w.post('/api/settings', settingsBody(w.store, { enabled: true, executionEnabled: true, accountId: null, risk }))).status, 400);
+    assert.equal((await w.post('/api/settings', settingsBody(w.store, { enabled: true, executionEnabled: true, accountId: notebookId, risk }))).status, 400);
+    assert.equal((await w.post('/api/settings', settingsBody(w.store, { enabled: true, executionEnabled: true, accountId, risk: { ...risk, maxSlippagePct: 0 } }))).status, 400);
+    assert.equal((await w.post('/api/settings', settingsBody(w.store, { enabled: true, executionEnabled: true, accountId, risk }))).status, 200);
+    assert.equal(w.store.settings().executionEnabled, true); assert.deepEqual(w.store.settings().risk, risk);
+    const accounts = await fetch(w.app.origin + '/api/accounts', { headers: { Cookie: w.cookie() } }).then(row => row.json()); assert.equal(accounts.accounts[0].id, accountId);
   } finally { await w.close(); }
 });
-test('pending browser connection refuses settings and policy mutations and finishes with execution off', async () => {
+test('only an unconfirmed order result can be marked resolved, and its ticket stays claimed', async () => {
+  const w = await appFixture(); try {
+    await w.unlock();
+    w.store.put('attempt', 'listener-unknown-key', { id: 'listener-unknown-key', kind: 'orders', status: 'unknown', signalIdentity: 'claimed', orders: [], atUtc: new Date(now).toISOString() });
+    w.store.put('attempt', 'listener-sent-key', { id: 'listener-sent-key', kind: 'orders', status: 'submitted', orders: [], atUtc: new Date(now).toISOString() });
+    assert.equal((await w.post('/api/attempts/listener-sent-key/resolve', {})).status, 404);
+    assert.equal((await w.post('/api/attempts/listener-unknown-key/resolve', {})).status, 200);
+    assert.equal(w.store.get('attempt', 'listener-unknown-key').status, 'resolved');
+  } finally { await w.close(); }
+});
+test('appearance is saved locally and applied before first paint', async () => {
+  const w = await appFixture(); try {
+    await w.unlock();
+    assert.equal((await w.post('/api/display', { theme: 'neon' })).status, 400);
+    assert.equal((await w.post('/api/display', { theme: 'atlantic' })).status, 200);
+    assert.match(await fetch(w.app.origin + '/').then(row => row.text()), /<html lang="en" data-theme-mode="atlantic" data-theme="atlantic">/);
+    const status = await fetch(w.app.origin + '/api/status', { headers: { Cookie: w.cookie() } }).then(row => row.json());
+    assert.equal(status.display.theme, 'atlantic');
+  } finally { await w.close(); }
+});
+test('pending browser connection refuses settings changes and finishes with execution off', async () => {
   const started = deferred(), finish = deferred(); let clientId = 'fixture-client';
   const w = await appFixture({
-    status: async () => ({ connected: true, clientId }),
+    status: async () => ({ connected: true, clientId, scopes: ['mcp:read', 'mcp:write'] }),
     beginConnect: async () => { started.resolve(); await finish.promise; clientId = 'replacement-client'; return { connected: true, clientId }; },
   });
   try {
     await w.unlock();
-    assert.equal((await w.post('/api/policy/approve', { previewId: 'test-preview' })).status, 200);
+    const risk = { maxSlippagePct: 3, maxOrderUsd: 100, maxTicketUsd: 200, maxLeverage: 10, minVolume24hUsd: null, together: true };
+    assert.equal((await w.post('/api/settings', settingsBody(w.store, { enabled: true, executionEnabled: true, accountId, risk }))).status, 200);
     const connecting = w.post('/api/connect', {}); await started.promise;
-    assert.equal((await w.post('/api/settings', settingsBody(w.store, { enabled: true, executionEnabled: true, accountId, authorizationId }))).status, 409);
-    assert.equal((await w.post('/api/policy/preview', { accountId, policy })).status, 409);
-    assert.equal((await w.post('/api/policy/approve', { previewId: 'test-preview' })).status, 409);
+    assert.equal((await w.post('/api/settings', settingsBody(w.store, { enabled: true, executionEnabled: true, accountId, risk }))).status, 409);
     assert.equal((await w.post('/api/sync', {})).status, 409);
     finish.resolve(); assert.equal((await connecting).status, 200);
     assert.equal(w.store.settings().enabled, false); assert.equal(w.store.settings().executionEnabled, false);
-    assert.equal(w.store.settings().authorizationId, null); assert.equal(w.store.settings().policy, null);
+    assert.equal(w.store.settings().accountId, null);
     assert.equal((await w.cloud.status()).clientId, 'replacement-client');
   } finally { finish.resolve(); await w.close(); }
-});
-test('an old in-flight policy approval cannot persist authority after reconnect or disconnect', async () => {
-  for (const change of ['connect', 'disconnect']) {
-    const started = deferred(), finish = deferred(); let clientId = 'fixture-client', connected = true;
-    const w = await appFixture({
-      status: async () => ({ connected, clientId }),
-      confirmPolicy: async () => { started.resolve(); await finish.promise; return w.grant; },
-      beginConnect: async () => { clientId = 'replacement-client'; return { connected, clientId }; },
-      disconnect: async () => { connected = false; },
-    });
-    try {
-      await w.unlock();
-      const approval = w.post('/api/policy/approve', { previewId: 'test-preview' }); await started.promise;
-      assert.equal((await w.post('/api/' + change, {})).status, 200);
-      finish.resolve(); assert.equal((await approval).status, 409);
-      assert.equal(w.store.get('grant', authorizationId), null);
-      assert.equal(w.store.settings().authorizationId, null); assert.equal(w.store.settings().executionEnabled, false);
-    } finally { finish.resolve(); await w.close(); }
-  }
 });
 test('disconnect cancels pending browser connection without restoring authority', async () => {
   const started = deferred(), finish = deferred(); let connected = true;
@@ -98,7 +106,7 @@ test('disconnect cancels pending browser connection without restoring authority'
     await w.unlock(); const connecting = w.post('/api/connect', {}); await started.promise;
     assert.equal((await w.post('/api/disconnect', {})).status, 200);
     finish.resolve(); assert.equal((await connecting).status, 409);
-    assert.equal(w.store.settings().executionEnabled, false); assert.equal(w.store.settings().authorizationId, null);
+    assert.equal(w.store.settings().executionEnabled, false); assert.equal(w.store.settings().accountId, null);
   } finally { finish.resolve(); await w.close(); }
 });
 

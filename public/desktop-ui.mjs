@@ -32,3 +32,33 @@ export function modelPresentation(model = {}) {
     default: return { ...common, visible: false, busy: true, label: 'Checking local model…' };
   }
 }
+
+// The same palettes and names as flusso.stream's Display settings.
+export const THEME_OPTIONS = Object.freeze([
+  { mode: 'system', label: 'System', description: 'Classic Light or Dark, following this computer.' },
+  { mode: 'classic', label: 'Classic Light', description: 'Warm paper and teal, the original Flusso look.' },
+  { mode: 'classic-dark', label: 'Classic Dark', description: 'The warm palette after dark.' },
+  { mode: 'graphite', label: 'Graphite', description: 'Cool greys and a restrained slate blue.' },
+  { mode: 'atlantic', label: 'Atlantic', description: 'Deep navy with a clear cerulean accent.' },
+  { mode: 'nocturne', label: 'Nocturne', description: 'Plum-dark with a heliotrope accent.' },
+  { mode: 'evergreen', label: 'Evergreen', description: 'Deep spruce with a fresh mint accent.' },
+  { mode: 'heather', label: 'Heather', description: 'Lavender-grey paper with a quiet plum accent.' },
+  { mode: 'midnight', label: 'Midnight', description: 'True black with the classic teal.' },
+]);
+
+export function resolveTheme(mode, prefersDark = false) {
+  if (mode === 'system' || !THEME_OPTIONS.some(option => option.mode === mode)) return prefersDark ? 'classic-dark' : 'classic';
+  return mode;
+}
+
+export function entryStatus(entry) {
+  if (!entry?.ticket) return null;
+  return entry.ticket.error ? { label: 'ticket error', tone: 'warn' } : { label: 'order ticket', tone: 'info' };
+}
+
+const RESULT = { submitted: ['sent', 'pos'], partial: ['partly sent', 'warn'], blocked: ['refused', 'neg'], unknown: ['unconfirmed', 'warn'], pending: ['sending', 'info'], sending: ['sending', 'info'], review: ['held', 'warn'] };
+const DECISION = { candidate: ['flagged', 'info'], review: ['review', ''], ignore: ['ignored', ''], ticket: ['ticket', 'info'] };
+export function activityStatus(row = {}) {
+  const [label, tone] = RESULT[row.status] ?? (row.status === 'observed' ? DECISION[row.decision] : null) ?? [text(row.status) || 'noted', ''];
+  return { label, tone };
+}

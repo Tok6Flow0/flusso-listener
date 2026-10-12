@@ -2,60 +2,132 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Flusso Journal — your private workspace</title>
+  <title>Flusso Journal</title>
   <link rel="icon" href="/flusso-mark.png"><link rel="stylesheet" href="/tokens.css"><link rel="stylesheet" href="/styles.css">
   <script src="/app.mjs" type="module"></script>
 </head>
 <body>
 <div class="app-shell">
   <aside class="sidebar">
-    <a class="brand" href="/"><img src="/flusso-mark.png" alt="Flusso" width="36" height="36"><span>flusso<span class="brand-sub">Journal</span></span></a>
-    <p class="eyebrow">Your private workspace</p>
-    <nav aria-label="Workspace">
-      <button type="button" class="nav-button active" data-view="journal" aria-current="page">Journal</button>
-      <button type="button" class="nav-button" data-view="listener">Listener</button>
-      <button type="button" class="nav-button" data-view="policy">Execution policy</button>
-      <button type="button" class="nav-button" data-view="activity">Activity</button>
+    <a class="brand" href="/"><img src="/flusso-mark.png" alt="" width="28" height="28"><span>flusso</span></a>
+    <nav aria-label="Sections">
+      <button type="button" class="nav-button active" data-view="journal" aria-current="page"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 3h9a2 2 0 0 1 2 2v12H6a2 2 0 0 1-2-2V4a1 1 0 0 1 1-1Z"/><path d="M4 15a2 2 0 0 1 2-2h10"/><path d="M8 7h5"/></svg><span>Journal</span></button>
+      <button type="button" class="nav-button" data-view="listener"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 10h2.5l2-5 3 10 2-5H17"/></svg><span>Listener</span><span class="nav-dot" id="listener-dot"></span><span class="sr-only" id="listener-dot-label">Off</span></button>
+      <button type="button" class="nav-button" data-view="activity"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 5h12M4 10h12M4 15h7"/></svg><span>Activity</span><span class="nav-count" id="activity-count" hidden></span></button>
     </nav>
-    <div class="sidebar-bottom"><div class="workspace-privacy"><span class="privacy-dot"></span> Stored on this computer<p>Cloud sync and execution are separate choices.</p></div>
+    <div class="sidebar-bottom">
       <div class="account-area" id="account-area">
-        <section class="account-menu" id="account-menu" aria-label="Account and app settings" hidden>
-          <p class="account-menu-heading">Workspace</p><p class="helper" id="account-menu-detail">Your Journal is stored on this computer.</p>
-          <button id="account-connect" type="button">Connect Flusso</button><button id="account-disconnect" type="button" hidden>Disconnect locally</button>
-          <a id="account-settings" href="https://flusso.stream/app/settings#profile" target="_blank" rel="noopener noreferrer">Account settings <span aria-hidden="true">↗</span></a>
-          <div class="native-controls" id="native-controls" hidden><p class="account-menu-heading">Desktop app</p><label class="check-label"><input id="start-on-login" type="checkbox"> Open at login</label><button id="check-updates" type="button">Check for updates</button><p id="app-update-status" class="helper" role="status"></p><p class="app-version"><span id="app-mode">Desktop app</span> <span id="app-version" class="mono"></span></p></div>
-          <p class="workspace-identifier">Workspace ID <code id="listener-id">Local workspace</code></p>
+        <section class="account-menu" id="account-menu" aria-label="Account and settings" hidden>
+          <div class="menu-group">
+            <button id="account-connect" type="button">Connect Flusso</button>
+            <button id="account-disconnect" type="button" hidden>Disconnect</button>
+            <a id="account-settings" href="https://flusso.stream/app/settings#profile" target="_blank" rel="noopener noreferrer">Account settings <span aria-hidden="true">↗</span></a>
+          </div>
+          <div class="menu-group">
+            <p class="menu-label">Appearance</p>
+            <div class="theme-grid" id="theme-grid" role="radiogroup" aria-label="Appearance"></div>
+          </div>
+          <div class="menu-group" id="native-controls" hidden>
+            <label class="menu-check"><input id="start-on-login" type="checkbox"> Open at login</label>
+            <button id="check-updates" type="button">Check for updates</button>
+            <p id="app-update-status" class="menu-hint" role="status"></p>
+            <p class="menu-version"><span id="app-mode">Desktop app</span> <span id="app-version" class="mono"></span></p>
+          </div>
         </section>
-        <button id="account-toggle" class="account-toggle" type="button" aria-expanded="false" aria-controls="account-menu"><span id="account-avatar" class="account-avatar" aria-hidden="true">F</span><span class="account-copy"><strong id="account-name">Local workspace</strong><span id="account-detail">On this computer</span></span><span class="account-chevron" aria-hidden="true">⌃</span></button>
+        <button id="account-toggle" class="account-toggle" type="button" aria-expanded="false" aria-controls="account-menu"><span id="account-avatar" class="account-avatar" aria-hidden="true">F</span><span class="account-copy"><strong id="account-name">Local workspace</strong><span id="account-detail">On this computer</span></span><svg class="account-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 12 4-4 4 4"/></svg></button>
       </div>
     </div>
   </aside>
   <main>
-    <header class="topbar"><span class="eyebrow">Local Journal + signal listener</span><div class="status-row"><span class="pill" id="cloud-state">Local only</span><span class="pill" id="listener-state">Listener off</span></div></header>
     <div id="notice" class="notice" role="status" hidden></div>
-    <section class="model-setup" id="model-setup" aria-labelledby="model-setup-title" hidden><div class="model-setup-copy"><h2 id="model-setup-title">Add a local listener</h2><p>Your Journal is ready. Set up <code>qwen3:1.7b</code> when you want the Listener to help read your notes.</p><p class="helper" id="model-setup-status" role="status"></p><div class="setup-progress" id="model-progress-wrap" hidden><progress id="model-progress" max="100" aria-label="Local model setup"></progress><span id="model-progress-label" class="mono"></span></div></div><button id="setup-model" type="button">Set up local model</button></section>
+    <section class="model-setup" id="model-setup" aria-labelledby="model-setup-title" hidden>
+      <div><h2 id="model-setup-title">Set up the local model</h2><p id="model-setup-status" role="status">Reads your notes on this computer. Order tickets work without it.</p><div class="setup-progress" id="model-progress-wrap" hidden><progress id="model-progress" max="100" aria-label="Local model setup"></progress><span id="model-progress-label" class="mono"></span></div></div>
+      <button id="setup-model" type="button">Set up</button>
+    </section>
+
     <section id="view-journal" class="view">
-      <div class="page-heading"><div><p class="eyebrow">Make a record. Keep the context.</p><h1>Your Journal</h1><p class="lede">Notes, analysis, and structured observations in one private place.</p></div><button id="new-entry" type="button" class="primary">New entry</button></div>
-      <div class="journal-toolbar"><label>Notebook<select id="journal-filter"><option value="">All notebooks</option></select></label><button id="sync" type="button">Sync cloud Journal</button><form id="notebook-form" class="inline-form"><label class="sr-only" for="notebook-name">New local notebook name</label><input id="notebook-name" placeholder="New local notebook" maxlength="120" required><button type="submit">Add notebook</button></form></div>
-      <div class="journal-layout"><div class="entry-list" id="entry-list" aria-label="Journal entries"><p class="empty">Your notes will appear here.</p></div><article class="entry-detail" id="entry-detail"><div class="empty-art"><img src="/flusso-mark.png" alt="" width="64" height="64"><h2>A place for your thinking</h2><p>Save a Markdown article, a short note, or a structured market observation.</p><p>Saving a note does not authorize an order.</p></div></article></div>
-      <section id="editor" class="panel" hidden><div class="panel-heading"><h2 id="editor-title">New local entry</h2><button id="cancel-edit" type="button">Cancel</button></div><form id="entry-form"><div class="form-grid"><label>Notebook<select id="entry-notebook" required></select></label><label>Status<select id="entry-status"><option value="watching">Watching</option><option value="reviewed">Reviewed</option><option value="closed">Closed</option></select></label></div><label>Title<input id="entry-title" maxlength="200" required></label><label>Markdown text<textarea id="entry-body" rows="10" maxlength="20000" placeholder="## What I observed&#10;&#10;Source, context, and questions to revisit."></textarea></label><details><summary>Structured signal (optional)</summary><p class="helper">Use the existing normalized asset snapshot. Leave missing values null; do not paste credentials.</p><label>Signal JSON<textarea id="entry-signal" class="mono" rows="8" placeholder="product.journal_signal.v1"></textarea></label></details><div class="form-actions"><span class="helper">Saved locally. Telegram alerts stay off.</span><button type="submit" class="primary">Save entry</button></div></form></section>
+      <header class="view-head">
+        <h1>Journal</h1>
+        <div class="head-actions">
+          <label class="sr-only" for="journal-filter">Notebook</label><select id="journal-filter"><option value="">All notebooks</option></select>
+          <button id="sync" type="button" class="icon-button" title="Sync cloud Journal" aria-label="Sync cloud Journal"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16 10a6 6 0 0 1-10.4 4.1M4 10a6 6 0 0 1 10.4-4.1"/><path d="M14.5 2.5v3.6h-3.6M5.5 17.5v-3.6h3.6"/></svg></button>
+          <button id="new-entry" type="button" class="primary">New entry</button>
+        </div>
+      </header>
+      <section id="editor" class="card editor" hidden>
+        <div class="card-head"><h2 id="editor-title">New entry</h2><button id="cancel-edit" type="button" class="ghost">Cancel</button></div>
+        <form id="entry-form">
+          <div class="field-grid"><label>Notebook<select id="entry-notebook" required></select></label><label>Status<select id="entry-status"><option value="watching">Watching</option><option value="reviewed">Reviewed</option><option value="closed">Closed</option></select></label></div>
+          <label>Title<input id="entry-title" maxlength="200" required></label>
+          <label><span class="label-row">Text <button id="insert-ticket" type="button" class="link-button">Add order ticket</button></span><textarea id="entry-body" rows="10" maxlength="20000" placeholder="Markdown"></textarea></label>
+          <details><summary>Structured signal</summary><label class="sr-only" for="entry-signal">Signal JSON</label><textarea id="entry-signal" class="mono" rows="7" placeholder="product.journal_signal.v1"></textarea></details>
+          <div class="form-actions"><span class="hint">Saved on this computer.</span><button type="submit" class="primary">Save</button></div>
+        </form>
+      </section>
+      <div class="journal-layout">
+        <div class="entry-pane">
+          <div class="entry-list" id="entry-list" aria-label="Journal entries"></div>
+          <form id="notebook-form" class="notebook-form"><label class="sr-only" for="notebook-name">New notebook</label><input id="notebook-name" placeholder="New notebook" maxlength="120" required><button type="submit" class="icon-button" aria-label="Add notebook" title="Add notebook"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg></button></form>
+        </div>
+        <article class="entry-detail" id="entry-detail"><div class="empty-art"><img src="/flusso-mark.png" alt="" width="48" height="48"><p>Pick an entry or write a new one.</p></div></article>
+      </div>
     </section>
+
     <section id="view-listener" class="view" hidden>
-      <div class="page-heading"><div><p class="eyebrow">Quietly attentive. Under your control.</p><h1>Your listener</h1><p class="lede">Choose where to look and what deserves attention.</p></div></div>
-      <div class="two-column"><section class="panel"><h2>Connection</h2><p>Use browser sign-in to approve this device. Your password and API credentials stay out of agent chats.</p><div class="status-row"><button id="connect" class="primary" type="button">Connect Flusso</button><button id="disconnect" type="button">Disconnect locally</button></div><p class="helper" id="connection-detail">Cloud access is optional for a local Journal.</p></section><section class="panel"><h2>Local model</h2><p><code>qwen3:1.7b</code> <span id="model-engine">via Ollama.</span> A small classifier helps select notes; server policies decide what execution is allowed.</p><p id="model-state" class="helper">Checking the local model…</p><button id="setup-model-panel" type="button" hidden>Set up local model</button><div class="code-scroll" id="model-manual-command"><code>ollama pull qwen3:1.7b</code></div><p class="helper" id="model-privacy">No cloud model fallback. Keep Ollama on its default loopback address.</p></section></div>
-      <section class="panel"><form id="settings-form"><h2>What to watch</h2><div class="form-grid"><label>Source<select id="source"><option value="local">Local Journal</option><option value="cloud">Cloud Journal</option><option value="both">Both</option></select></label><label>Check every (seconds)<input id="interval" type="number" min="15" max="3600" step="1" required></label></div><label>Notebooks<select id="watch-notebooks" multiple size="4"></select></label><p class="helper">Leave all notebooks unselected to watch every notebook from the selected source.</p><label>Heading filter (optional)<input id="section" maxlength="200" placeholder="For example: Morning opportunities"></label><label>Research instructions<textarea id="instructions" rows="4" maxlength="1000" placeholder="For example: Select fresh Bitcoin observations from my morning research. Keep uncertain signals for review."></textarea></label><p class="helper">Instructions guide classification. They cannot change budgets, instruments, risk checks, credentials, or server permissions.</p><div class="toggle-card"><label class="check-label"><input id="enabled" type="checkbox"> Listener on</label><p>Runs while this app is open and the computer is awake. Existing notes become a baseline when you turn it on.</p></div><div class="toggle-card"><label class="check-label"><input id="execution" type="checkbox"> Allow execution under my approved policy</label><p>Off by default. Requires a policy approved below for this connection. Only supported fresh structured signals can request an order. Text alone is kept for review.</p><code id="selected-policy">No approved policy selected</code></div><div class="form-actions"><button id="check-now" type="button">Check now</button><button type="submit" class="primary">Save listener settings</button></div></form><p id="last-check" class="helper">No check yet.</p></section>
+      <header class="view-head">
+        <h1>Listener</h1>
+        <label class="switch switch-lg"><input id="enabled" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span id="enabled-label">Off</span></label>
+      </header>
+      <p class="status-line" id="last-check">Not checked yet</p>
+      <div class="connect-hint" id="connect-hint" hidden><span>Connect Flusso for the cloud Journal and auto-trade.</span><button id="connect" type="button" class="primary">Connect</button></div>
+      <form id="settings-form" class="settings">
+        <section class="card">
+          <h2>Watch</h2>
+          <div class="field-grid">
+            <fieldset class="segmented"><legend>Source</legend>
+              <label><input type="radio" name="source" value="local"><span>Local</span></label>
+              <label><input type="radio" name="source" value="cloud"><span>Cloud</span></label>
+              <label><input type="radio" name="source" value="both"><span>Both</span></label>
+            </fieldset>
+            <label>Check every<select id="interval"><option value="15">15 seconds</option><option value="30">30 seconds</option><option value="60">1 minute</option><option value="120">2 minutes</option><option value="300">5 minutes</option><option value="900">15 minutes</option><option value="1800">30 minutes</option><option value="3600">1 hour</option></select></label>
+          </div>
+          <fieldset class="picks"><legend>Notebooks <span class="hint">· none selected means all</span></legend><div id="watch-notebooks" class="chips"></div></fieldset>
+          <details><summary>Model instructions</summary>
+            <label>Only notes under this heading<input id="section" maxlength="200" placeholder="Optional"></label>
+            <label>What the model should flag<textarea id="instructions" rows="3" maxlength="1000" placeholder="Optional"></textarea></label>
+          </details>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>Auto-trade</h2><label class="switch"><input id="execution" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span class="sr-only">Auto-trade</span></label></div>
+          <p class="hint">Places <code>flusso-orders</code> tickets from watched notes. Flusso still checks your account risk.</p>
+          <div class="field-grid">
+            <label>Account<select id="account"><option value="">Connect Flusso first</option></select></label>
+            <label>Skip tickets older than<select id="max-age"><option value="120">2 minutes</option><option value="300">5 minutes</option><option value="900">15 minutes</option><option value="1800">30 minutes</option><option value="3600">1 hour</option><option value="21600">6 hours</option><option value="86400">24 hours</option></select></label>
+            <label>Max slippage<span class="affix"><input id="max-slippage" type="number" inputmode="decimal" step="any" min="0.01" max="100" placeholder="None"><span>%</span></span></label>
+            <label>Max per order<span class="affix"><span>$</span><input id="max-order" type="number" inputmode="decimal" step="any" min="0.01" placeholder="None"></span></label>
+            <label>Max per ticket<span class="affix"><span>$</span><input id="max-ticket" type="number" inputmode="decimal" step="any" min="0.01" placeholder="Required for auto-trade"></span></label>
+            <label>Max leverage<span class="affix"><input id="max-leverage" type="number" inputmode="decimal" step="any" min="1" placeholder="Required for auto-trade"><span>×</span></span></label>
+            <label>Min 24h volume<span class="affix"><span>$</span><input id="min-volume" type="number" inputmode="decimal" step="any" min="1" placeholder="None"></span></label>
+            <label class="switch switch-row"><input id="together" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span>Send legs together</span></label>
+          </div>
+          <details><summary>Ticket format</summary><div class="code-scroll"><pre id="ticket-example"></pre></div><p class="hint">Quantity is in venue contracts. Use instrument ids from Flusso market facts. Your limits above tighten each order’s own conditions.</p></details>
+        </section>
+        <section class="card" id="model-card">
+          <h2>Local model</h2>
+          <p id="model-state" class="hint">Checking…</p>
+          <button id="setup-model-panel" type="button" hidden>Set up</button>
+          <div class="code-scroll" id="model-manual-command"><code>ollama pull qwen3:1.7b</code></div>
+        </section>
+        <div class="form-actions"><button id="check-now" type="button">Check now</button><button id="save-settings" type="submit" class="primary">Save</button></div>
+      </form>
     </section>
-    <section id="view-policy" class="view" hidden>
-      <div class="page-heading"><div><p class="eyebrow">Explicit limits. Server checked.</p><h1>Execution policy</h1><p class="lede">Approve one immutable policy for this Listener connection.</p></div></div>
-      <div class="notice info">The current supported lane is one spot BTC/USD buy-limit admission per UTC hour. Other assets, sell signals, futures, and paired signals remain observations for review. A policy does not activate a venue or prove that cash and risk checks will pass.</div>
-      <section class="panel"><h2>Your limits</h2><p class="helper" id="execution-choice-warning">Connect Flusso, then open this tab to load your accounts and available markets.</p><form id="policy-form"><div class="form-grid"><label>Trading account<select id="policy-account" required><option value="">Connect Flusso to load accounts</option></select></label><label>BTC/USD market<select id="policy-instrument" required><option value="">Connect Flusso to load markets</option></select></label><label>Maximum BTC per order<input id="maxBaseQuantity" type="number" step="any" min="0.00000001" required></label><label>Maximum limit price (USD)<input id="maxLimitPrice" type="number" step="any" min="0.01" required></label><label>Maximum order spend (USD)<input id="maxOrderQuoteNotionalUsd" type="number" step="any" min="0.01" required></label><label>Maximum daily spend (USD)<input id="maxDailyQuoteNotionalUsd" type="number" step="any" min="0.01" required></label><label>Maximum lifetime spend (USD)<input id="maxLifetimeQuoteNotionalUsd" type="number" step="any" min="0.01" required></label><label>Maximum admitted runs<input id="maxAdmittedRuns" type="number" step="1" min="1" max="2147483647" required></label><label>Starts at (UTC)<input id="startsAtUtc" type="datetime-local" step="1" required></label><label>Expires at (UTC)<input id="expiresAtUtc" type="datetime-local" step="1" required></label></div><p class="helper">No spending amounts are prefilled. Select current account and market identities from Flusso. Dates are entered in UTC.</p><div class="form-actions"><span class="helper">Preview creates no policy and submits no order.</span><button type="submit" class="primary">Review exact policy</button></div></form></section>
-      <section id="policy-preview" class="panel" hidden><h2>Review before approving</h2><p>This authorization can spend real funds within the displayed limits. The server still checks ownership, plan, current risk, cash, instrument capability, and the writer lane.</p><div class="code-scroll"><pre id="policy-preview-body"></pre></div><p>Revoking the policy stops future admissions. It does not cancel orders already submitted.</p><div class="form-actions"><button id="cancel-policy" type="button">Cancel</button><button id="approve-policy" type="button" class="primary">Approve this exact policy</button></div></section>
-      <p class="helper">Manage and revoke active authorizations in your Flusso account. Execution stays off here after approval until you explicitly enable it in Listener settings.</p>
+
+    <section id="view-activity" class="view" hidden>
+      <header class="view-head"><h1>Activity</h1></header>
+      <div id="activity-list" class="activity-list"></div>
     </section>
-    <section id="view-activity" class="view" hidden><div class="page-heading"><div><p class="eyebrow">A record of what happened</p><h1>Listener activity</h1><p class="lede">Classifications and command receipts are distinct from completed trades.</p></div></div><div id="activity-list" class="activity-list"><p class="empty">No observations processed yet.</p></div><section class="panel"><h2>Execution attempts</h2><p class="helper">An unknown or planned outcome pauses new execution until canonical readback resolves it. The original retry identity stays stored.</p><div class="code-scroll"><pre id="attempts">No execution attempts.</pre></div></section></section>
-    <footer>Flusso Journal <span id="footer-version" class="mono" hidden></span> · Private local workspace · No microphone or screen access</footer>
   </main>
 </div>
-<aside class="update-corner" id="update-corner" aria-label="App update" hidden><button id="dismiss-update" class="dismiss-update" type="button" aria-label="Dismiss update notice">×</button><div><strong id="update-title">An update is ready</strong><p class="helper" id="update-detail" role="status"></p><div class="setup-progress" id="update-progress-wrap" hidden><progress id="update-progress" max="100" aria-label="Update download"></progress><span id="update-progress-label" class="mono"></span></div></div><button id="update-action" type="button">Download update</button></aside>
+<aside class="update-corner" id="update-corner" aria-label="App update" hidden><button id="dismiss-update" class="dismiss-update" type="button" aria-label="Dismiss">×</button><div><strong id="update-title">Update ready</strong><p class="hint" id="update-detail" role="status"></p><div class="setup-progress" id="update-progress-wrap" hidden><progress id="update-progress" max="100" aria-label="Update download"></progress><span id="update-progress-label" class="mono"></span></div></div><button id="update-action" type="button">Download</button></aside>
 </body>
 </html>

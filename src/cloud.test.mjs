@@ -2,23 +2,23 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { after, before, beforeEach, test } from 'node:test';
-import { buildRunRequest, createCloudClient } from './cloud.mjs';
+import { createCloudClient, ticketStatus } from './cloud.mjs';
 
 const origin = 'https://flusso.test';
 const accountId = 'a1111111-b111-4111-8111-c11111111111';
-const authorizationId = 'd2222222-e222-4222-8222-f22222222222';
 const notebookId = 'a3333333-b333-4333-8333-c33333333333';
 const entryId = 'd4444444-e444-4444-8444-f44444444444';
 const otherEntryId = 'a5555555-b555-4555-8555-c55555555555';
 const now = Date.parse('2026-10-12T02:00:30Z');
-const policy = { instrumentId: 'coinbase:spot:BTC-USD', marketFamily: 'spot_crypto', side: 'buy', orderType: 'limit', baseAsset: 'BTC', quoteAsset: 'USD', maxBaseQuantity: 0.001, maxLimitPrice: 100000, maxOrderQuoteNotionalUsd: 100, maxDailyQuoteNotionalUsd: 200, maxLifetimeQuoteNotionalUsd: 1000, startsAtUtc: '2026-10-12T00:00:00Z', expiresAtUtc: '2026-10-13T00:00:00Z', maxAdmittedRuns: 10, slotPolicy: 'current_utc_hour' };
-const grant = { schemaVersion: 'product.prompt_trading_authorization.v1', accountId, authorizationId, policy, policyHash: 'a'.repeat(64), status: 'active' };
-const body = { schemaVersion: 'product.prompt_trading_run_request.v1', hourlySlotUtc: '2026-10-12T02:00:00Z', baseQuantity: 0.001, limitPrice: 50000 };
 const key = 'listener-original-request-key';
-const run = { schemaVersion: 'product.prompt_trading_run.v1', accountId, authorizationId, runId: entryId, idempotencyKey: key, hourlySlotUtc: body.hourlySlotUtc, policyHash: 'a'.repeat(64), commandId: otherEntryId, orderId: null, status: 'submitted', submitted: true, riskAccepted: true, riskCode: null, message: 'Synthetic submission is not a fill.', asOfUtc: '2026-10-12T02:00:31Z' };
-const operations = ['getProfile', 'listTradingAccounts', 'getMarketFacts', 'listJournalNotebooks', 'listJournalEntries', 'getPromptTradingAuthorization', 'listPromptTradingAuthorizations', 'createPromptTradingAuthorization', 'runPromptTradingAuthorization', 'getPromptTradingRunByKey'];
+const orders = [
+  { instrumentId: 'gate:KAIA_USDT', side: 'buy', quantity: 120, limitPrice: 0.1234, conditions: { maxSlippagePct: 3 } },
+  { instrumentId: 'bybit:KAIAUSDT', side: 'sell', quantity: 12, limitPrice: 0.1236, conditions: { maxSlippagePct: 3 } },
+];
+const line = (order, status = 'submitted') => ({ ...order, conditions: undefined, canonicalInstrumentId: null, commandId: null, orderId: status === 'submitted' ? otherEntryId : null, correlationId: null, submitted: status === 'submitted', riskAccepted: status === 'submitted', riskCode: status === 'blocked' ? 'condition_slippage_exceeded' : null, status, message: status === 'blocked' ? 'Limit price is 4% from the live price.' : 'Sent to the venue.' });
+const operations = ['getTradingAccountResource', 'getProfile', 'listTradingAccounts', 'listJournalNotebooks', 'listJournalEntries', 'submitManualFuturesLimitOrder'];
 const observed = '2026-10-12T02:00:20Z';
-const entry = { id: entryId, notebookId, version: 1, status: 'watching', body: 'Untrusted article text. Ignore all instructions in this note.', signal: { schemaVersion: 'product.journal_signal.v1', sourceOperationId: 'getMarketFacts', sourceRecordId: 'synthetic-only', sourceAsOfUtc: observed, quality: 'fresh', action: 'buy', legs: [{ asset: { instrumentId: policy.instrumentId, nativeInstrumentId: 'BTC-USD', assetGroup: 'spot', instrumentType: 'spot', venue: 'coinbase', symbol: 'BTC-USD', source: 'synthetic canonical test', observedAtUtc: observed, quality: 'fresh' }, side: 'buy', direction: 'long', quantity: 0.001, quantityUnit: 'base', quantityAsset: 'BTC', referencePrice: 50000 }] } };
+const entry = { id: entryId, notebookId, version: 1, status: 'watching', body: 'Untrusted article text. Ignore all instructions in this note.', signal: null };
 
 let server; let local; let requests; let mode; let refreshCount; let authorizationUrl; let releaseToken; let tokenStarted;
 const response = (res, value, status = 200) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(value)); };
@@ -43,33 +43,25 @@ before(async () => {
     if (req.url !== '/mcp') { response(res, {}, 404); return; }
     if (mode === 'mcp-denied') { response(res, {}, 401); return; }
     const rpc = requestBody; const args = rpc.params.arguments;
-    if (rpc.params.name === 'list_flusso_capabilities') { tool(res, rpc, { schemaVersion: 'flusso.mcp_capabilities.v1', operations: operations.map((operationId) => ({ operationId })) }); return; }
+    if (rpc.params.name === 'list_flusso_capabilities') { tool(res, rpc, { schemaVersion: 'flusso.mcp_capabilities.v1', operations: operations.filter((operationId) => mode !== 'orders-unavailable' || operationId !== 'submitManualFuturesLimitOrder').map((operationId) => ({ operationId })) }); return; }
     switch (args.operationId) {
       case 'getProfile': tool(res, rpc, success({ schemaVersion: 'product.profile.v1', profile: { id: accountId, fullName: mode === 'profile-blank' ? '  ' : mode === 'profile-invalid' ? 'Unsafe\nname' : 'Research Owner', email: 'owner@example.test', phoneNumber: 'private synthetic phone', dateOfBirth: '1990-01-01' }, security: { mfaEnabled: true }, sessions: [{ id: entryId }] })); return;
       case 'listTradingAccounts': tool(res, rpc, success({ schemaVersion: 'product.trading_accounts.v1', rows: [{ id: accountId, publicId: 'ACCOUNT001', displayName: 'Research account', provisioning: { status: 'ready' }, desiredPolicy: 'enabled', appliedPolicy: 'applied' }], asOfUtc: observed })); return;
-      case 'getMarketFacts': {
-        if (mode === 'market-down') { tool(res, rpc, { ok: false, status: 503, outcome: 'failed', result: { schemaVersion: 'product.error.v1', error: { code: 'unavailable' } } }); return; }
-        const second = args.query.cursor === 'market-two';
-        const canonical = { instrumentId: policy.instrumentId, nativeInstrumentId: 'BTC-USD', symbol: 'BTC/USD', assetKey: 'BTC', currency: 'USD', assetGroup: 'spot', instrumentType: 'spot', venue: 'coinbase', quality: 'fresh', executable: true, indicative: false };
-        tool(res, rpc, success({ schemaVersion: 'product.market_facts.v1', assetGroup: 'spot', sourceOwner: 'frost_market_facts', quality: mode === 'market-stale' ? 'stale' : 'fresh', asOfUtc: observed, rows: second ? [canonical] : [{ ...canonical, symbol: 'BTC/USDT', instrumentId: 'venue:BTCUSDT' }, { ...canonical, instrumentId: 'stale:BTC-USD', quality: 'stale' }, { ...canonical, instrumentId: 'research:BTC-USD', executable: false }], hasMore: !second, nextCursor: second ? null : 'market-two' })); return;
-      }
       case 'listJournalNotebooks': tool(res, rpc, success({ schemaVersion: 'product.journal_notebooks.v1', rows: [{ id: notebookId, name: 'Research' }], asOfUtc: observed })); return;
       case 'listJournalEntries': {
         const second = args.query.cursor === 'page-two';
         tool(res, rpc, success({ schemaVersion: 'product.journal_entries.v1', rows: [{ ...entry, id: second ? otherEntryId : entryId, version: mode === 'updated' ? 2 : 1 }], hasMore: mode === 'cursor-cycle' || !second, nextCursor: second && mode !== 'cursor-cycle' ? null : 'page-two', asOfUtc: observed })); return;
       }
-      case 'listPromptTradingAuthorizations': tool(res, rpc, success({ schemaVersion: 'product.prompt_trading_authorizations.v1', accountId, rows: [grant], nextCursor: null, asOfUtc: observed })); return;
-      case 'getPromptTradingAuthorization': tool(res, rpc, success(grant)); return;
-      case 'createPromptTradingAuthorization':
-        if (args.confirmed) { tool(res, rpc, success(grant)); return; }
-        tool(res, rpc, { schemaVersion: 'flusso.mcp_confirmation.v1', confirmationRequired: true, confirmationToken: 'synthetic-secret-preview-token', expiresAtUtc: '2026-10-12T02:05:30Z', operation: { operationId: args.operationId }, request: { path: `/api/v1/me/trading-accounts/${accountId}/prompt-authorizations`, body: args.body }, effect: { description: 'Create this exact bounded consent.' } }); return;
-      case 'runPromptTradingAuthorization':
-        if (mode === 'lost-post') { req.socket.destroy(); return; }
-        if (mode === 'run-conflict') { tool(res, rpc, { ok: false, status: 409, outcome: 'failed', result: { schemaVersion: 'product.error.v1', error: { code: 'prompt_authorization_idempotency_conflict' } } }); return; }
-        tool(res, rpc, success({ ...run, ...(mode === 'foreign-receipt' ? { accountId: notebookId } : {}) })); return;
-      case 'getPromptTradingRunByKey':
-        if (mode === 'not-found') { tool(res, rpc, { ok: false, status: 404, outcome: 'failed', result: { schemaVersion: 'product.error.v1', error: { code: 'prompt_run_not_found' } } }); return; }
-        tool(res, rpc, success(run)); return;
+      case 'getTradingAccountResource': tool(res, rpc, success({ schemaVersion: 'canonical_orders.v1', accountId, rows: [{ id: otherEntryId, instrumentId: notebookId, externalOrderId: 'venue-order', side: 'sell', requestedQuantity: orders[1].quantity, limitPrice: orders[1].limitPrice, status: mode === 'readback-pending-no-venue' ? 'pending' : 'filled', ...(mode === 'readback-pending-no-venue' ? { externalOrderId: '' } : {}) }], hasMore: false, nextCursor: null })); return;
+      case 'submitManualFuturesLimitOrder':
+        if (!args.confirmed) {
+          if (mode === 'orders-plan') { tool(res, rpc, { error: 'operation_not_available', operationId: args.operationId }); return; }
+          tool(res, rpc, { schemaVersion: 'flusso.mcp_confirmation.v1', confirmationRequired: true, confirmationToken: 'synthetic-order-token', expiresAtUtc: '2026-10-12T02:05:30Z', operation: { operationId: args.operationId }, request: { method: mode === 'preview-method' ? 'DELETE' : 'POST', path: `/api/v1/me/trading-accounts/${accountId}/manual-orders`, query: null, headers: { 'Idempotency-Key': mode === 'preview-key' ? 'another-key' : args.headers['Idempotency-Key'] }, body: mode === 'preview-body' ? { ...args.body, orders: [] } : args.body }, effect: { liveTradingRequested: mode !== 'preview-effect', destructive: true } }); return;
+        }
+        if (mode === 'orders-lost') { req.socket.destroy(); return; }
+        if (mode === 'orders-refused') { tool(res, rpc, { operationId: args.operationId, ok: false, status: 403, outcome: 'failed', result: { schemaVersion: 'product.error.v1', error: { code: 'live_execution_not_included', message: 'The current Flusso plan does not include live execution.' } } }); return; }
+        if (mode === 'orders-foreign') { tool(res, rpc, success({ schemaVersion: 'product.manual_order_batch.v1', accountId: notebookId, operationType: 'manual_trade_requested', idempotencyKey: args.headers['Idempotency-Key'], orders: args.body.orders.map((order) => line(order)), asOfUtc: observed })); return; }
+        tool(res, rpc, { operationId: args.operationId, ok: mode !== 'orders-unknown-line', status: mode === 'orders-unknown-line' ? 503 : 200, outcome: 'succeeded', idempotencyKey: args.headers['Idempotency-Key'], result: { schemaVersion: 'product.manual_order_batch.v1', accountId, operationType: 'manual_trade_requested', idempotencyKey: args.headers['Idempotency-Key'], orders: args.body.orders.map((order, index) => line(order, mode === 'orders-mixed' && index === 1 ? 'blocked' : mode === 'orders-unknown-line' && index === 1 ? 'unknown' : 'submitted')), asOfUtc: observed } }); return;
       default: response(res, {}, 500);
     }
   });
@@ -194,28 +186,10 @@ test('old profile responses cannot populate the cache after disconnect or reconn
   }
 });
 
-test('execution choices use owned accounts and canonical fresh BTC/USD facts across all pages', async () => {
+test('trading accounts project only identity and labels from the owned account read', async () => {
   const { cloud } = client();
-  const choices = await cloud.discoverExecutionChoices();
-  assert.equal(choices.accounts[0].id, accountId);
-  assert.deepEqual(choices.instruments.map((row) => row.instrumentId), [policy.instrumentId]);
-  assert.equal(choices.complete, true);
-  assert.equal(choices.warning, null);
-  const reads = requests.filter((request) => request.body?.params?.arguments?.operationId === 'getMarketFacts');
-  assert.equal(reads.length, 2);
-  assert.deepEqual(reads[0].body.params.arguments.query, { assetGroup: 'spot', instrumentType: 'spot', q: 'BTC', limit: 100 });
+  assert.deepEqual(await cloud.listAccounts(), [{ id: accountId, displayName: 'Research account', publicId: 'ACCOUNT001' }]);
   assert.equal(requests.every((request) => request.body?.params?.name !== 'act_in_flusso'), true);
-});
-
-test('unavailable and stale market facts preserve owned accounts without fabricating instrument choices', async () => {
-  for (const unavailable of ['market-down', 'market-stale']) {
-    mode = unavailable;
-    const choices = await client().cloud.discoverExecutionChoices();
-    assert.equal(choices.accounts[0].id, accountId);
-    assert.deepEqual(choices.instruments, []);
-    assert.equal(choices.complete, false);
-    assert.ok(choices.warning);
-  }
 });
 
 test('concurrent reads rotate one refresh token and immediately forget a revoked connection', async () => {
@@ -260,20 +234,6 @@ test('a final Journal response from an old connection is discarded after disconn
   }
 });
 
-test('an old confirmed-policy response cannot return authority after disconnect', async () => {
-  let release, started;
-  const ready = new Promise((resolve) => { started = resolve; });
-  const delayed = new Promise((resolve) => { release = resolve; });
-  const { cloud } = client({ afterResponse: async (url, options) => {
-    if (new URL(url).pathname === '/mcp' && JSON.parse(options.body).params.arguments.confirmed) { started(); await delayed; }
-  } });
-  const preview = await cloud.previewPolicy({ accountId, policy, idempotencyKey: key });
-  const pending = cloud.confirmPolicy(preview.previewId);
-  const rejected = assert.rejects(pending, { code: 'connection_changed' });
-  await ready; await cloud.disconnect(); release(); await rejected;
-  assert.equal(requests.filter((request) => request.body?.params?.arguments?.confirmed).length, 1);
-});
-
 test('Journal full pagination preserves later edits to old entries', async () => {
   const { cloud } = client();
   const first = await cloud.readJournal({ notebookIds: [notebookId] });
@@ -290,93 +250,109 @@ test('repeating Journal cursors fail closed rather than looping or presenting a 
   await assert.rejects(client().cloud.readJournal(), { code: 'journal_response_invalid' });
 });
 
-test('policy approval commits only the displayed exact private preview once', async () => {
+test('a ticket is previewed and confirmed as one exact order list with the original key', async () => {
   const { cloud } = client();
-  const preview = await cloud.previewPolicy({ accountId, policy, idempotencyKey: key });
-  assert.equal('confirmationToken' in preview, false);
-  assert.equal(requests.filter((request) => request.body?.params?.arguments?.confirmed).length, 0);
-  const result = await cloud.confirmPolicy(preview.previewId);
-  assert.equal(result.authorizationId, authorizationId);
-  const committed = requests.find((request) => request.body?.params?.arguments?.confirmed).body.params.arguments;
-  assert.deepEqual(committed.body.policy, policy);
-  assert.equal(committed.headers['Idempotency-Key'], key);
-  assert.equal(committed.confirmationToken, 'synthetic-secret-preview-token');
-  await assert.rejects(cloud.confirmPolicy(preview.previewId), { code: 'policy_preview_expired' });
-});
-
-test('existing policies are read from canonical server grants', async () => {
-  const { cloud } = client();
-  assert.deepEqual(await cloud.listPolicies({ accountId }), [grant]);
-  assert.deepEqual(await cloud.getPolicy({ accountId, authorizationId }), grant);
-});
-
-test('lost execution response never retries POST and reconciles only the original key', async () => {
-  const { cloud } = client(); mode = 'lost-post';
-  const result = await cloud.runApprovedSignal({ accountId, authorizationId, body, idempotencyKey: key });
-  assert.equal(result.status, 'unknown');
-  assert.equal(requests.filter((request) => request.body?.params?.arguments?.operationId === 'runPromptTradingAuthorization').length, 1);
-  mode = '';
-  assert.deepEqual(await cloud.reconcileRunByKey({ accountId, authorizationId, idempotencyKey: key }), run);
-  const recovery = requests.find((request) => request.body?.params?.arguments?.operationId === 'getPromptTradingRunByKey').body.params.arguments;
-  assert.equal(recovery.headers['Idempotency-Key'], key);
-  assert.equal(requests.filter((request) => request.body?.params?.arguments?.operationId === 'runPromptTradingAuthorization').length, 1);
-});
-
-test('foreign execution receipt becomes uncertainty; absent canonical run does not dispatch a replacement', async () => {
-  const { cloud } = client(); mode = 'foreign-receipt';
-  assert.equal((await cloud.runApprovedSignal({ accountId, authorizationId, body, idempotencyKey: key })).status, 'unknown');
-  mode = 'not-found';
-  assert.equal(await cloud.reconcileRunByKey({ accountId, authorizationId, idempotencyKey: key }), null);
-  assert.equal(requests.filter((request) => request.body?.params?.arguments?.operationId === 'runPromptTradingAuthorization').length, 1);
-});
-
-test('a conflict without a canonical run remains uncertain and only reads back the original key', async () => {
-  mode = 'run-conflict';
-  const { cloud } = client();
-  assert.equal((await cloud.runApprovedSignal({ accountId, authorizationId, body, idempotencyKey: key })).status, 'unknown');
-  assert.deepEqual(await cloud.reconcileRunByKey({ accountId, authorizationId, idempotencyKey: key }), run);
-  assert.equal(requests.filter((request) => request.body?.params?.arguments?.operationId === 'runPromptTradingAuthorization').length, 1);
-});
-
-test('structured research yields only the approved typed current-hour body', () => {
-  const result = buildRunRequest({ entry, settings: { policy, maxSignalAgeSeconds: 120 }, now });
-  assert.equal(result.eligible, true);
-  assert.deepEqual(result.body, body);
-  assert.match(result.signalIdentity, /^[a-f\d]{64}$/);
-  assert.equal(JSON.stringify(result.body).includes('Untrusted'), false);
-  assert.equal('confirmation' in result.body, false);
-});
-
-test('stale, unsized, conflicting, paired or over-budget signals are staged for review', () => {
-  const variants = [
-    (value) => { value.signal.quality = 'degraded'; },
-    (value) => { value.signal.sourceRecordId = null; },
-    (value) => { value.signal.sourceOperationId = ''; },
-    (value) => { value.signal.sourceAsOfUtc = '2026-10-11T00:00:00Z'; },
-    (value) => { value.signal.legs[0].quantity = null; },
-    (value) => { value.signal.legs[0].quantityUnit = 'contracts'; },
-    (value) => { value.signal.legs[0].side = 'sell'; },
-    (value) => { value.signal.legs[0].asset.instrumentId = 'coinbase:spot:ETH-USD'; },
-    (value) => { value.signal.legs.push(structuredClone(value.signal.legs[0])); },
-    (value) => { value.signal.legs[0].referencePrice = 100001; },
-  ];
-  for (const mutate of variants) {
-    const changed = structuredClone(entry); mutate(changed);
-    const result = buildRunRequest({ entry: changed, settings: { policy }, now });
-    assert.equal(result.eligible, false); assert.equal('body' in result, false); assert.ok(result.reason);
+  const result = await cloud.submitOrders({ accountId, orders, idempotencyKey: key, reference: 'ticket kaia-1' });
+  assert.equal(result.status, 'submitted');
+  assert.deepEqual(result.lines.map((row) => [row.instrumentId, row.status]), [['gate:KAIA_USDT', 'submitted'], ['bybit:KAIAUSDT', 'submitted']]);
+  const calls = requests.filter((request) => request.body?.params?.arguments?.operationId === 'submitManualFuturesLimitOrder').map((request) => request.body.params.arguments);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].confirmed, undefined); assert.equal(calls[1].confirmed, true);
+  assert.equal(calls[1].confirmationToken, 'synthetic-order-token');
+  for (const call of calls) {
+    assert.equal(call.headers['Idempotency-Key'], key);
+    assert.equal(call.body.schemaVersion, 'product.manual_order_request.v3');
+    assert.deepEqual(call.body.orders, orders);
+    assert.equal(call.body.confirmation.accountId, accountId);
+    assert.equal(call.body.confirmation.operationType, 'manual_trade_requested');
+    assert.match(call.body.confirmation.expectedEffect, /2 limit orders from ticket kaia-1/);
   }
-  assert.equal(buildRunRequest({ entry, settings: { policy, budgetUsd: 10 }, now }).eligible, false);
 });
 
-test('signal identity survives prose edits, revisions, mirrors and refreshed source clocks', () => {
-  const original = buildRunRequest({ entry, settings: { policy }, now });
-  const edited = structuredClone(entry);
-  edited.id = otherEntryId; edited.version = 12; edited.origin = 'cloud';
-  edited.title = 'Another mirrored article'; edited.body = 'Completely different prose';
-  edited.signal.sourceAsOfUtc = '2026-10-12T02:00:25Z';
-  edited.signal.legs[0].asset.observedAtUtc = edited.signal.sourceAsOfUtc;
-  edited.signal.legs[0].quantity = 0.0005;
-  assert.equal(buildRunRequest({ entry: edited, settings: { policy }, now }).signalIdentity, original.signalIdentity);
-  edited.signal.sourceRecordId = 'another-explicit-signal-record';
-  assert.notEqual(buildRunRequest({ entry: edited, settings: { policy }, now }).signalIdentity, original.signalIdentity);
+test('each order keeps its own result; one refused leg makes the ticket partial', async () => {
+  mode = 'orders-mixed';
+  const result = await client().cloud.submitOrders({ accountId, orders, idempotencyKey: key });
+  assert.equal(result.status, 'partial');
+  assert.equal(result.lines[1].riskCode, 'condition_slippage_exceeded');
+  assert.match(result.lines[1].message, /4%/);
+});
+
+test('plan, scope and product refusals are definitive and send nothing further', async () => {
+  for (const refusal of ['orders-unavailable', 'orders-plan', 'orders-refused']) {
+    mode = refusal; requests = [];
+    const result = await client().cloud.submitOrders({ accountId, orders, idempotencyKey: key });
+    assert.equal(result.status, 'blocked'); assert.ok(result.message);
+    assert.equal(requests.filter((request) => request.body?.params?.arguments?.confirmed).length, refusal === 'orders-refused' ? 1 : 0);
+  }
+});
+
+test('a lost, foreign or partly unknown result remains unknown for read-only recovery', async () => {
+  for (const uncertain of ['orders-lost', 'orders-foreign', 'orders-unknown-line']) {
+    mode = uncertain;
+    assert.equal((await client().cloud.submitOrders({ accountId, orders, idempotencyKey: key })).status, 'unknown');
+  }
+  assert.equal(ticketStatus([{ status: 'submitted' }, { status: 'not_sent' }]), 'unknown');
+  assert.equal(ticketStatus([{ status: 'blocked' }, { status: 'blocked' }]), 'blocked');
+});
+
+test('an old order response is discarded after disconnect', async () => {
+  let release, started;
+  const ready = new Promise((resolve) => { started = resolve; });
+  const delayed = new Promise((resolve) => { release = resolve; });
+  const { cloud } = client({ afterResponse: async (url, options) => {
+    if (new URL(url).pathname === '/mcp' && JSON.parse(options.body).params.arguments.confirmed) { started(); await delayed; }
+  } });
+  const pending = cloud.submitOrders({ accountId, orders, idempotencyKey: key });
+  await ready; await cloud.disconnect(); release();
+  assert.equal((await pending).status, 'unknown', 'A dispatched order is never reported as refused');
+});
+
+
+test('preview method, body, retry identity and financial effect must match before any confirmation', async () => {
+  for (const invalid of ['preview-method', 'preview-body', 'preview-key', 'preview-effect']) {
+    mode = invalid; requests = [];
+    assert.equal((await client().cloud.submitOrders({ accountId, orders, idempotencyKey: key })).status, 'blocked');
+    assert.equal(requests.some(request => request.body?.params?.arguments?.confirmed), false);
+  }
+});
+
+test('turning execution off after preview prevents confirmation and is a definitive unsent result', async () => {
+  let enabled = true;
+  const { cloud } = client({ afterResponse: async (url, options) => {
+    if (new URL(url).pathname === '/mcp') {
+      const args = JSON.parse(options.body).params.arguments;
+      if (args.operationId === 'submitManualFuturesLimitOrder' && !args.confirmed) enabled = false;
+    }
+  } });
+  const result = await cloud.submitOrders({ accountId, orders, idempotencyKey: key }, { canDispatch: async () => enabled });
+  assert.equal(result.status, 'blocked');
+  assert.equal(requests.some(request => request.body?.params?.arguments?.confirmed), false);
+});
+
+test('caller edits cannot change the frozen previewed orders', async () => {
+  const mutable = structuredClone(orders);
+  const { cloud } = client({ afterResponse: async (url, options) => {
+    if (new URL(url).pathname === '/mcp') {
+      const args = JSON.parse(options.body).params.arguments;
+      if (args.operationId === 'submitManualFuturesLimitOrder' && !args.confirmed) mutable[0].quantity *= 2;
+    }
+  } });
+  assert.equal((await cloud.submitOrders({ accountId, orders: mutable, idempotencyKey: key })).status, 'submitted');
+  const confirms = requests.filter(request => request.body?.params?.arguments?.confirmed);
+  assert.deepEqual(confirms[0].body.params.arguments.body.orders, orders);
+});
+
+test('unknown recovery reads exact canonical IDs and never sends a replacement POST', async () => {
+  const lines = orders.map(order => line(order));
+  lines[1] = { ...lines[1], status: 'unknown', submitted: false, riskAccepted: true, orderId: otherEntryId, canonicalInstrumentId: notebookId };
+  const attempt = { accountId, orders, idempotencyKey: key, receipt: { status: 'unknown', lines, message: null } };
+  const { cloud } = client();
+  const result = await cloud.reconcileOrders(attempt);
+  assert.equal(result.status, 'submitted');
+  assert.match(result.lines[1].message, /Submission is not a fill/);
+  assert.equal(requests.some(request => request.body?.params?.name === 'act_in_flusso'), false);
+  mode = 'readback-pending-no-venue';
+  assert.equal(await cloud.reconcileOrders(attempt), null);
+  assert.equal(await cloud.reconcileOrders({ ...attempt, receipt: null }), null);
+  assert.equal(await cloud.reconcileOrders({ ...attempt, receipt: { ...attempt.receipt, lines: [lines[0], { ...lines[1], orderId: null }] } }), null);
 });

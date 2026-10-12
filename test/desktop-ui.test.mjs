@@ -34,3 +34,21 @@ test('model setup is optional, reports native progress, and never claims unknown
   assert.equal(modelPresentation().visible, false);
   assert.equal(modelPresentation().busy, true);
 });
+
+test('appearance mirrors the website palettes and resolves System from the OS', async () => {
+  const { THEME_OPTIONS, resolveTheme } = await import('../public/desktop-ui.mjs');
+  const { THEMES } = await import('../src/schema.mjs');
+  assert.deepEqual(THEME_OPTIONS.map(option => option.mode), THEMES);
+  assert.equal(resolveTheme('system', true), 'classic-dark'); assert.equal(resolveTheme('system', false), 'classic');
+  assert.equal(resolveTheme('atlantic', false), 'atlantic'); assert.equal(resolveTheme('unknown', true), 'classic-dark');
+});
+
+test('activity labels say what happened to a ticket in plain words', async () => {
+  const { activityStatus, entryStatus } = await import('../public/desktop-ui.mjs');
+  assert.deepEqual(activityStatus({ status: 'submitted' }), { label: 'sent', tone: 'pos' });
+  assert.deepEqual(activityStatus({ status: 'blocked' }), { label: 'refused', tone: 'neg' });
+  assert.deepEqual(activityStatus({ status: 'observed', decision: 'candidate' }), { label: 'flagged', tone: 'info' });
+  assert.equal(activityStatus({ status: 'answered' }).label, 'answered');
+  assert.equal(entryStatus({ ticket: null }), null);
+  assert.equal(entryStatus({ ticket: { error: 'Bad JSON' } }).tone, 'warn');
+});

@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { createVault } from './vault.mjs';
 import { openStore } from './store.mjs';
-import { createCloudClient, buildRunRequest } from './cloud.mjs';
+import { createCloudClient } from './cloud.mjs';
 import { createListener } from './listener.mjs';
 import { startServer } from './server.mjs';
 import { openBrowser } from './browser.mjs';
@@ -28,7 +28,7 @@ async function main(args) {
     if (command === 'start') {
       if (args.some(arg => arg !== '--no-browser')) throw new Error('Unknown start option.');
       const releaseInstance = await claimInstance(directory);
-      const cloud = createCloudClient({ vault }), listener = createListener({ store, cloud, buildRunRequest });
+      const cloud = createCloudClient({ vault }), listener = createListener({ store, cloud });
       let app;
       try {
       app = await startServer({ store, cloud, listener });

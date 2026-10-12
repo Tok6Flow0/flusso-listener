@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { createVault } from '../src/vault.mjs';
 import { openStore } from '../src/store.mjs';
-import { createCloudClient, buildRunRequest } from '../src/cloud.mjs';
+import { createCloudClient } from '../src/cloud.mjs';
 import { createListener } from '../src/listener.mjs';
 import { startServer } from '../src/server.mjs';
 import { defaultDirectory } from '../src/cli.mjs';
@@ -44,7 +44,7 @@ async function start() {
   const vault = await createVault(directory); store = await openStore({ directory, vault });
   releaseInstance = await claimInstance(directory);
   model = createDesktopModel({ directory, runtimeDirectory, onChange: changed });
-  const cloud = createCloudClient({ vault }); listener = createListener({ store, cloud, buildRunRequest, classify: model.classify });
+  const cloud = createCloudClient({ vault }); listener = createListener({ store, cloud, classify: model.classify });
   server = await startServer({ store, cloud, listener, checkModel: model.modelStatus, open: value => shell.openExternal(externalUrl(value)) });
   updates = createUpdates({ updater: createRequire(import.meta.url)('electron-updater').autoUpdater, version: app.getVersion(), packaged: app.isPackaged, preview: app.getVersion().includes('-'), onChange: changed, beforeInstall: async () => {
     const settings = store.settings(); store.saveSettings({ ...settings, enabled: false, executionEnabled: false }); quitting = true; await shutdown();

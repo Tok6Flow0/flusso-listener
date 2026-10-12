@@ -36,7 +36,14 @@ export async function openStore({ directory, vault, encryptionKey, clock = () =>
   const put = (kind, id, value) => db.prepare('INSERT INTO records(kind,id,version,cipher) VALUES(?,?,?,?) ON CONFLICT(kind,id) DO UPDATE SET version=excluded.version,cipher=excluded.cipher').run(kind, id, value.version ?? 1, encrypt(kind, id, value));
   function transaction(action) { db.exec('BEGIN IMMEDIATE'); try { const value = action(); db.exec('COMMIT'); return value; } catch (error) { db.exec('ROLLBACK'); throw error; } }
   transaction(() => {
-    if (!get('settings', 'main')) put('settings', 'main', { ...DEFAULT_SETTINGS, listenerId: randomUUID(), version: 1 });
+    const stored = get('settings', 'main');
+    if (!stored) put('settings', 'main', { ...DEFAULT_SETTINGS, listenerId: randomUUID(), version: 1 });
+    else if ('policy' in stored || 'authorizationId' in stored || !stored.risk || !('maxTicketUsd' in stored.risk) || !('maxLeverage' in stored.risk)) {
+      // 0.2.0-preview.1 used a BTC-only policy lane. Its fields are retired and
+      // execution restarts off so the owner reviews the new risk settings.
+      const { policy: _policy, authorizationId: _authorizationId, budgetUsd: _budget, ...rest } = stored;
+      put('settings', 'main', { ...DEFAULT_SETTINGS, ...rest, executionEnabled: false, risk: { ...DEFAULT_SETTINGS.risk, ...rest.risk }, maxSignalAgeSeconds: Math.max(rest.maxSignalAgeSeconds ?? 0, DEFAULT_SETTINGS.maxSignalAgeSeconds), version: stored.version + 1 });
+    }
     if (!all('notebook').length) { const id = randomUUID(); put('notebook', `local:${id}`, { id, name: 'My Journal', origin: 'local', version: 1, telegramEnabled: false }); }
   });
   return {

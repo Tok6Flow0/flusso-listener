@@ -17,7 +17,7 @@ The standalone app includes its runtime. You do not install Node or Ollama.
 The full Flusso dashboard remains at [flusso.stream](https://flusso.stream).
 Choose the account control at the bottom left to connect, disconnect, open account settings, or check the app version and updates. Cloud access is optional.
 
-The first version, **0.2.0-preview.1**, is an unsigned preview. Review the release's platform requirements and signing status. Preview automatic updates are disabled; signed production updates have a check, download, and restart flow that requires your clicks. Do not disable OS signature protections. See [desktop release details](docs/desktop-releases.md).
+Version **0.2.0-preview.2** remains an unsigned preview. Review the release's platform requirements and signing status. Preview automatic updates are disabled; signed production updates have a check, download, and restart flow that requires your clicks. Do not disable OS signature protections. See [desktop release details](docs/desktop-releases.md).
 
 Use an unlocked OS credential store: macOS Keychain, Windows Credential Manager,
 or Linux Secret Service (GNOME Keyring or KWallet). On Ubuntu 24.04, use the DEB
@@ -66,7 +66,7 @@ browser. There is no API key to paste into a model prompt. The browser uses
 OAuth with PKCE and exchanges a single-use authorization code for a revocable
 device connection. The default connection lifetime is 90 days; choose a different
 available lifetime in Flusso's consent/settings. A device credential does not
-replace trading-policy approval.
+enable auto-trade or replace your explicit local execution limits.
 
 ## Keep a Journal
 
@@ -99,7 +99,7 @@ node src/cli.mjs journal create --idempotency-key my-original-research-key < ent
   "notebookId": "COPY_THE_RETURNED_LOCAL_NOTEBOOK_UUID",
   "title": "Morning research",
   "body": "## Morning opportunities\n\nThe source is unavailable; revisit before making a decision.",
-  "status": "watching",
+  "status": "reviewed",
   "source": "agent",
   "observedAtUtc": null,
   "signal": null
@@ -121,8 +121,9 @@ Source/notebook/heading filters are enforced by code; freeform instructions guid
 the small model's classification. They are not hard financial controls.
 
 Existing notes become a baseline on startup or when switching the listener on.
-The first automatic cloud import also becomes a baseline. New observations and
-later revisions are classified once per revision. Cloud synchronization scans
+The first automatic cloud import also becomes a baseline. New watched notes and
+later revisions are classified once per revision; explicit order tickets use
+deterministic validation and do not need a model. Cloud synchronization scans
 all pages, bounded at 5,000 entries, so edits to older notes are found. An
 incomplete scan is displayed and does not authorize cloud execution.
 
@@ -136,27 +137,46 @@ only for new in-scope observations. The advanced Ollama path unloads after five 
 
 ## Optional bounded execution
 
-Execution is off by default. In **Execution policy**, select your account and a fresh supported market,
-then enter explicit quantity/price/spending caps, maximum
-runs and a UTC start/expiry. Review the server's exact preview, then press
-**Approve this exact policy**. Approval saves a policy for this connection and
-leaves execution off. Enable it separately in **Listener** only when ready.
+Execution is off by default. Connect with write access, select your account in
+**Listener**, and set **Max per order**, **Max per ticket**, and **Max leverage**
+before enabling **Auto-trade** and saving. These local limits are ceilings, not
+an allocation or a server-persisted trading policy. Optional slippage and volume
+conditions can tighten each order. The app never raises account or venue leverage.
 
-The existing server currently supports **spot BTC/USD buy-limit orders, at most
-one admission per UTC hour per policy**. Only one fresh structured leg with a
-stable source-record identity, exact matching asset, explicit BTC base quantity,
-and positive reference limit price can reach that lane. Plain Markdown, unsupported
-assets/actions, paired signals, missing units, stale or degraded evidence, and
-signals exceeding your policy are kept for review. The app does not increase a
-budget to meet a minimum, invent contract terms, or retry an uncertain order.
+Execution requires an explicit `flusso-orders` Markdown code fence in a new
+in-scope entry with status `watching`. Its JSON contains `id`, optional
+`together`, and an `orders` array. Give every intended submission a unique stable
+ticket `id` and retain it across edits and local/cloud copies. Each element uses
+the existing basic order fields: exact public `venue:instrument` from Flusso
+market facts, `side` (`buy` or `sell`), positive `quantity` in that venue's native
+contract units, positive `limitPrice`, and optional supported `conditions`.
+Verify instrument terms and steps before sizing; equal contract counts on two
+venues are not equal exposure. Plain prose and a structured signal attachment do
+not become orders. Reviewed hourly research with `signal: null` cannot execute.
 
-The server rechecks account ownership, plan, device authorization, immutable
-budgets, cash, risk, capability and writer permissions. A model cannot override
-them. Source-signal deduplication spans local/cloud copies and prose edits.
-Each possible submission is durably saved before dispatch. Unknown or pending
-outcomes pause new execution until canonical readback using the original retry
-key resolves them. A command receipt is not a fill. Revoking a policy stops
-future admissions; outstanding orders require their own cancellation.
+The listener calls the existing `submitManualFuturesLimitOrder` tool with
+`product.manual_order_request.v3`. Supported instruments are the server's
+qualified linear crypto perpetuals, using limit orders. A hedge is two ordinary
+independent elements, dispatched in parallel with bounded concurrency. With
+`together: true`, a shared short dispatch delay coordinates their release; it
+does not make them atomic or guarantee simultaneous arrival or fills.
+
+Local order and ticket ceilings tighten the submitted `maxNotionalUsd`
+conditions; `maxLeverage` is also sent for execution to check against
+authoritative configured leverage. Missing or excessive leverage refuses that
+order. The server still checks ownership, live plan, connection consent, margin,
+venue terms, risk and writer authority. A model cannot override those checks or
+create a ticket from research text. Turning auto-trade off during a preview
+prevents its confirmation; it cannot recall an order already sent.
+
+Each possible submission is durably saved before dispatch. Activity retains
+separate `submitted`, `blocked`, `unknown` or `not_sent` results for every element;
+one submitted leg with another refused or unresolved leaves residual exposure.
+Submitted is not filled. Unknown or pending outcomes pause new execution, with
+no automatic order POST retry. Check canonical orders, fills and positions in
+Flusso before resolving an attempt; preserve its original request and retry key,
+never edit an uncertain request or create a replacement ticket to retry it.
+Turning auto-trade off does not cancel existing orders or close positions.
 
 No live trade is required for installation or tests. `npm test` uses isolated
 encrypted temporary stores and fake cloud/model adapters, never your capital.

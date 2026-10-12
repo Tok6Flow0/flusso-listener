@@ -2,9 +2,10 @@ import { createServer } from 'node:http';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { InputError, ID, object, settingsInput, text } from './schema.mjs';
+import { InputError, ID, object, settingsInput, text, THEMES } from './schema.mjs';
 import { listenCallback, openBrowser } from './browser.mjs';
 import { modelStatus } from './model.mjs';
+import { readTicket } from './orders.mjs';
 
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']], ['/app.mjs', ['app.mjs', 'text/javascript; charset=utf-8']],
@@ -17,15 +18,16 @@ const assets = new Map([
 export async function startServer({ store, cloud, listener, port = 0, open = openBrowser, callback = listenCallback, checkModel = modelStatus }) {
   const bootstrap = randomBytes(32).toString('base64url'), session = randomBytes(32).toString('base64url'), csrf = randomBytes(32).toString('base64url');
   let origin, connectPending = false, connectionGeneration = 0;
+  const theme = () => { const saved = store.get('display', 'main')?.theme; return THEMES.includes(saved) ? saved : 'system'; };
   const suspendExecution = () => {
     const settings = store.settings();
-    store.saveSettings({ ...settings, enabled: false, executionEnabled: false, authorizationId: null, policy: null });
+    store.saveSettings({ ...settings, enabled: false, executionEnabled: false, accountId: null });
     listener.refresh();
   };
   const requireStableConnection = (generation, before, after) => {
     if (connectPending || generation !== connectionGeneration || !before.connected || !after.connected
       || before.clientId !== after.clientId || before.connectionId !== after.connectionId) {
-      throw new InputError('The connection changed. Reload and approve the policy for the current connection.', 409);
+      throw new InputError('The connection changed. Reload and try again.', 409);
     }
   };
   const server = createServer(async (request, response) => {
@@ -37,7 +39,9 @@ export async function startServer({ store, cloud, listener, port = 0, open = ope
       const url = new URL(request.url, origin);
       if (request.method === 'GET' && assets.has(url.pathname) && !url.search) {
         const [filename, type] = assets.get(url.pathname);
-        const content = await readFile(fileURLToPath(new URL(`../public/${filename}`, import.meta.url)));
+        let content = await readFile(fileURLToPath(new URL(`../public/${filename}`, import.meta.url)));
+        // The saved appearance is applied before first paint; it is never user HTML.
+        if (filename === 'index.html') { const mode = theme(); content = content.toString('utf8').replace('<html lang="en">', `<html lang="en" data-theme-mode="${mode}"${mode === 'system' ? '' : ` data-theme="${mode}"`}>`); }
         response.writeHead(200, { 'Content-Type': type }); response.end(content); return;
       }
       if (request.method === 'POST' && url.pathname === '/api/bootstrap') {
@@ -49,9 +53,9 @@ export async function startServer({ store, cloud, listener, port = 0, open = ope
       if (!url.pathname.startsWith('/api/') || url.search) return reply(404, { error: 'Route not found.' });
       if (request.method === 'GET' && url.pathname === '/api/session') return reply(200, { csrf });
       if (request.method === 'GET' && url.pathname === '/api/profile') return reply(200, await cloud.profile());
-      if (request.method === 'GET' && url.pathname === '/api/execution-choices') return reply(200, await cloud.discoverExecutionChoices());
+      if (request.method === 'GET' && url.pathname === '/api/accounts') return reply(200, { accounts: await cloud.listAccounts() });
       if (request.method !== 'GET' && (request.method !== 'POST' || request.headers.origin !== origin || !same(request.headers['x-flusso-csrf'], csrf))) return reply(403, { error: 'Request origin or session refused.' });
-      if (request.method === 'GET' && url.pathname === '/api/status') return reply(200, { settings: store.settings(), listener: listener.status(), cloud: await cloud.status(), model: await checkModel(), notebooks: store.notebooks(), entries: store.entries().slice(0, 500), activity: store.all('activity').sort((a, b) => b.atUtc.localeCompare(a.atUtc)).slice(0, 100), attempts: store.all('attempt').map(({ body: _body, ...attempt }) => attempt).slice(-100) });
+      if (request.method === 'GET' && url.pathname === '/api/status') return reply(200, { settings: store.settings(), listener: listener.status(), cloud: await cloud.status(), model: await checkModel(), display: { theme: theme() }, notebooks: store.notebooks(), entries: store.entries().slice(0, 500).map(entry => ({ ...entry, ticket: readTicket(entry.body) })), activity: store.all('activity').sort((a, b) => b.atUtc.localeCompare(a.atUtc)).slice(0, 100), attempts: store.all('attempt').filter(row => row.kind === 'orders').sort((a, b) => b.atUtc.localeCompare(a.atUtc)).slice(0, 100) });
       const input = request.method === 'POST' ? await readJson(request) : null;
       if (url.pathname === '/api/connect' && request.method === 'POST') {
         object(input, []);
@@ -72,19 +76,31 @@ export async function startServer({ store, cloud, listener, port = 0, open = ope
         object(input, []); connectionGeneration += 1; suspendExecution(); await cloud.disconnect(); return reply(200, { disconnected: true });
       }
       if (url.pathname === '/api/settings' && request.method === 'POST') {
-        if (connectPending) throw new InputError('Complete the current browser connection before changing Listener settings.', 409);
+        if (connectPending) throw new InputError('Finish connecting Flusso before changing Listener settings.', 409);
         const generation = connectionGeneration;
         const next = settingsInput(input), old = store.settings();
         if (next.executionEnabled) {
           const connection = await cloud.status();
-          const approved = store.get('grant', next.authorizationId);
-          if (!approved || approved.accountId !== next.accountId || approved.clientId !== connection.clientId) throw new InputError('Create and approve a policy for this connected Listener first.');
-          const current = await cloud.getPolicy({ accountId: next.accountId, authorizationId: next.authorizationId });
+          if (!connection.connected || !connection.scopes.includes('mcp:write')) throw new InputError('Connect Flusso with write access before turning on auto-trade.');
+          if (!next.accountId) throw new InputError('Choose the trading account auto-trade should use.');
+          const accounts = await cloud.listAccounts();
           requireStableConnection(generation, connection, await cloud.status());
-          if (current.status !== 'active' || current.policyHash !== approved.policyHash) throw new InputError('This policy is no longer active.');
-          next.policy = current.policy;
-        } else if (next.authorizationId !== old.authorizationId) next.policy = null;
+          if (!accounts.some(row => row.id.toLowerCase() === next.accountId.toLowerCase())) throw new InputError('That trading account is not available on this connection.');
+        }
         const saved = store.saveSettings(next); listener.refresh({ baseline: !old.enabled && saved.enabled }); return reply(200, saved);
+      }
+      if (/^\/api\/attempts\/[A-Za-z0-9_-]{8,160}\/resolve$/.test(url.pathname) && request.method === 'POST') {
+        object(input, []);
+        const attempt = store.get('attempt', decodeURIComponent(url.pathname.split('/')[3]));
+        if (!attempt || attempt.kind !== 'orders' || !['pending', 'unknown'].includes(attempt.status)) throw new InputError('Only an unconfirmed order result can be marked resolved.', 404);
+        // The owner checked Flusso. The durable claim stays, so the ticket is never re-sent.
+        store.put('attempt', attempt.id, { ...attempt, status: 'resolved', resolvedAtUtc: new Date().toISOString() });
+        listener.refresh(); return reply(200, { resolved: true });
+      }
+      if (url.pathname === '/api/display' && request.method === 'POST') {
+        object(input, ['theme']);
+        if (!THEMES.includes(input.theme)) throw new InputError('Choose an available appearance.');
+        store.put('display', 'main', { theme: input.theme }); return reply(200, { theme: input.theme });
       }
       if (url.pathname === '/api/check' && request.method === 'POST') { object(input, []); await listener.tick(); return reply(200, listener.status()); }
       if (url.pathname === '/api/sync' && request.method === 'POST') {
@@ -99,25 +115,6 @@ export async function startServer({ store, cloud, listener, port = 0, open = ope
       if (url.pathname === '/api/notebooks' && request.method === 'POST') { object(input, ['name']); return reply(201, store.createNotebook(input.name)); }
       if (url.pathname === '/api/entries' && request.method === 'POST') return reply(201, store.createEntry(input, request.headers['idempotency-key'] ?? randomUUID()));
       if (/^\/api\/entries\/[a-f\d-]+$/i.test(url.pathname) && request.method === 'POST') return reply(200, store.updateEntry(url.pathname.split('/').at(-1), input));
-      if (url.pathname === '/api/policy/preview' && request.method === 'POST') {
-        if (connectPending) throw new InputError('Complete the current browser connection before previewing a policy.', 409);
-        object(input, ['accountId', 'policy']);
-        const generation = connectionGeneration, connection = await cloud.status();
-        const preview = await cloud.previewPolicy({ ...input, idempotencyKey: randomUUID() });
-        requireStableConnection(generation, connection, await cloud.status());
-        return reply(200, preview);
-      }
-      if (url.pathname === '/api/policy/approve' && request.method === 'POST') {
-        if (connectPending) throw new InputError('Complete the current browser connection before approving a policy.', 409);
-        object(input, ['previewId']); text(input.previewId, 100, 'preview identity');
-        const generation = connectionGeneration, connection = await cloud.status();
-        requireStableConnection(generation, connection, connection);
-        const grant = await cloud.confirmPolicy(input.previewId), status = await cloud.status();
-        requireStableConnection(generation, connection, status);
-        store.put('grant', grant.authorizationId, { ...grant, clientId: status.clientId });
-        const settings = store.settings(); store.saveSettings({ ...settings, accountId: grant.accountId, authorizationId: grant.authorizationId, policy: grant.policy, executionEnabled: false });
-        listener.refresh(); return reply(200, grant);
-      }
       return reply(404, { error: 'Route not found.' });
     } catch (error) {
       const status = error instanceof InputError ? error.status : error.name === 'CloudError' ? 400 : 500;
