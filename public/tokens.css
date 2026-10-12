@@ -1,0 +1,971 @@
+/* ==========================================================================
+   Flusso design tokens — the single source of truth for colour and type.
+
+   Rules of the system (see design/BRAND-KIT.md):
+     1. Three typefaces, three jobs. Newsreader = editorial titles only.
+        Hanken Grotesk = every interface heading and body string.
+        IBM Plex Mono = labels, codes, and EVERY number.
+     2. One type scale. No half-pixel sizes, four weights only.
+     3. One palette. Colour literals do not belong in component CSS.
+     4. Numbers are tabular and their decimal count is a function of what
+        the number means, not of where it happens to be rendered.
+   ========================================================================== */
+
+/* Classic Light is the root palette, and `data-theme="classic"` names it so a
+   subtree can opt back into it — the landing scene's painted water is always
+   light, so the bands riding on it ask for Classic ink whatever theme is on. */
+:root,
+[data-theme="classic"] {
+  /* ---------------------------------------------------------------- type */
+  --font-sans: "Hanken Grotesk", system-ui, sans-serif;
+  --font-serif: "Newsreader", Georgia, serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  /* Scale — 13 steps, no half pixels. */
+  --fs-micro: 9px; /* mono micro-label, dense table chrome */
+  --fs-label: 10px; /* mono label, badge, tag */
+  --fs-caption: 11px; /* caption, helper text, table cell */
+  --fs-body-sm: 12px; /* secondary UI text */
+  --fs-body: 13px; /* default UI text */
+  --fs-body-lg: 14px; /* prose, comfortable reading */
+  --fs-title-sm: 16px; /* card title */
+  --fs-title: 18px; /* panel title */
+  --fs-title-lg: 20px; /* section title */
+  --fs-display-sm: 24px; /* page title */
+  --fs-display: 28px; /* hero readout */
+  --fs-display-lg: 36px; /* editorial heading */
+  --fs-display-xl: 44px; /* marketing heading */
+
+  /* Weights — four, and only four. */
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+
+  /* Line heights */
+  --lh-tight: 1.1;
+  --lh-snug: 1.3;
+  --lh-normal: 1.45;
+  --lh-relaxed: 1.6;
+
+  /* Tracking */
+  --ls-label: 0.1em; /* uppercase mono labels */
+  --ls-tight: -0.01em; /* display sizes */
+
+  /* ------------------------------------------------------- paper / warm */
+  /* The warm neutral ramp. Every surface and every hairline lives here;
+     there are no cold greys in this product. */
+  --c-white: #ffffff; /* literal white: text/washes on dark chrome, every theme */
+  --c-surface: #ffffff; /* card + input surface; themes re-point this */
+  --c-on-ink: #ffffff; /* text on a solid --c-ink background (inverted pill) */
+  --c-paper: #fbfaf6; /* app background */
+  --c-paper-raise: #f9f6ef; /* raised block on paper */
+  --c-paper-sand: #f6f2e9; /* sand block, quiet fill */
+  --c-paper-sunk: #f1ece0; /* sunken row, table stripe */
+  --c-paper-deep: #eae4d6; /* deep sand, pressed state */
+  --c-line: #e7e0d2; /* default hairline */
+  --c-line-strong: #d8cfb8; /* emphasised divider */
+
+  /* ---------------------------------------------------------------- ink */
+  --c-ink: #171310; /* primary text */
+  --c-ink-2: #3a342b; /* heading on paper, dense text */
+  --c-ink-3: #5b5347; /* body text */
+  --c-ink-4: #776f64; /* secondary text */
+  --c-ink-5: #685f50; /* muted text, mono labels */
+  --c-ink-6: #746c60; /* faint text, placeholder */
+  --c-ink-7: #c3baa5; /* disabled, empty-state glyph */
+
+  /* --------------------------------------------------------------- teal */
+  --c-teal-wash: #eef6f4; /* tinted surface */
+  --c-teal-soft: #d6e7e3; /* border on wash */
+  --c-teal-100: #bce4dc;
+  --c-teal-200: #9ad5cd;
+  --c-teal-mid: #6fc9bd; /* accent on dark */
+  --c-teal: #12857a; /* brand accent */
+  --c-teal-deep: #0e6f66; /* pressed, text on wash */
+  --c-teal-800: #225d55; /* deepest brand tone */
+
+  /* ------------------------------------------------------- dark surface */
+  --c-panel: #0f1512; /* dark panel */
+  --c-panel-2: #14201e; /* sidebar */
+  --c-panel-3: #2c2620; /* raised inside dark */
+  --c-panel-line: #27453f; /* hairline on dark */
+  --c-on-dark: #b7c4bf; /* body text on dark */
+  --c-on-dark-2: #9fb0ab; /* muted text on dark */
+  --c-on-dark-3: #7e9089; /* faint text on dark */
+  --c-on-dark-4: #63736d; /* faintest text on dark */
+
+  /* ----------------------------------------------- semantic: gain (up) */
+  --c-pos-wash: #e4f2eb;
+  --c-pos-soft: #b7d4c8;
+  --c-pos-mid: #7fd1a0;
+  --c-pos: #3f8f5c;
+  --c-pos-deep: #277056;
+
+  /* ---------------------------------------------- semantic: loss (down) */
+  --c-neg-wash: #fdf4f2;
+  --c-neg-soft: #f0dbd3;
+  --c-neg-100: #e5c5c0;
+  --c-neg-mid: #e08e82;
+  --c-neg: #b74d42;
+  --c-neg-deep: #8f3a2f;
+
+  /* ------------------------------------------- semantic: attention/hold */
+  --c-warn-wash: #fff8ee;
+  --c-warn-soft: #efe2c8;
+  --c-warn-mid: #d9a94e;
+  --c-warn: #a96619;
+  --c-warn-deep: #7a5a1c;
+
+  /* ------------------------------------------------ annotation: the marker */
+  /* Highlighter yellow. It annotates the interface — the guided walkthrough
+     draws with it — and never carries meaning about money, state, or
+     direction. Attention still belongs to the `--c-warn` ramp. */
+  --c-marker: #f2cd1d;
+  --c-marker-soft: #ffe873;
+  --c-marker-deep: #b98b0d;
+
+  /* --------------------------------------- semantic: neutral notice/info */
+  --c-info-wash: #e8edf5;
+  --c-info-soft: #d2d6dc;
+  --c-info: #4a5e8c;
+  --c-link: #2f6fed; /* true link blue, external destinations */
+  --c-violet: #7a4b86; /* category accent, non-financial */
+
+  /* ------------------------------------- categorical: confidence band accents */
+  /* Vivid primaries for the Library's confidence-band curves. Deliberately
+     defined once, never re-pointed per theme: a band keeps its colour in every
+     display style, and the best band is always the same bright green. These
+     annotate categories, never money direction — gain and loss stay on the
+     `--c-pos`/`--c-neg` ramps. */
+  --c-band-0: #e5484d; /* red */
+  --c-band-1: #f76b15; /* orange */
+  --c-band-2: #f5b800; /* yellow */
+  --c-band-3: #d6409f; /* magenta */
+  --c-band-4: #a855f7; /* purple */
+  --c-band-5: #6e56cf; /* violet */
+  --c-band-6: #3e8ef7; /* blue */
+  --c-band-7: #00a2c7; /* cyan */
+  --c-band-8: #12a594; /* teal */
+  --c-band-9: #0b7f71; /* deep teal */
+  --c-band-best: #2fc24d; /* the best band, unmistakable in any theme */
+
+  /* --------------------------------------- accent text on dark chrome */
+  /* Sidebars, auth story, marketing dark bands stay dark in every theme, so
+     the pale accent text they carry must stay pale in every theme. In light
+     themes the wash/soft ramp is already pale, so these resolve to it; dark
+     theme blocks override them with pale literals because there the wash/soft
+     ramp is (correctly) dark. */
+  --c-accent-on-dark: var(--c-teal-soft);
+  --c-accent-on-dark-2: var(--c-teal-wash);
+
+  /* -------------------------------------------------------- rgb channels */
+  /* Comma-separated channel triplets for translucent mixes:
+     `rgba(var(--c-ink-rgb), .06)`. Each `--c-X-rgb` MUST equal the hex of
+     `--c-X` in the same theme block — `npm run design:lint` enforces it.
+     `--c-shadow-rgb` is the one exception: it has no hex twin and pins every
+     box-shadow to a dark base so dark themes do not glow. */
+  --c-surface-rgb: 255, 255, 255;
+  --c-ink-rgb: 23, 19, 16;
+  --c-ink-5-rgb: 104, 95, 80;
+  --c-teal-rgb: 18, 133, 122;
+  --c-teal-mid-rgb: 111, 201, 189;
+  --c-paper-rgb: 251, 250, 246;
+  --c-paper-raise-rgb: 249, 246, 239;
+  --c-paper-sand-rgb: 246, 242, 233;
+  --c-line-strong-rgb: 216, 207, 184;
+  --c-panel-rgb: 15, 21, 18;
+  --c-panel-2-rgb: 20, 32, 30;
+  --c-on-dark-rgb: 183, 196, 191;
+  --c-on-dark-3-rgb: 126, 144, 137;
+  --c-pos-rgb: 63, 143, 92;
+  --c-pos-mid-rgb: 127, 209, 160;
+  --c-pos-wash-rgb: 228, 242, 235;
+  --c-neg-rgb: 183, 77, 66;
+  --c-neg-mid-rgb: 224, 142, 130;
+  --c-warn-rgb: 169, 102, 25;
+  --c-warn-mid-rgb: 217, 169, 78;
+  --c-warn-wash-rgb: 255, 248, 238;
+  --c-marker-rgb: 242, 205, 29;
+  --c-info-rgb: 74, 94, 140;
+  --c-link-rgb: 47, 111, 237;
+  --c-violet-rgb: 122, 75, 134;
+  --c-shadow-rgb: 23, 19, 16;
+
+  color-scheme: light;
+
+  /* ------------------------------------------------------------- legacy */
+  /* Kept so existing rules resolve; they now point at palette entries. */
+  --paper: var(--c-paper);
+  --paper-deep: var(--c-paper-deep);
+  --ink: var(--c-ink);
+  --muted: var(--c-ink-5);
+  --line: var(--c-line);
+  --teal: var(--c-teal);
+  --teal-soft: var(--c-teal-wash);
+  --sidebar: var(--c-panel-2);
+  --white: var(--c-white);
+  --red: var(--c-neg);
+  --amber: var(--c-warn);
+}
+
+/* ==========================================================================
+   Themes. `:root` above is Classic Light. Each block below re-points the
+   same palette roles; nothing outside tokens.css names a literal colour, so
+   setting `data-theme` on <html> restyles the whole product.
+     - classic-dark: the warm ramp inverted — espresso paper, light ink.
+     - graphite:     light, cool neutral greys, restrained slate-blue accent.
+     - atlantic:     dark navy surfaces, cerulean accent.
+     - nocturne:     dark plum surfaces, heliotrope accent.
+     - evergreen:    dark spruce surfaces, mint accent.
+     - heather:      light lavender-grey paper, quiet plum accent.
+     - midnight:     true-black surfaces for OLED, the classic teal accent.
+   Rules for a new theme: keep `--c-X-rgb` equal to `--c-X`; keep the panel
+   ramp dark (sidebars are dark in every theme); keep pos green / neg red /
+   warn amber legible on that theme's surfaces; set `color-scheme`.
+   ========================================================================== */
+
+[data-theme="classic-dark"] {
+  color-scheme: dark;
+
+  --c-accent-on-dark: #d6e7e3;
+  --c-accent-on-dark-2: #eef6f4;
+
+  --c-surface: #1d1a16;
+  --c-on-ink: #171310;
+
+  --c-paper: #131110;
+  --c-paper-raise: #191613;
+  --c-paper-sand: #1e1a16;
+  --c-paper-sunk: #242019;
+  --c-paper-deep: #2b251d;
+  --c-line: #2c2721;
+  --c-line-strong: #3e372e;
+
+  --c-ink: #f0ebe2;
+  --c-ink-2: #ddd6c9;
+  --c-ink-3: #c0b7a7;
+  --c-ink-4: #a2988a;
+  --c-ink-5: #a2988a;
+  --c-ink-6: #8f8574;
+  --c-ink-7: #4d463c;
+
+  --c-teal-wash: #172724;
+  --c-teal-soft: #274741;
+  --c-teal-100: #2b544d;
+  --c-teal-200: #366b62;
+  --c-teal-mid: #6fc9bd;
+  --c-teal: #2ea393;
+  --c-teal-deep: #79cfc3;
+  --c-teal-800: #a8e2d9;
+
+  --c-panel: #0c110f;
+  --c-panel-2: #111a18;
+  --c-panel-3: #282219;
+  --c-panel-line: #27453f;
+  --c-on-dark: #b7c4bf;
+  --c-on-dark-2: #9fb0ab;
+  --c-on-dark-3: #7e9089;
+  --c-on-dark-4: #63736d;
+
+  --c-pos-wash: #182a20;
+  --c-pos-soft: #2b4d3b;
+  --c-pos-mid: #7fd1a0;
+  --c-pos: #52ab74;
+  --c-pos-deep: #8fd9ae;
+
+  --c-neg-wash: #2e1d1a;
+  --c-neg-soft: #4d2f28;
+  --c-neg-100: #5d382f;
+  --c-neg-mid: #e08e82;
+  --c-neg: #d06f62;
+  --c-neg-deep: #e59a8d;
+
+  --c-warn-wash: #2c2313;
+  --c-warn-soft: #4d3d1f;
+  --c-warn-mid: #d9a94e;
+  --c-warn: #c68f35;
+  --c-warn-deep: #dfb264;
+
+  --c-marker: #f2cd1d;
+  --c-marker-soft: #ffe873;
+  --c-marker-deep: #d9ad12;
+
+  --c-info-wash: #1b2230;
+  --c-info-soft: #303c52;
+  --c-info: #8ea6d6;
+  --c-link: #7aa4ff;
+  --c-violet: #b287c0;
+
+  --c-surface-rgb: 29, 26, 22;
+  --c-ink-rgb: 240, 235, 226;
+  --c-ink-5-rgb: 162, 152, 138;
+  --c-teal-rgb: 46, 163, 147;
+  --c-teal-mid-rgb: 111, 201, 189;
+  --c-paper-rgb: 19, 17, 16;
+  --c-paper-raise-rgb: 25, 22, 19;
+  --c-paper-sand-rgb: 30, 26, 22;
+  --c-line-strong-rgb: 62, 55, 46;
+  --c-panel-rgb: 12, 17, 15;
+  --c-panel-2-rgb: 17, 26, 24;
+  --c-on-dark-rgb: 183, 196, 191;
+  --c-on-dark-3-rgb: 126, 144, 137;
+  --c-pos-rgb: 82, 171, 116;
+  --c-pos-mid-rgb: 127, 209, 160;
+  --c-pos-wash-rgb: 24, 42, 32;
+  --c-neg-rgb: 208, 111, 98;
+  --c-neg-mid-rgb: 224, 142, 130;
+  --c-warn-rgb: 198, 143, 53;
+  --c-warn-mid-rgb: 217, 169, 78;
+  --c-warn-wash-rgb: 44, 35, 19;
+  --c-marker-rgb: 242, 205, 29;
+  --c-info-rgb: 142, 166, 214;
+  --c-link-rgb: 122, 164, 255;
+  --c-violet-rgb: 178, 135, 192;
+  --c-shadow-rgb: 0, 0, 0;
+}
+
+[data-theme="graphite"] {
+  color-scheme: light;
+
+  --c-surface: #ffffff;
+  --c-on-ink: #ffffff;
+
+  --c-paper: #f6f7f9;
+  --c-paper-raise: #f1f3f6;
+  --c-paper-sand: #eceff3;
+  --c-paper-sunk: #e5e9ee;
+  --c-paper-deep: #dbe0e7;
+  --c-line: #dde2e8;
+  --c-line-strong: #c2cbd5;
+
+  --c-ink: #161a1f;
+  --c-ink-2: #30363e;
+  --c-ink-3: #4f5761;
+  --c-ink-4: #6a7280;
+  --c-ink-5: #5e6875;
+  --c-ink-6: #636d7a;
+  --c-ink-7: #bfc6d0;
+
+  --c-teal-wash: #eef2f8;
+  --c-teal-soft: #d4dfeb;
+  --c-teal-100: #bed2e7;
+  --c-teal-200: #98b8da;
+  --c-teal-mid: #6d9cc9;
+  --c-teal: #31608f;
+  --c-teal-deep: #274e76;
+  --c-teal-800: #1d3c5b;
+
+  --c-panel: #151a21;
+  --c-panel-2: #1b222c;
+  --c-panel-3: #2b333e;
+  --c-panel-line: #35424f;
+  --c-on-dark: #bcc5ce;
+  --c-on-dark-2: #a2acb7;
+  --c-on-dark-3: #828d99;
+  --c-on-dark-4: #66707b;
+
+  --c-pos-wash: #e4f2eb;
+  --c-pos-soft: #b7d4c8;
+  --c-pos-mid: #7fd1a0;
+  --c-pos: #3f8f5c;
+  --c-pos-deep: #277056;
+
+  --c-neg-wash: #fdf4f2;
+  --c-neg-soft: #f0dbd3;
+  --c-neg-100: #e5c5c0;
+  --c-neg-mid: #e08e82;
+  --c-neg: #b74d42;
+  --c-neg-deep: #8f3a2f;
+
+  --c-warn-wash: #fff8ee;
+  --c-warn-soft: #efe2c8;
+  --c-warn-mid: #d9a94e;
+  --c-warn: #a96619;
+  --c-warn-deep: #7a5a1c;
+
+  --c-marker: #f2cd1d;
+  --c-marker-soft: #ffe873;
+  --c-marker-deep: #b98b0d;
+
+  --c-info-wash: #e8edf5;
+  --c-info-soft: #d2d6dc;
+  --c-info: #4a5e8c;
+  --c-link: #2f6fed;
+  --c-violet: #7a4b86;
+
+  --c-surface-rgb: 255, 255, 255;
+  --c-ink-rgb: 22, 26, 31;
+  --c-ink-5-rgb: 94, 104, 117;
+  --c-teal-rgb: 49, 96, 143;
+  --c-teal-mid-rgb: 109, 156, 201;
+  --c-paper-rgb: 246, 247, 249;
+  --c-paper-raise-rgb: 241, 243, 246;
+  --c-paper-sand-rgb: 236, 239, 243;
+  --c-line-strong-rgb: 194, 203, 213;
+  --c-panel-rgb: 21, 26, 33;
+  --c-panel-2-rgb: 27, 34, 44;
+  --c-on-dark-rgb: 188, 197, 206;
+  --c-on-dark-3-rgb: 130, 141, 153;
+  --c-pos-rgb: 63, 143, 92;
+  --c-pos-mid-rgb: 127, 209, 160;
+  --c-pos-wash-rgb: 228, 242, 235;
+  --c-neg-rgb: 183, 77, 66;
+  --c-neg-mid-rgb: 224, 142, 130;
+  --c-warn-rgb: 169, 102, 25;
+  --c-warn-mid-rgb: 217, 169, 78;
+  --c-warn-wash-rgb: 255, 248, 238;
+  --c-marker-rgb: 242, 205, 29;
+  --c-info-rgb: 74, 94, 140;
+  --c-link-rgb: 47, 111, 237;
+  --c-violet-rgb: 122, 75, 134;
+  --c-shadow-rgb: 22, 26, 31;
+}
+
+[data-theme="atlantic"] {
+  color-scheme: dark;
+
+  --c-accent-on-dark: #cde4f6;
+  --c-accent-on-dark-2: #e8f2fb;
+
+  --c-surface: #151f33;
+  --c-on-ink: #0e1522;
+
+  --c-paper: #0e1522;
+  --c-paper-raise: #131b2b;
+  --c-paper-sand: #172032;
+  --c-paper-sunk: #1c2740;
+  --c-paper-deep: #223049;
+  --c-line: #24324b;
+  --c-line-strong: #35486a;
+
+  --c-ink: #e9eff8;
+  --c-ink-2: #d3ddeb;
+  --c-ink-3: #b4c2d8;
+  --c-ink-4: #94a6c0;
+  --c-ink-5: #94a6c0;
+  --c-ink-6: #8093ae;
+  --c-ink-7: #475874;
+
+  --c-teal-wash: #142a40;
+  --c-teal-soft: #204465;
+  --c-teal-100: #275179;
+  --c-teal-200: #336a9c;
+  --c-teal-mid: #6cb2e6;
+  --c-teal: #4b9bd8;
+  --c-teal-deep: #83c1ec;
+  --c-teal-800: #a9d6f3;
+
+  --c-panel: #0a101c;
+  --c-panel-2: #0d1626;
+  --c-panel-3: #1e2940;
+  --c-panel-line: #26436b;
+  --c-on-dark: #b6c4da;
+  --c-on-dark-2: #9caec6;
+  --c-on-dark-3: #7d90ab;
+  --c-on-dark-4: #607289;
+
+  --c-pos-wash: #132a20;
+  --c-pos-soft: #265244;
+  --c-pos-mid: #7fd1a0;
+  --c-pos: #54b57b;
+  --c-pos-deep: #8fdcb0;
+
+  --c-neg-wash: #2e1b20;
+  --c-neg-soft: #4f2d33;
+  --c-neg-100: #60373c;
+  --c-neg-mid: #ea9288;
+  --c-neg: #d96a60;
+  --c-neg-deep: #eb9f96;
+
+  --c-warn-wash: #2b2214;
+  --c-warn-soft: #4d3e20;
+  --c-warn-mid: #dcac50;
+  --c-warn: #cd9139;
+  --c-warn-deep: #e3ba69;
+
+  --c-marker: #f2cd1d;
+  --c-marker-soft: #ffe873;
+  --c-marker-deep: #dfb30e;
+
+  --c-info-wash: #182238;
+  --c-info-soft: #2c3a58;
+  --c-info: #92a8da;
+  --c-link: #7fb1ff;
+  --c-violet: #b691c8;
+
+  --c-surface-rgb: 21, 31, 51;
+  --c-ink-rgb: 233, 239, 248;
+  --c-ink-5-rgb: 148, 166, 192;
+  --c-teal-rgb: 75, 155, 216;
+  --c-teal-mid-rgb: 108, 178, 230;
+  --c-paper-rgb: 14, 21, 34;
+  --c-paper-raise-rgb: 19, 27, 43;
+  --c-paper-sand-rgb: 23, 32, 50;
+  --c-line-strong-rgb: 53, 72, 106;
+  --c-panel-rgb: 10, 16, 28;
+  --c-panel-2-rgb: 13, 22, 38;
+  --c-on-dark-rgb: 182, 196, 218;
+  --c-on-dark-3-rgb: 125, 144, 171;
+  --c-pos-rgb: 84, 181, 123;
+  --c-pos-mid-rgb: 127, 209, 160;
+  --c-pos-wash-rgb: 19, 42, 32;
+  --c-neg-rgb: 217, 106, 96;
+  --c-neg-mid-rgb: 234, 146, 136;
+  --c-warn-rgb: 205, 145, 57;
+  --c-warn-mid-rgb: 220, 172, 80;
+  --c-warn-wash-rgb: 43, 34, 20;
+  --c-marker-rgb: 242, 205, 29;
+  --c-info-rgb: 146, 168, 218;
+  --c-link-rgb: 127, 177, 255;
+  --c-violet-rgb: 182, 145, 200;
+  --c-shadow-rgb: 0, 0, 0;
+}
+
+[data-theme="nocturne"] {
+  color-scheme: dark;
+
+  --c-accent-on-dark: #decdf3;
+  --c-accent-on-dark-2: #f0e9fa;
+
+  --c-surface: #1c1929;
+  --c-on-ink: #151220;
+
+  --c-paper: #151220;
+  --c-paper-raise: #1a1727;
+  --c-paper-sand: #1e1b2d;
+  --c-paper-sunk: #242033;
+  --c-paper-deep: #2a263c;
+  --c-line: #2c2840;
+  --c-line-strong: #413b59;
+
+  --c-ink: #efebf8;
+  --c-ink-2: #ddd7ec;
+  --c-ink-3: #c1b9d6;
+  --c-ink-4: #a49bbe;
+  --c-ink-5: #a49bbe;
+  --c-ink-6: #9088aa;
+  --c-ink-7: #534c6f;
+
+  --c-teal-wash: #261e38;
+  --c-teal-soft: #40345c;
+  --c-teal-100: #4b3d6d;
+  --c-teal-200: #614f8d;
+  --c-teal-mid: #b493e6;
+  --c-teal: #9670d6;
+  --c-teal-deep: #c2a6ef;
+  --c-teal-800: #d6c3f6;
+
+  --c-panel: #100d18;
+  --c-panel-2: #161223;
+  --c-panel-3: #272138;
+  --c-panel-line: #3b2f58;
+  --c-on-dark: #c1bad2;
+  --c-on-dark-2: #a9a0c0;
+  --c-on-dark-3: #887ea2;
+  --c-on-dark-4: #686180;
+
+  --c-pos-wash: #172a20;
+  --c-pos-soft: #2d5443;
+  --c-pos-mid: #7fd1a0;
+  --c-pos: #56b67d;
+  --c-pos-deep: #91dcb1;
+
+  --c-neg-wash: #2e1a20;
+  --c-neg-soft: #4f2d34;
+  --c-neg-100: #60383e;
+  --c-neg-mid: #e9928a;
+  --c-neg: #d96b64;
+  --c-neg-deep: #ec9f99;
+
+  --c-warn-wash: #2c2214;
+  --c-warn-soft: #4e3e21;
+  --c-warn-mid: #dcab51;
+  --c-warn: #cc9038;
+  --c-warn-deep: #e2b968;
+
+  --c-marker: #f2cd1d;
+  --c-marker-soft: #ffe873;
+  --c-marker-deep: #ddb210;
+
+  --c-info-wash: #1b2136;
+  --c-info-soft: #303a56;
+  --c-info: #97a6da;
+  --c-link: #88a9ff;
+  --c-violet: #cb9bda;
+
+  --c-surface-rgb: 28, 25, 41;
+  --c-ink-rgb: 239, 235, 248;
+  --c-ink-5-rgb: 164, 155, 190;
+  --c-teal-rgb: 150, 112, 214;
+  --c-teal-mid-rgb: 180, 147, 230;
+  --c-paper-rgb: 21, 18, 32;
+  --c-paper-raise-rgb: 26, 23, 39;
+  --c-paper-sand-rgb: 30, 27, 45;
+  --c-line-strong-rgb: 65, 59, 89;
+  --c-panel-rgb: 16, 13, 24;
+  --c-panel-2-rgb: 22, 18, 35;
+  --c-on-dark-rgb: 193, 186, 210;
+  --c-on-dark-3-rgb: 136, 126, 162;
+  --c-pos-rgb: 86, 182, 125;
+  --c-pos-mid-rgb: 127, 209, 160;
+  --c-pos-wash-rgb: 23, 42, 32;
+  --c-neg-rgb: 217, 107, 100;
+  --c-neg-mid-rgb: 233, 146, 138;
+  --c-warn-rgb: 204, 144, 56;
+  --c-warn-mid-rgb: 220, 171, 81;
+  --c-warn-wash-rgb: 44, 34, 20;
+  --c-marker-rgb: 242, 205, 29;
+  --c-info-rgb: 151, 166, 218;
+  --c-link-rgb: 136, 169, 255;
+  --c-violet-rgb: 203, 155, 218;
+  --c-shadow-rgb: 0, 0, 0;
+}
+
+[data-theme="evergreen"] {
+  color-scheme: dark;
+
+  --c-accent-on-dark: #cdeadd;
+  --c-accent-on-dark-2: #e7f6ee;
+
+  --c-surface: #16211b;
+  --c-on-ink: #0e1613;
+
+  --c-paper: #0e1613;
+  --c-paper-raise: #131c17;
+  --c-paper-sand: #18231c;
+  --c-paper-sunk: #1d2a22;
+  --c-paper-deep: #233129;
+  --c-line: #253229;
+  --c-line-strong: #364940;
+
+  --c-ink: #eaf2ec;
+  --c-ink-2: #d5e2d9;
+  --c-ink-3: #b6c8bc;
+  --c-ink-4: #96ac9d;
+  --c-ink-5: #96ac9d;
+  --c-ink-6: #82998a;
+  --c-ink-7: #495d52;
+
+  --c-teal-wash: #132a21;
+  --c-teal-soft: #234c3d;
+  --c-teal-100: #275547;
+  --c-teal-200: #33705d;
+  --c-teal-mid: #7fd6bd;
+  --c-teal: #3cae8f;
+  --c-teal-deep: #8fdcc4;
+  --c-teal-800: #b4e8d6;
+
+  --c-panel: #0a120e;
+  --c-panel-2: #0f1a14;
+  --c-panel-3: #233129;
+  --c-panel-line: #2b4a3a;
+  --c-on-dark: #b5c6ba;
+  --c-on-dark-2: #9cb1a3;
+  --c-on-dark-3: #7d9488;
+  --c-on-dark-4: #5f7568;
+
+  --c-pos-wash: #172d1f;
+  --c-pos-soft: #2b5540;
+  --c-pos-mid: #7fd1a0;
+  --c-pos: #57b97e;
+  --c-pos-deep: #92dcb2;
+
+  --c-neg-wash: #2e1c1c;
+  --c-neg-soft: #4f2f2d;
+  --c-neg-100: #603a37;
+  --c-neg-mid: #e6938a;
+  --c-neg: #d76c60;
+  --c-neg-deep: #ea9e94;
+
+  --c-warn-wash: #2b2312;
+  --c-warn-soft: #4c3e1e;
+  --c-warn-mid: #d9aa4e;
+  --c-warn: #c88f36;
+  --c-warn-deep: #dfb463;
+
+  --c-marker: #f2cd1d;
+  --c-marker-soft: #ffe873;
+  --c-marker-deep: #d8ac11;
+
+  --c-info-wash: #1a2330;
+  --c-info-soft: #2e3c52;
+  --c-info: #8fa7d3;
+  --c-link: #7ca9f5;
+  --c-violet: #b18bc3;
+
+  --c-surface-rgb: 22, 33, 27;
+  --c-ink-rgb: 234, 242, 236;
+  --c-ink-5-rgb: 150, 172, 157;
+  --c-teal-rgb: 60, 174, 143;
+  --c-teal-mid-rgb: 127, 214, 189;
+  --c-paper-rgb: 14, 22, 19;
+  --c-paper-raise-rgb: 19, 28, 23;
+  --c-paper-sand-rgb: 24, 35, 28;
+  --c-line-strong-rgb: 54, 73, 64;
+  --c-panel-rgb: 10, 18, 14;
+  --c-panel-2-rgb: 15, 26, 20;
+  --c-on-dark-rgb: 181, 198, 186;
+  --c-on-dark-3-rgb: 125, 148, 136;
+  --c-pos-rgb: 87, 185, 126;
+  --c-pos-mid-rgb: 127, 209, 160;
+  --c-pos-wash-rgb: 23, 45, 31;
+  --c-neg-rgb: 215, 108, 96;
+  --c-neg-mid-rgb: 230, 147, 138;
+  --c-warn-rgb: 200, 143, 54;
+  --c-warn-mid-rgb: 217, 170, 78;
+  --c-warn-wash-rgb: 43, 35, 18;
+  --c-marker-rgb: 242, 205, 29;
+  --c-info-rgb: 143, 167, 211;
+  --c-link-rgb: 124, 169, 245;
+  --c-violet-rgb: 177, 139, 195;
+  --c-shadow-rgb: 0, 0, 0;
+}
+
+[data-theme="heather"] {
+  color-scheme: light;
+
+  --c-surface: #ffffff;
+  --c-on-ink: #ffffff;
+
+  --c-paper: #f8f7fb;
+  --c-paper-raise: #f3f1f8;
+  --c-paper-sand: #eeecf5;
+  --c-paper-sunk: #e7e4f0;
+  --c-paper-deep: #dcd8e9;
+  --c-line: #dfdbea;
+  --c-line-strong: #c6c0d8;
+
+  --c-ink: #191623;
+  --c-ink-2: #332e42;
+  --c-ink-3: #534d63;
+  --c-ink-4: #6e6880;
+  --c-ink-5: #625d73;
+  --c-ink-6: #6e6880;
+  --c-ink-7: #c0bacd;
+
+  --c-teal-wash: #f2eef8;
+  --c-teal-soft: #ddd2ea;
+  --c-teal-100: #cbbbdf;
+  --c-teal-200: #ab8fc9;
+  --c-teal-mid: #aa8bd0;
+  --c-teal: #6d4b8f;
+  --c-teal-deep: #59397a;
+  --c-teal-800: #452c60;
+
+  --c-panel: #1c1826;
+  --c-panel-2: #241f31;
+  --c-panel-3: #352e45;
+  --c-panel-line: #453c59;
+  --c-on-dark: #c3bdd1;
+  --c-on-dark-2: #aaa3bb;
+  --c-on-dark-3: #9d95ae;
+  --c-on-dark-4: #6c6580;
+
+  --c-pos-wash: #e4f2eb;
+  --c-pos-soft: #b7d4c8;
+  --c-pos-mid: #7fd1a0;
+  --c-pos: #3f8f5c;
+  --c-pos-deep: #277056;
+
+  --c-neg-wash: #fdf4f2;
+  --c-neg-soft: #f0dbd3;
+  --c-neg-100: #e5c5c0;
+  --c-neg-mid: #e08e82;
+  --c-neg: #b74d42;
+  --c-neg-deep: #8f3a2f;
+
+  --c-warn-wash: #fff8ee;
+  --c-warn-soft: #efe2c8;
+  --c-warn-mid: #d9a94e;
+  --c-warn: #a96619;
+  --c-warn-deep: #7a5a1c;
+
+  --c-marker: #f2cd1d;
+  --c-marker-soft: #ffe873;
+  --c-marker-deep: #b98b0d;
+
+  --c-info-wash: #e8edf5;
+  --c-info-soft: #d2d6dc;
+  --c-info: #4a5e8c;
+  --c-link: #2f6fed;
+  --c-violet: #7a4b86;
+
+  --c-surface-rgb: 255, 255, 255;
+  --c-ink-rgb: 25, 22, 35;
+  --c-ink-5-rgb: 98, 93, 115;
+  --c-teal-rgb: 109, 75, 143;
+  --c-teal-mid-rgb: 170, 139, 208;
+  --c-paper-rgb: 248, 247, 251;
+  --c-paper-raise-rgb: 243, 241, 248;
+  --c-paper-sand-rgb: 238, 236, 245;
+  --c-line-strong-rgb: 198, 192, 216;
+  --c-panel-rgb: 28, 24, 38;
+  --c-panel-2-rgb: 36, 31, 49;
+  --c-on-dark-rgb: 195, 189, 209;
+  --c-on-dark-3-rgb: 157, 149, 174;
+  --c-pos-rgb: 63, 143, 92;
+  --c-pos-mid-rgb: 127, 209, 160;
+  --c-pos-wash-rgb: 228, 242, 235;
+  --c-neg-rgb: 183, 77, 66;
+  --c-neg-mid-rgb: 224, 142, 130;
+  --c-warn-rgb: 169, 102, 25;
+  --c-warn-mid-rgb: 217, 169, 78;
+  --c-warn-wash-rgb: 255, 248, 238;
+  --c-marker-rgb: 242, 205, 29;
+  --c-info-rgb: 74, 94, 140;
+  --c-link-rgb: 47, 111, 237;
+  --c-violet-rgb: 122, 75, 134;
+  --c-shadow-rgb: 25, 22, 35;
+}
+
+[data-theme="midnight"] {
+  color-scheme: dark;
+
+  --c-surface: #121212;
+  --c-on-ink: #0a0a0a;
+
+  --c-accent-on-dark: #d6e7e3;
+  --c-accent-on-dark-2: #eef6f4;
+
+  --c-paper: #0a0a0a;
+  --c-paper-raise: #101010;
+  --c-paper-sand: #141414;
+  --c-paper-sunk: #191919;
+  --c-paper-deep: #1f1f1f;
+  --c-line: #202020;
+  --c-line-strong: #303030;
+
+  --c-ink: #f2f2f0;
+  --c-ink-2: #dededb;
+  --c-ink-3: #c2c2be;
+  --c-ink-4: #a3a3a0;
+  --c-ink-5: #a3a3a0;
+  --c-ink-6: #8f8f8c;
+  --c-ink-7: #4c4c4a;
+
+  --c-teal-wash: #10201d;
+  --c-teal-soft: #1f423c;
+  --c-teal-100: #254e47;
+  --c-teal-200: #31655d;
+  --c-teal-mid: #6fc9bd;
+  --c-teal: #2aa093;
+  --c-teal-deep: #7dd1c5;
+  --c-teal-800: #abe4db;
+
+  --c-panel: #060707;
+  --c-panel-2: #0c0e0d;
+  --c-panel-3: #1f1f1f;
+  --c-panel-line: #274540;
+  --c-on-dark: #b7c4bf;
+  --c-on-dark-2: #9fb0ab;
+  --c-on-dark-3: #7e9089;
+  --c-on-dark-4: #63736d;
+
+  --c-pos-wash: #12271c;
+  --c-pos-soft: #27503c;
+  --c-pos-mid: #7fd1a0;
+  --c-pos: #54b279;
+  --c-pos-deep: #90dcae;
+
+  --c-neg-wash: #2b1a17;
+  --c-neg-soft: #4c2c26;
+  --c-neg-100: #5c352e;
+  --c-neg-mid: #e08e82;
+  --c-neg: #d2685b;
+  --c-neg-deep: #e69a8e;
+
+  --c-warn-wash: #281f10;
+  --c-warn-soft: #48391b;
+  --c-warn-mid: #d9a94e;
+  --c-warn: #c78d33;
+  --c-warn-deep: #e0b161;
+
+  --c-marker: #f2cd1d;
+  --c-marker-soft: #ffe873;
+  --c-marker-deep: #d9ad12;
+
+  --c-info-wash: #171e2b;
+  --c-info-soft: #2b374d;
+  --c-info: #8ba3d4;
+  --c-link: #75a2ff;
+  --c-violet: #b287c0;
+
+  --c-surface-rgb: 18, 18, 18;
+  --c-ink-rgb: 242, 242, 240;
+  --c-ink-5-rgb: 163, 163, 160;
+  --c-teal-rgb: 42, 160, 147;
+  --c-teal-mid-rgb: 111, 201, 189;
+  --c-paper-rgb: 10, 10, 10;
+  --c-paper-raise-rgb: 16, 16, 16;
+  --c-paper-sand-rgb: 20, 20, 20;
+  --c-line-strong-rgb: 48, 48, 48;
+  --c-panel-rgb: 6, 7, 7;
+  --c-panel-2-rgb: 12, 14, 13;
+  --c-on-dark-rgb: 183, 196, 191;
+  --c-on-dark-3-rgb: 126, 144, 137;
+  --c-pos-rgb: 84, 178, 121;
+  --c-pos-mid-rgb: 127, 209, 160;
+  --c-pos-wash-rgb: 18, 39, 28;
+  --c-neg-rgb: 210, 104, 91;
+  --c-neg-mid-rgb: 224, 142, 130;
+  --c-warn-rgb: 199, 141, 51;
+  --c-warn-mid-rgb: 217, 169, 78;
+  --c-warn-wash-rgb: 40, 31, 16;
+  --c-marker-rgb: 242, 205, 29;
+  --c-info-rgb: 139, 163, 212;
+  --c-link-rgb: 117, 162, 255;
+  --c-violet-rgb: 178, 135, 192;
+  --c-shadow-rgb: 0, 0, 0;
+}
+
+/* --------------------------------------------------------------------------
+   Typographic roles. Apply these classes instead of re-declaring `font:`.
+   -------------------------------------------------------------------------- */
+
+/* Editorial title — the serif. Reserved for marketing and page-level heroes. */
+.t-editorial {
+  font-family: var(--font-serif);
+  font-weight: var(--fw-medium);
+  font-style: italic;
+  line-height: var(--lh-tight);
+  letter-spacing: var(--ls-tight);
+}
+
+/* Interface heading — the workhorse inside the product. */
+.t-heading {
+  font-family: var(--font-sans);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-snug);
+}
+
+/* Uppercase mono label. */
+.t-label {
+  font-family: var(--font-mono);
+  font-size: var(--fs-label);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+}
+
+/* Numbers. Every figure in the product is mono and tabular so that columns
+   of digits line up and a changing value does not reflow its neighbours. */
+.t-num,
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "zero" 1;
+  letter-spacing: 0;
+}
+
+/* Any element carrying a numeric readout gets tabular figures even when it
+   inherits a different family — prevents jitter in sans-set totals. */
+[data-num],
+time,
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* The numeric-readout assignments live at the end of `styles.css`, where they
+   sit after the component rules they need to override. */

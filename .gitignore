@@ -1,0 +1,14 @@
+node_modules/
+.DS_Store
+*.db
+*.db-*
+*.sqlite*
+.env*
+data/
+coverage/
+*.log
+runtime.json
+runtime.*.tmp
+key.init
+instance.lock
+login-task.xml

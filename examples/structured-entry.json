@@ -1,0 +1,41 @@
+{
+  "notebookId": "COPY_THE_RETURNED_LOCAL_NOTEBOOK_UUID",
+  "title": "Structured research example — replace with real source facts",
+  "body": "## Morning opportunities\n\nIllustrative shape only. This stale, unsized observation is for review and cannot execute.",
+  "status": "watching",
+  "source": "agent",
+  "observedAtUtc": null,
+  "signal": {
+    "schemaVersion": "product.journal_signal.v1",
+    "strategyDefinitionId": null,
+    "strategyName": null,
+    "sourceOperationId": "REPLACE_WITH_ACTUAL_SOURCE_OPERATION",
+    "sourceRecordId": null,
+    "sourceAsOfUtc": null,
+    "quality": "unavailable",
+    "action": null,
+    "legs": [
+      {
+        "asset": {
+          "instrumentId": "COPY_CANONICAL_INSTRUMENT_ID",
+          "nativeInstrumentId": "COPY_NATIVE_INSTRUMENT_ID",
+          "assetKey": null,
+          "assetGroup": "spot",
+          "instrumentType": "spot",
+          "venue": "COPY_SOURCE_VENUE",
+          "symbol": "COPY_SOURCE_SYMBOL",
+          "source": "COPY_SOURCE_NAME",
+          "observedAtUtc": null,
+          "quality": "unavailable"
+        },
+        "side": null,
+        "direction": null,
+        "quantity": null,
+        "quantityUnit": null,
+        "quantityAsset": null,
+        "notionalUsd": null,
+        "referencePrice": null
+      }
+    ]
+  }
+}

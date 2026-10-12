@@ -1,0 +1,21 @@
+Flusso Listener is Copyright (c) 2026 Aaron Samuel and distributed under MIT.
+
+The approved Flusso brand mark in public/flusso-mark.png is included for this
+official integration. Flusso names and marks remain their owner's trademarks.
+The MIT license does not grant trademark rights or permission to imply an
+unrelated fork is the official Flusso service.
+
+public/tokens.css is copied from Flusso's approved design system.
+public/markdown.mjs adapts the safe Flusso StudioMarkdown subset to DOM text nodes.
+public/format.mjs is generated from Flusso src/lib/numberFormat.ts. It performs
+presentation only; it does not calculate account financial truth.
+
+Bundled Hanken Grotesk, Newsreader, and IBM Plex Mono fonts are under the SIL
+Open Font License 1.1. Full copyright notices and license texts are included
+beside their font files in public/fonts/*-OFL.txt. The Plex Mono name table was
+normalized in Flusso's source asset to preserve the shared family/weight lookup.
+
+Qwen3 model weights are not bundled. Ollama downloads qwen3:0.6b separately;
+the model is licensed under Apache 2.0 by its publisher. Ollama and its model
+runtime retain their own licenses. No model license is replaced by this repo's
+MIT license.

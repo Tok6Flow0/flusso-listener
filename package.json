@@ -1,0 +1,16 @@
+{
+  "name": "flusso-listener",
+  "version": "0.1.0",
+  "description": "A private local Journal and bounded signal listener for your Flusso account.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": { "node": ">=24.19.0 <25" },
+  "scripts": {
+    "start": "node src/cli.mjs start",
+    "journal": "node src/cli.mjs journal",
+    "test": "node --test test/*.test.mjs src/*.test.mjs",
+    "check": "node --check src/cli.mjs && node --check public/app.mjs && npm test"
+  },
+  "dependencies": { "@napi-rs/keyring": "2.1.1" }
+}
