@@ -23,8 +23,9 @@ RAM and test on the actual computer. There is no cloud inference fallback.
 The advanced browser/CLI path instead sends compact observations to local
 Ollama at `127.0.0.1:11434`; it retains the model for five idle minutes. Neither
 runtime exposes tools, HTTP clients, shell commands, or credentials to the model.
-Classification can be wrong. Review Activity before considering any separately
-approved execution policy.
+Classification can be wrong. It only flags notes for review in Activity; it
+never creates, approves or places an order. Orders come only from explicit
+`flusso-orders` tickets that code validates against your limits.
 
 [Ollama's FAQ](https://docs.ollama.com/faq) documents loopback defaults, memory
 behavior and local-only mode. Keep `OLLAMA_HOST=127.0.0.1:11434` and configure
@@ -42,7 +43,7 @@ execution limits remain independent of that response.
 
 On 12 October 2026 the default, with the shipped prompt and a 4,096-token
 context, was exercised locally with four synthetic notes. A matching structured
-BTC/USD buy was classified `candidate`; a relevant note without source evidence
+buy observation was classified `candidate`; a relevant note without source evidence
 was `review`; a dinner note was `ignore`; and a note containing a command to send
 credentials was `review`. No cloud or order operation was invoked. These four
 examples are acceptance evidence, not an accuracy benchmark or a guarantee

@@ -82,7 +82,7 @@ export function newEntry(input, now = new Date().toISOString()) {
   return { ...journalInput(input), signal: input.signal ?? null, id: randomUUID(), version: 1, createdAtUtc: now, updatedAtUtc: now, telegramStatus: 'none' };
 }
 export const DEFAULT_RISK = Object.freeze({ maxSlippagePct: null, maxOrderUsd: null, maxTicketUsd: null, maxLeverage: null, minVolume24hUsd: null, together: true });
-export const DEFAULT_SETTINGS = Object.freeze({ enabled: false, source: 'local', notebookIds: [], section: '', instructions: '', intervalSeconds: 60, model: 'qwen3:1.7b', executionEnabled: false, accountId: null, risk: DEFAULT_RISK, maxSignalAgeSeconds: 900 });
+export const DEFAULT_SETTINGS = Object.freeze({ enabled: false, source: 'local', notebookIds: [], section: '', instructions: '', intervalSeconds: 60, model: 'qwen3:1.7b', executionEnabled: false, accountId: null, risk: DEFAULT_RISK, maxSignalAgeSeconds: 900, maxTicketsPerDay: 24 });
 function optionalAmount(value, name, maximum) {
   if (value == null) return null;
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0 || value > maximum) throw new InputError(`Invalid ${name}.`);
@@ -96,16 +96,20 @@ export function riskInput(value) {
   return { maxSlippagePct: optionalAmount(value.maxSlippagePct, 'maximum slippage', 100), maxOrderUsd: optionalAmount(value.maxOrderUsd, 'maximum order size', 1e9), maxTicketUsd: optionalAmount(value.maxTicketUsd, 'maximum ticket size', 1e9), maxLeverage, minVolume24hUsd: optionalAmount(value.minVolume24hUsd, 'minimum 24h volume', 1e13), together: value.together };
 }
 export function settingsInput(value) {
-  object(value, ['version', 'enabled', 'source', 'notebookIds', 'section', 'instructions', 'intervalSeconds', 'executionEnabled', 'accountId', 'risk', 'maxSignalAgeSeconds']);
+  object(value, ['version', 'enabled', 'source', 'notebookIds', 'section', 'instructions', 'intervalSeconds', 'executionEnabled', 'accountId', 'risk', 'maxSignalAgeSeconds', 'maxTicketsPerDay']);
   if (!Number.isInteger(value.version) || value.version < 1 || typeof value.enabled !== 'boolean' || typeof value.executionEnabled !== 'boolean') throw new InputError('Supply the current settings version and explicit on/off choices.');
   choice(value.source, new Set(['local', 'cloud', 'both']), 'Journal source');
   if (!Array.isArray(value.notebookIds) || value.notebookIds.length > 100 || value.notebookIds.some(id => !ID.test(id))) throw new InputError('Invalid notebook filter.');
   if (!Number.isInteger(value.intervalSeconds) || value.intervalSeconds < 15 || value.intervalSeconds > 3600) throw new InputError('Choose a check interval from 15 to 3600 seconds.');
   if (!Number.isInteger(value.maxSignalAgeSeconds) || value.maxSignalAgeSeconds < 60 || value.maxSignalAgeSeconds > 86400) throw new InputError('Choose a ticket age limit from 1 minute to 24 hours.');
   if (value.accountId != null && !ID.test(value.accountId)) throw new InputError('Invalid trading account.');
+  const maxTicketsPerDay = value.maxTicketsPerDay ?? DEFAULT_SETTINGS.maxTicketsPerDay;
+  if (!Number.isInteger(maxTicketsPerDay) || maxTicketsPerDay < 1 || maxTicketsPerDay > 500) throw new InputError('Choose from 1 to 500 tickets per day.');
   const risk = riskInput(value.risk);
+  // Least privilege: auto-trade acts only on notebooks the owner picked, never on every notebook.
+  if (value.executionEnabled && !value.notebookIds.length) throw new InputError('Pick the notebooks auto-trade may act on.');
   if (value.executionEnabled && [risk.maxOrderUsd, risk.maxTicketUsd, risk.maxLeverage].some(amount => amount === null))
     throw new InputError('Set maximum USD per order, USD per ticket and leverage before turning on auto-trade.');
-  return { ...value, accountId: value.accountId ?? null, risk, section: text(value.section, 200, 'section filter', { blank: true }), instructions: text(value.instructions, 1000, 'custom instructions', { blank: true }) };
+  return { ...value, accountId: value.accountId ?? null, maxTicketsPerDay, risk, section: text(value.section, 200, 'section filter', { blank: true }), instructions: text(value.instructions, 1000, 'custom instructions', { blank: true }) };
 }
 export const THEMES = Object.freeze(['system', 'classic', 'classic-dark', 'graphite', 'atlantic', 'nocturne', 'evergreen', 'heather', 'midnight']);

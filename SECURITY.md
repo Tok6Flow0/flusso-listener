@@ -7,9 +7,10 @@ in a public issue.
 The local OS account is trusted. The listener has no shell, arbitrary HTTP,
 browser, microphone, or screen tool available to the model. Its only model
 output is a constrained classification and reason. Journal text and imported
-market data remain untrusted input. Schema checks, exact identities, current
-source timestamps and server policy/risk enforcement protect the mutation path;
-prompt wording alone is not the security boundary.
+market data remain untrusted input. The model never creates or approves orders:
+only an explicit `flusso-orders` ticket can, and code checks it. Schema checks,
+exact identities, ticket age, the owner's local limits and server risk
+enforcement protect the mutation path; prompt wording is not the boundary.
 
 The GUI binds IPv4 loopback, checks the exact Host, issues a per-start local
 session, uses HttpOnly/SameSite cookies and explicit Origin/CSRF checks on
@@ -25,13 +26,21 @@ fallback. SQLite stores authenticated encrypted payloads. No plaintext vault
 fallback, password-based credential wrapping, credential CLI argument, telemetry,
 or remote font/image dependency is used.
 
-Execution requires the owner's exact server policy preview/approval followed by
-a separate local opt-in. Existing immutable server limits, ownership, capability,
-cash, private risk, writer gates, idempotency and kill controls remain in force.
-Every possible POST has a durable source identity and original body/retry key;
-lost or ambiguous outcomes are reconciled without dispatching a replacement.
-Changing a note, settings, source clocks, local/cloud copy or model response
-does not erase that execution claim.
+The listener holds its own revocable device connection (OAuth with PKCE,
+`client_kind=listener`). It is separate from any ChatGPT, Codex or Claude
+connection and can be revoked on its own in Flusso → Settings → AI tools.
+
+Auto-trade is off by default. Turning it on requires a write-scoped connection,
+an owned trading account, explicitly selected notebooks, and the owner's maximum
+USD per order, USD per ticket and leverage. Anything that can write to a watched
+notebook can propose a ticket, so keep auto-trade on a dedicated notebook that
+only you and agents you trust write to. A ticket must be new, marked `watching`,
+younger than the age limit and carry a unique id; each ticket is placed at most
+once, and a daily ticket cap stops a flood. Every order carries the owner's
+limits as server-enforced conditions, and Flusso still checks ownership, plan,
+margin, venue terms, risk and its own per-account rate limit. Every possible
+submission is saved before dispatch; an uncertain outcome pauses new tickets and
+is checked read-only, never resent.
 
 Tests cover adversarial model output, malformed callbacks, wrong origin/Host,
 encrypted persistence, optimistic edits, duplicate signals, settings races and

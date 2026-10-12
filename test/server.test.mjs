@@ -44,14 +44,14 @@ test('auto-trade needs a write connection and an account this connection owns', 
   const w = await appFixture({ status: async () => ({ connected: true, clientId: 'fixture-client', scopes }) }); try {
     await w.unlock();
     const risk = { maxSlippagePct: 3, maxOrderUsd: 100, maxTicketUsd: 200, maxLeverage: 10, minVolume24hUsd: null, together: true };
-    assert.equal((await w.post('/api/settings', settingsBody(w.store, { enabled: true, executionEnabled: true, accountId, risk }))).status, 400);
+    assert.equal((await w.post('/api/settings', settingsBody(w.store, { enabled: true, executionEnabled: true, notebookIds: [w.store.notebooks()[0].id], accountId, risk }))).status, 400);
     scopes = ['mcp:read', 'mcp:write'];
     for (const field of ['maxOrderUsd', 'maxTicketUsd', 'maxLeverage'])
-      assert.equal((await w.post('/api/settings', settingsBody(w.store, { enabled: true, executionEnabled: true, accountId, risk: { ...risk, [field]: null } }))).status, 400);
-    assert.equal((await w.post('/api/settings', settingsBody(w.store, { enabled: true, executionEnabled: true, accountId: null, risk }))).status, 400);
-    assert.equal((await w.post('/api/settings', settingsBody(w.store, { enabled: true, executionEnabled: true, accountId: notebookId, risk }))).status, 400);
-    assert.equal((await w.post('/api/settings', settingsBody(w.store, { enabled: true, executionEnabled: true, accountId, risk: { ...risk, maxSlippagePct: 0 } }))).status, 400);
-    assert.equal((await w.post('/api/settings', settingsBody(w.store, { enabled: true, executionEnabled: true, accountId, risk }))).status, 200);
+      assert.equal((await w.post('/api/settings', settingsBody(w.store, { enabled: true, executionEnabled: true, notebookIds: [w.store.notebooks()[0].id], accountId, risk: { ...risk, [field]: null } }))).status, 400);
+    assert.equal((await w.post('/api/settings', settingsBody(w.store, { enabled: true, executionEnabled: true, notebookIds: [w.store.notebooks()[0].id], accountId: null, risk }))).status, 400);
+    assert.equal((await w.post('/api/settings', settingsBody(w.store, { enabled: true, executionEnabled: true, notebookIds: [w.store.notebooks()[0].id], accountId: notebookId, risk }))).status, 400);
+    assert.equal((await w.post('/api/settings', settingsBody(w.store, { enabled: true, executionEnabled: true, notebookIds: [w.store.notebooks()[0].id], accountId, risk: { ...risk, maxSlippagePct: 0 } }))).status, 400);
+    assert.equal((await w.post('/api/settings', settingsBody(w.store, { enabled: true, executionEnabled: true, notebookIds: [w.store.notebooks()[0].id], accountId, risk }))).status, 200);
     assert.equal(w.store.settings().executionEnabled, true); assert.deepEqual(w.store.settings().risk, risk);
     const accounts = await fetch(w.app.origin + '/api/accounts', { headers: { Cookie: w.cookie() } }).then(row => row.json()); assert.equal(accounts.accounts[0].id, accountId);
   } finally { await w.close(); }
@@ -107,9 +107,9 @@ test('pending browser connection refuses settings changes and finishes with exec
   try {
     await w.unlock();
     const risk = { maxSlippagePct: 3, maxOrderUsd: 100, maxTicketUsd: 200, maxLeverage: 10, minVolume24hUsd: null, together: true };
-    assert.equal((await w.post('/api/settings', settingsBody(w.store, { enabled: true, executionEnabled: true, accountId, risk }))).status, 200);
+    assert.equal((await w.post('/api/settings', settingsBody(w.store, { enabled: true, executionEnabled: true, notebookIds: [w.store.notebooks()[0].id], accountId, risk }))).status, 200);
     const connecting = w.post('/api/connect', {}); await started.promise;
-    assert.equal((await w.post('/api/settings', settingsBody(w.store, { enabled: true, executionEnabled: true, accountId, risk }))).status, 409);
+    assert.equal((await w.post('/api/settings', settingsBody(w.store, { enabled: true, executionEnabled: true, notebookIds: [w.store.notebooks()[0].id], accountId, risk }))).status, 409);
     assert.equal((await w.post('/api/sync', {})).status, 409);
     finish.resolve(); assert.equal((await connecting).status, 200);
     assert.equal(w.store.settings().enabled, false); assert.equal(w.store.settings().executionEnabled, false);

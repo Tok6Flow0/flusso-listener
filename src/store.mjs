@@ -38,11 +38,13 @@ export async function openStore({ directory, vault, encryptionKey, clock = () =>
   transaction(() => {
     const stored = get('settings', 'main');
     if (!stored) put('settings', 'main', { ...DEFAULT_SETTINGS, listenerId: randomUUID(), version: 1 });
-    else if ('policy' in stored || 'authorizationId' in stored || !stored.risk || !('maxTicketUsd' in stored.risk) || !('maxLeverage' in stored.risk)) {
+    else if ('policy' in stored || 'authorizationId' in stored || !stored.risk || !('maxTicketUsd' in stored.risk) || !('maxLeverage' in stored.risk) || !('maxTicketsPerDay' in stored)) {
       // 0.2.0-preview.1 used a BTC-only policy lane. Its fields are retired and
-      // execution restarts off so the owner reviews the new risk settings.
+      // execution restarts off so the owner reviews the new risk settings. Later
+      // additions (such as the daily ticket cap) only fill in their defaults.
+      const retired = 'policy' in stored || 'authorizationId' in stored || !stored.risk || !('maxTicketUsd' in stored.risk) || !('maxLeverage' in stored.risk);
       const { policy: _policy, authorizationId: _authorizationId, budgetUsd: _budget, ...rest } = stored;
-      put('settings', 'main', { ...DEFAULT_SETTINGS, ...rest, executionEnabled: false, risk: { ...DEFAULT_SETTINGS.risk, ...rest.risk }, maxSignalAgeSeconds: Math.max(rest.maxSignalAgeSeconds ?? 0, DEFAULT_SETTINGS.maxSignalAgeSeconds), version: stored.version + 1 });
+      put('settings', 'main', { ...DEFAULT_SETTINGS, ...rest, executionEnabled: retired ? false : rest.executionEnabled, risk: { ...DEFAULT_SETTINGS.risk, ...rest.risk }, maxSignalAgeSeconds: Math.max(rest.maxSignalAgeSeconds ?? 0, DEFAULT_SETTINGS.maxSignalAgeSeconds), version: stored.version + 1 });
     }
     // Retired policy attempts remain unresolved; upgrading must never hide them
     // or reinterpret their original body as a basic-order request.

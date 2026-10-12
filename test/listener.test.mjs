@@ -238,3 +238,17 @@ test('an old prompt-policy attempt is never replayed as an order list', async ()
     await listener.tick(); assert.equal(calls, 0); assert.match(listener.status().lastError, /earlier listener submission.*never be resent/);
   } finally { listener.stop(); await w.close(); }
 });
+
+test('auto-trade only acts on picked notebooks and stops at the daily ticket cap', async () => {
+  const w = await workspace(); let calls = 0;
+  const listener = createListener({ store: w.store, cloud: fakeCloud({ submitOrders: async ({ orders }) => { calls++; return sent(orders); } }), classify: noModel, clock: () => now });
+  try {
+    enable(w.store, { notebookIds: [] }); listener.start();
+    w.store.createEntry(note(w.store, { body: ticket({ id: 'unpicked' }) })); await listener.tick();
+    assert.equal(calls, 0); assert.match(w.store.all('activity').map(row => row.reason).join(' '), /Pick the notebooks/);
+    enable(w.store, { maxTicketsPerDay: 1 });
+    w.store.createEntry(note(w.store, { body: ticket({ id: 'first-today' }) })); await listener.tick();
+    w.store.createEntry(note(w.store, { body: ticket({ id: 'second-today' }) })); await listener.tick();
+    assert.equal(calls, 1); assert.match(w.store.all('activity').map(row => row.reason).join(' '), /Daily limit reached: 1 ticket/);
+  } finally { listener.stop(); await w.close(); }
+});

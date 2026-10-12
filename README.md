@@ -17,7 +17,7 @@ The standalone app includes its runtime. You do not install Node or Ollama.
 The full Flusso dashboard remains at [flusso.stream](https://flusso.stream).
 Choose the account control at the bottom left to connect, disconnect, open account settings, or check the app version and updates. Cloud access is optional.
 
-Version **0.2.0-preview.2** remains an unsigned preview. Review the release's platform requirements and signing status. Preview automatic updates are disabled; signed production updates have a check, download, and restart flow that requires your clicks. Do not disable OS signature protections. See [desktop release details](docs/desktop-releases.md).
+Version **0.2.0-preview.3** remains an unsigned preview. Review the release's platform requirements and signing status. Preview automatic updates are disabled; signed production updates have a check, download, and restart flow that requires your clicks. Do not disable OS signature protections. See [desktop release details](docs/desktop-releases.md).
 
 Use an unlocked OS credential store: macOS Keychain, Windows Credential Manager,
 or Linux Secret Service (GNOME Keyring or KWallet). On Ubuntu 24.04, use the DEB
@@ -50,16 +50,14 @@ do not run a CLI service and desktop app against the same Journal simultaneously
 
 ## Give this to your existing AI agent
 
-Copy this instruction into the agent you use to set up software on your computer:
+Paste this into Claude, ChatGPT, Codex, Cursor or whichever agent can work on
+your computer:
 
-> For advanced source setup, install the public Flusso Journal from
-> https://github.com/Tok6Flow0/flusso-listener. Read its README and SECURITY.md
-> before running setup. Use Node 24 and the existing OS credential store. Follow the desktop source
-> commands in the README, prepare the pinned bundled runtime, and leave every
-> local service bound to loopback. Start the app and let me complete
-> browser sign-in myself. Never ask for my Flusso password, tokens, or API key in
-> this chat. Leave execution off. Do not install a background service, approve a
-> spending policy, or submit a real order unless I specifically request it.
+> Install Flusso Journal for me by following
+> https://github.com/Tok6Flow0/flusso-listener/blob/main/docs/agent-setup.md
+
+The agent downloads the right build for your computer, installs it and opens it.
+You then connect your account in the browser yourself.
 
 Your agent can install and write local notes; you complete device consent in the
 browser. There is no API key to paste into a model prompt. The browser uses

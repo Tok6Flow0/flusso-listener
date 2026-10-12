@@ -99,7 +99,7 @@
         </section>
         <section class="card">
           <div class="card-head"><h2>Auto-trade</h2><label class="switch"><input id="execution" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span class="sr-only">Auto-trade</span></label></div>
-          <p class="hint">Places <code>flusso-orders</code> tickets from watched notes. Flusso still checks your account risk.</p>
+          <p class="hint">Places <code>flusso-orders</code> tickets from the notebooks you pick above. Flusso still checks your account risk.</p>
           <div class="field-grid">
             <label>Account<select id="account"><option value="">Connect Flusso first</option></select></label>
             <label>Skip tickets older than<select id="max-age"><option value="120">2 minutes</option><option value="300">5 minutes</option><option value="900">15 minutes</option><option value="1800">30 minutes</option><option value="3600">1 hour</option><option value="21600">6 hours</option><option value="86400">24 hours</option></select></label>
@@ -107,6 +107,7 @@
             <label>Max per order<span class="affix"><span>$</span><input id="max-order" type="number" inputmode="decimal" step="any" min="0.01" placeholder="None"></span></label>
             <label>Max per ticket<span class="affix"><span>$</span><input id="max-ticket" type="number" inputmode="decimal" step="any" min="0.01" placeholder="Required for auto-trade"></span></label>
             <label>Max leverage<span class="affix"><input id="max-leverage" type="number" inputmode="decimal" step="any" min="1" placeholder="Required for auto-trade"><span>×</span></span></label>
+            <label>Tickets per day<input id="max-tickets" type="number" inputmode="numeric" step="1" min="1" max="500"></label>
             <label>Min 24h volume<span class="affix"><span>$</span><input id="min-volume" type="number" inputmode="decimal" step="any" min="1" placeholder="None"></span></label>
             <label class="switch switch-row"><input id="together" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span>Send legs together</span></label>
           </div>

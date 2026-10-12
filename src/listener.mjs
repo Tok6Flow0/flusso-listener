@@ -62,6 +62,11 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
     if (!request.eligible) return hold(request.reason);
     if (!settings.executionEnabled) return hold('Auto-trade is off, so this ticket was not placed.');
     if (!settings.accountId) return hold('Choose a trading account for auto-trade.');
+    if (!settings.notebookIds.length) return hold('Pick the notebooks auto-trade may act on.');
+    // A flood of tickets, from a mistake or a hostile note, stops at the owner's daily cap.
+    const since = clock() - 86400000;
+    const recent = store.all('attempt').filter(row => row.kind === 'orders' && Date.parse(row.atUtc) > since).length;
+    if (recent >= (settings.maxTicketsPerDay ?? 24)) return hold(`Daily limit reached: ${recent} tickets in the last 24 hours.`);
     if (!reconciled || (state.cloudComplete === false && entry.origin === 'cloud')) { hold('Waiting for a previous result or a complete cloud read. It will be tried again.'); return 'retry'; }
     if (!settings.enabled || settings.version !== settingsVersion || activeAbort.signal.aborted) return 'stop';
     const idempotencyKey = 'listener-' + createHash('sha256').update(`${settings.listenerId}:${settings.accountId}:${request.signalIdentity}`).digest('hex');

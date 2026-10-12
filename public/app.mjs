@@ -184,7 +184,7 @@ function fillSettings() {
   ensureOption($('max-age'), settings.maxSignalAgeSeconds, `${formatCount(Math.round(settings.maxSignalAgeSeconds / 60))} minutes`); $('max-age').value = String(settings.maxSignalAgeSeconds);
   $('section').value = settings.section; $('instructions').value = settings.instructions;
   $('max-slippage').value = risk.maxSlippagePct ?? ''; $('max-order').value = risk.maxOrderUsd ?? ''; $('min-volume').value = risk.minVolume24hUsd ?? '';
-  $('max-ticket').value = risk.maxTicketUsd ?? ''; $('max-leverage').value = risk.maxLeverage ?? '';
+  $('max-tickets').value = settings.maxTicketsPerDay ?? 24; $('max-ticket').value = risk.maxTicketUsd ?? ''; $('max-leverage').value = risk.maxLeverage ?? '';
   $('together').checked = risk.together !== false;
   $('watch-notebooks').replaceChildren(...snapshot.notebooks.map(row => {
     const label = element('label'), input = element('input'), chip = element('span', row.name);
@@ -204,7 +204,7 @@ function settingsBody(overrides = {}) {
     source: document.querySelector('input[name=source]:checked')?.value ?? 'local',
     notebookIds: [...$('watch-notebooks').querySelectorAll('input:checked')].map(input => input.value),
     section: $('section').value, instructions: $('instructions').value, intervalSeconds: Number($('interval').value),
-    maxSignalAgeSeconds: Number($('max-age').value), accountId: $('account').value || null,
+    maxSignalAgeSeconds: Number($('max-age').value), maxTicketsPerDay: Number($('max-tickets').value), accountId: $('account').value || null,
     risk: { maxSlippagePct: amount('max-slippage'), maxOrderUsd: amount('max-order'), maxTicketUsd: amount('max-ticket'), maxLeverage: amount('max-leverage'), minVolume24hUsd: amount('min-volume'), together: $('together').checked },
     ...overrides,
   };
@@ -246,7 +246,7 @@ function ordersTable(orders, withResults = false) {
   for (const order of orders) {
     const tr = element('tr');
     tr.append(element('td', order.instrumentId, 'mono'), element('td', order.side), element('td', formatQuantity(order.quantity), 'num'), element('td', formatPrice(order.limitPrice), 'num'));
-    if (withResults) { const status = element('td'); status.append(pill(order.status.replace('_', ' '), order.status === 'submitted' ? 'pos' : order.status === 'blocked' ? 'neg' : 'warn')); tr.append(status, element('td', order.message || '', 'wrap')); }
+    if (withResults) { const status = element('td'); status.append(pill(({ submitted: 'sent', blocked: 'refused', unknown: 'unconfirmed', not_sent: 'not sent' })[order.status] ?? order.status, order.status === 'submitted' ? 'pos' : order.status === 'blocked' ? 'neg' : 'warn')); tr.append(status, element('td', order.message || '', 'wrap')); }
     else tr.append(element('td', order.conditions?.maxSlippagePct != null ? formatPercent(order.conditions.maxSlippagePct) : '—', 'num'), element('td', order.conditions?.maxNotionalUsd != null ? formatMoney(order.conditions.maxNotionalUsd) : '—', 'num'));
     tbody.append(tr);
   }

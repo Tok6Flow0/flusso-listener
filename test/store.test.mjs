@@ -62,6 +62,9 @@ test('typed Journal schema rejects unknown instructions, invalid units and missi
   const settings = { version: 1, enabled: false, executionEnabled: false, source: 'local', notebookIds: [], section: '', instructions: 'x'.repeat(1001), intervalSeconds: 60, accountId: null, risk: { maxSlippagePct: null, maxOrderUsd: null, maxTicketUsd: null, maxLeverage: null, minVolume24hUsd: null, together: true }, maxSignalAgeSeconds: 900 };
   assert.throws(() => settingsInput(settings), /custom instructions/);
   assert.throws(() => settingsInput({ ...settings, instructions: '', authorizationId: null }), /Unsupported request field/);
+  assert.throws(() => settingsInput({ ...settings, instructions: '', executionEnabled: true, risk: { ...settings.risk, maxOrderUsd: 900, maxTicketUsd: 1800, maxLeverage: 10 } }), /Pick the notebooks/);
+  assert.throws(() => settingsInput({ ...settings, instructions: '', maxTicketsPerDay: 0 }), /tickets per day/);
+  assert.equal(settingsInput({ ...settings, instructions: '' }).maxTicketsPerDay, 24);
   assert.throws(() => settingsInput({ ...settings, instructions: '', risk: { ...settings.risk, maxOrderUsd: -1 } }), /maximum order size/);
 });
 test('a preview.1 policy setting is retired on open and execution restarts off', async () => {
