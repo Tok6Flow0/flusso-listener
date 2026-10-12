@@ -66,6 +66,28 @@ test('only an unconfirmed order result can be marked resolved, and its ticket st
     assert.equal(w.store.get('attempt', 'listener-unknown-key').status, 'resolved');
   } finally { await w.close(); }
 });
+test('retired unconfirmed attempts stay visible and owner-resolvable without changing their frozen request or claim', async () => {
+  const w = await appFixture(); try {
+    await w.unlock();
+    const legacy = { id: 'listener-retired-key', kind: 'legacy', status: 'unknown', signalIdentity: 'retired-source', idempotencyKey: 'listener-retired-key', body: { original: 'Frozen retired policy request.' }, atUtc: '2026-10-01T00:00:00Z' };
+    w.store.claimAttempt(legacy);
+    w.store.put('activity', 'legacy-held-row', { id: 'legacy-held-row', kind: 'legacy', attemptId: legacy.id, title: 'Earlier execution result needs review', status: 'unknown', atUtc: legacy.atUtc, reason: 'Inspect the original retry key in Flusso.' });
+    for (let i = 0; i < 105; i++) {
+      const id = `recent-order-${i}`;
+      w.store.put('attempt', id, { id, kind: 'orders', status: 'submitted', orders: [], atUtc: new Date(now).toISOString() });
+      w.store.put('activity', id, { id, title: id, status: 'submitted', atUtc: new Date(now).toISOString() });
+    }
+    const status = await fetch(w.app.origin + '/api/status', { headers: { Cookie: w.cookie() } }).then(row => row.json());
+    assert.equal(status.activity[0].attemptId, legacy.id); assert.equal(status.attempts[0].id, legacy.id);
+    assert.deepEqual(status.attempts[0].orders, []); assert.deepEqual(status.attempts[0].body, legacy.body);
+    assert.equal((await w.post(`/api/attempts/${legacy.id}/resolve`, {})).status, 200);
+    assert.equal(w.store.get('attempt', legacy.id).status, 'resolved');
+    assert.deepEqual(w.store.get('attempt', legacy.id).body, legacy.body);
+    assert.equal(w.store.get('activity', 'legacy-held-row').status, 'resolved');
+    assert.equal(w.store.claimAttempt({ ...legacy, id: 'replacement' }), false);
+    assert.equal((await w.post(`/api/attempts/${legacy.id}/resolve`, {})).status, 404);
+  } finally { await w.close(); }
+});
 test('appearance is saved locally and applied before first paint', async () => {
   const w = await appFixture(); try {
     await w.unlock();

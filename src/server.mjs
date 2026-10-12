@@ -30,6 +30,8 @@ export async function startServer({ store, cloud, listener, port = 0, open = ope
       throw new InputError('The connection changed. Reload and try again.', 409);
     }
   };
+  const unconfirmed = row => ['pending', 'unknown'].includes(row.status);
+  const newest = (left, right) => right.atUtc.localeCompare(left.atUtc);
   const server = createServer(async (request, response) => {
     const reply = (status, value) => { response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); response.end(JSON.stringify(value)); };
     response.setHeader('Cache-Control', 'no-store'); response.setHeader('X-Content-Type-Options', 'nosniff'); response.setHeader('Referrer-Policy', 'no-referrer');
@@ -55,7 +57,7 @@ export async function startServer({ store, cloud, listener, port = 0, open = ope
       if (request.method === 'GET' && url.pathname === '/api/profile') return reply(200, await cloud.profile());
       if (request.method === 'GET' && url.pathname === '/api/accounts') return reply(200, { accounts: await cloud.listAccounts() });
       if (request.method !== 'GET' && (request.method !== 'POST' || request.headers.origin !== origin || !same(request.headers['x-flusso-csrf'], csrf))) return reply(403, { error: 'Request origin or session refused.' });
-      if (request.method === 'GET' && url.pathname === '/api/status') return reply(200, { settings: store.settings(), listener: listener.status(), cloud: await cloud.status(), model: await checkModel(), display: { theme: theme() }, notebooks: store.notebooks(), entries: store.entries().slice(0, 500).map(entry => ({ ...entry, ticket: readTicket(entry.body) })), activity: store.all('activity').sort((a, b) => b.atUtc.localeCompare(a.atUtc)).slice(0, 100), attempts: store.all('attempt').filter(row => row.kind === 'orders').sort((a, b) => b.atUtc.localeCompare(a.atUtc)).slice(0, 100) });
+      if (request.method === 'GET' && url.pathname === '/api/status') return reply(200, { settings: store.settings(), listener: listener.status(), cloud: await cloud.status(), model: await checkModel(), display: { theme: theme() }, notebooks: store.notebooks(), entries: store.entries().slice(0, 500).map(entry => ({ ...entry, ticket: readTicket(entry.body) })), activity: store.all('activity').sort((a, b) => Number(b.kind === 'legacy' && unconfirmed(b)) - Number(a.kind === 'legacy' && unconfirmed(a)) || newest(a, b)).slice(0, 100), attempts: store.all('attempt').filter(row => ['orders', 'legacy'].includes(row.kind)).sort((a, b) => Number(unconfirmed(b)) - Number(unconfirmed(a)) || newest(a, b)).slice(0, 100).map(row => ({ ...row, orders: row.orders ?? [] })) });
       const input = request.method === 'POST' ? await readJson(request) : null;
       if (url.pathname === '/api/connect' && request.method === 'POST') {
         object(input, []);
@@ -92,9 +94,11 @@ export async function startServer({ store, cloud, listener, port = 0, open = ope
       if (/^\/api\/attempts\/[A-Za-z0-9_-]{8,160}\/resolve$/.test(url.pathname) && request.method === 'POST') {
         object(input, []);
         const attempt = store.get('attempt', decodeURIComponent(url.pathname.split('/')[3]));
-        if (!attempt || attempt.kind !== 'orders' || !['pending', 'unknown'].includes(attempt.status)) throw new InputError('Only an unconfirmed order result can be marked resolved.', 404);
+        if (!attempt || !['orders', 'legacy'].includes(attempt.kind) || !unconfirmed(attempt)) throw new InputError('Only an unconfirmed order result can be marked resolved.', 404);
         // The owner checked Flusso. The durable claim stays, so the ticket is never re-sent.
         store.put('attempt', attempt.id, { ...attempt, status: 'resolved', resolvedAtUtc: new Date().toISOString() });
+        for (const activity of store.all('activity').filter(row => row.kind === 'legacy' && row.attemptId === attempt.id))
+          store.put('activity', activity.id, { ...activity, status: 'resolved', reason: 'The owner marked this earlier result resolved after checking Flusso. Its original request and retry key remain retained; it will never be resent.' });
         listener.refresh(); return reply(200, { resolved: true });
       }
       if (url.pathname === '/api/display' && request.method === 'POST') {

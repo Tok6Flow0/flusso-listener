@@ -104,6 +104,25 @@ test('an unknown result from another account or connection is held without readb
   }
 });
 
+test('retired pending and unknown attempts hold new tickets without invoking any legacy or order POST', async () => {
+  for (const status of ['pending', 'unknown']) {
+    const w = await workspace(); let calls = 0;
+    const forbidden = async () => { calls++; throw new Error('A retired request must never be dispatched or automatically reconciled.'); };
+    const listener = createListener({ store: w.store, cloud: fakeCloud({ submitOrders: forbidden, reconcileOrders: forbidden, runApprovedSignal: forbidden, reconcileRunByKey: forbidden }), classify: noModel, clock: () => now });
+    try {
+      enable(w.store, { notebookIds: [w.store.notebooks()[0].id] }); listener.start();
+      const original = { id: 'listener-retired-key', status, body: { prompt: 'Frozen retired request.' }, atUtc: new Date(now).toISOString() };
+      w.store.put('attempt', original.id, original);
+      const entry = w.store.createEntry(note(w.store, { body: ticket() })); await listener.tick();
+      assert.equal(calls, 0); assert.match(listener.status().lastError, /earlier listener submission.*never be resent/);
+      assert.deepEqual(w.store.get('attempt', original.id), original);
+      assert.equal(w.store.get('checkpoint', `local:${entry.id}`), null, 'The new ticket remains held for a later check.');
+      w.store.put('attempt', original.id, { ...original, kind: 'legacy', status: 'resolved' });
+      await listener.tick(); assert.equal(calls, 1, 'Owner resolution releases the hold for a new independent ticket.');
+    } finally { await listener.stop(); await w.close(); }
+  }
+});
+
 test('the immediate confirmation guard observes local opt-out and connection changes', async () => {
   for (const change of ['off', 'account', 'connection']) {
     const w = await workspace(); let confirmed = false, connectionId = 'original-connection';
@@ -150,7 +169,7 @@ test('first cloud sync baselines imported notes; a changed old note is discovere
   const w = await workspace(); let revision = 1, classifications = 0;
   const cloudEntry = { ...note(w.store), id: '00000000-0000-4000-8000-000000000004', notebookId, version: 1, createdAtUtc: new Date(now - 86400000).toISOString(), updatedAtUtc: new Date(now).toISOString(), signal: null };
   const listener = createListener({ store: w.store, cloud: fakeCloud({ readJournal: async () => ({ notebooks: [{ id: notebookId, name: 'Cloud', version: 1 }], entries: [{ ...cloudEntry, version: revision }], complete: true }) }), classify: async () => { classifications++; return { decision: 'review', reason: 'Research.' }; }, clock: () => now });
-  try { enable(w.store, { source: 'cloud', executionEnabled: false }); listener.start(); await listener.tick(); assert.equal(classifications, 0); revision = 2; await listener.tick(); assert.equal(classifications, 1); await listener.tick(); assert.equal(classifications, 1); }
+  try { enable(w.store, { source: 'cloud', executionEnabled: false, notebookIds: [] }); listener.start(); await listener.tick(); assert.equal(classifications, 0); revision = 2; await listener.tick(); assert.equal(classifications, 1); await listener.tick(); assert.equal(classifications, 1); }
   finally { listener.stop(); await w.close(); }
 });
 
@@ -216,6 +235,6 @@ test('an old prompt-policy attempt is never replayed as an order list', async ()
   const listener = createListener({ store: w.store, cloud: fakeCloud({ submitOrders: async () => { calls++; } }), classify: noModel, clock: () => now });
   try {
     enable(w.store); listener.start(); w.store.put('attempt', 'legacy', { id: 'legacy', status: 'unknown', idempotencyKey: 'legacy-prompt-key', body: { schemaVersion: 'product.prompt_trading_run_request.v1' } });
-    await listener.tick(); assert.equal(calls, 0); assert.equal(listener.status().lastError, null);
+    await listener.tick(); assert.equal(calls, 0); assert.match(listener.status().lastError, /earlier listener submission.*never be resent/);
   } finally { listener.stop(); await w.close(); }
 });

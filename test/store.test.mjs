@@ -69,12 +69,27 @@ test('a preview.1 policy setting is retired on open and execution restarts off',
   try {
     const first = await openStore({ directory, encryptionKey: Buffer.from(key) });
     first.put('settings', 'main', { ...first.settings(), executionEnabled: true, authorizationId: 'old', policy: { instrumentId: 'coinbase:spot:BTC-USD' }, maxSignalAgeSeconds: 120, risk: undefined });
+    const original = { id: 'listener-retired-key', signalIdentity: 'retired-signal', idempotencyKey: 'listener-retired-key', accountId: 'old-account', authorizationId: 'old', body: { prompt: 'Original frozen policy request.' }, status: 'unknown', atUtc: '2026-10-01T00:00:00Z' };
+    first.claimAttempt(original);
+    first.put('attempt', 'listener-retired-pending', { ...original, id: 'listener-retired-pending', idempotencyKey: 'listener-retired-pending', status: 'pending' });
+    first.put('attempt', 'listener-retired-answered', { ...original, id: 'listener-retired-answered', status: 'answered' });
     first.close();
     const second = await openStore({ directory, encryptionKey: Buffer.from(key) });
     const settings = second.settings();
     assert.equal('policy' in settings, false); assert.equal('authorizationId' in settings, false);
     assert.equal(settings.executionEnabled, false); assert.equal(settings.maxSignalAgeSeconds, 900);
     assert.deepEqual(settings.risk, { maxSlippagePct: null, maxOrderUsd: null, maxTicketUsd: null, maxLeverage: null, minVolume24hUsd: null, together: true });
+    assert.deepEqual(second.get('attempt', original.id), { ...original, kind: 'legacy' });
+    assert.equal(second.get('attempt', 'listener-retired-pending').kind, 'legacy');
+    assert.equal(second.get('attempt', 'listener-retired-answered').kind, undefined);
+    assert.equal(second.claimAttempt({ ...original, id: 'replacement' }), false, 'The original source claim stays durable.');
+    const holds = second.all('activity').filter(row => row.kind === 'legacy');
+    assert.equal(holds.length, 2); assert.equal(holds[0].status, 'unknown');
+    assert.match(holds.find(row => row.attemptId === original.id).reason, /listener-retired-key.*never be resent/);
     second.close();
+    const third = await openStore({ directory, encryptionKey: Buffer.from(key) });
+    assert.equal(third.all('activity').filter(row => row.kind === 'legacy').length, 2, 'Reopening does not duplicate recovery holds.');
+    assert.deepEqual(third.get('attempt', original.id).body, original.body);
+    third.close();
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

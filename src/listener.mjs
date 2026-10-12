@@ -35,8 +35,9 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
   // Unknown delivery is checked through canonical GETs only. Replaying a POST
   // could admit a previously unsent line, including while auto-trade is off.
   async function reconcileUnknown() {
-    for (const attempt of store.all('attempt').filter(row => row.kind === 'orders' && ['pending', 'unknown'].includes(row.status))) {
+    for (const attempt of store.all('attempt').filter(row => ['pending', 'unknown'].includes(row.status))) {
       if (activeAbort.signal.aborted) return false;
+      if (attempt.kind !== 'orders') { state.lastError = 'An earlier listener submission is unconfirmed. Check it in Flusso, then mark it resolved in Activity. It will never be resent.'; return false; }
       if ((attempt.retries ?? 0) >= MAX_READBACK_CHECKS) { state.lastError = 'An order result is still unconfirmed. Check it in Flusso, then mark it resolved in Activity.'; return false; }
       const connection = await cloud.status();
       if (!connection.connected || attempt.clientId !== connection.clientId || attempt.connectionId !== (connection.connectionId ?? null)

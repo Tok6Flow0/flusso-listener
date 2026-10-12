@@ -44,6 +44,17 @@ export async function openStore({ directory, vault, encryptionKey, clock = () =>
       const { policy: _policy, authorizationId: _authorizationId, budgetUsd: _budget, ...rest } = stored;
       put('settings', 'main', { ...DEFAULT_SETTINGS, ...rest, executionEnabled: false, risk: { ...DEFAULT_SETTINGS.risk, ...rest.risk }, maxSignalAgeSeconds: Math.max(rest.maxSignalAgeSeconds ?? 0, DEFAULT_SETTINGS.maxSignalAgeSeconds), version: stored.version + 1 });
     }
+    // Retired policy attempts remain unresolved; upgrading must never hide them
+    // or reinterpret their original body as a basic-order request.
+    for (const attempt of all('attempt').filter(row => (!row.kind || row.kind === 'legacy') && ['pending', 'unknown'].includes(row.status))) {
+      if (!attempt.kind) put('attempt', attempt.id, { ...attempt, kind: 'legacy' });
+      const activityId = 'legacy-' + createHash('sha256').update(attempt.id).digest('hex');
+      if (!get('activity', activityId)) put('activity', activityId, {
+        id: activityId, kind: 'legacy', attemptId: attempt.id, entryId: attempt.entryId,
+        title: 'Earlier execution result needs review', decision: 'review', status: 'unknown', atUtc: clock(),
+        reason: `A retired listener submission is unconfirmed. Check its orders, fills and positions in Flusso before marking it resolved. Original retry key: ${attempt.idempotencyKey ?? attempt.id}. It will never be resent.`,
+      });
+    }
     if (!all('notebook').length) { const id = randomUUID(); put('notebook', `local:${id}`, { id, name: 'My Journal', origin: 'local', version: 1, telegramEnabled: false }); }
   });
   return {
