@@ -1,16 +1,36 @@
 {
   "name": "flusso-listener",
-  "version": "0.1.0",
+  "version": "0.2.0-preview.1",
   "description": "A private local Journal and bounded signal listener for your Flusso account.",
   "type": "module",
   "private": true,
   "license": "MIT",
-  "engines": { "node": ">=24.19.0 <25" },
+  "main": "desktop/main.mjs",
+  "author": "Flusso",
+  "homepage": "https://flusso.stream",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Tok6Flow0/flusso-listener.git"
+  },
+  "engines": {
+    "node": ">=24.19.0 <25"
+  },
   "scripts": {
     "start": "node src/cli.mjs start",
+    "desktop": "electron .",
+    "desktop:prepare": "node scripts/prepare-runtime.mjs",
+    "desktop:pack": "electron-builder --config electron-builder.cjs --dir --publish never",
+    "desktop:dist": "electron-builder --config electron-builder.cjs --publish never",
     "journal": "node src/cli.mjs journal",
     "test": "node --test test/*.test.mjs src/*.test.mjs",
     "check": "node --check src/cli.mjs && node --check public/app.mjs && npm test"
   },
-  "dependencies": { "@napi-rs/keyring": "2.1.1" }
+  "dependencies": {
+    "@napi-rs/keyring": "2.1.1",
+    "electron-updater": "7.0.0-alpha.9"
+  },
+  "devDependencies": {
+    "electron": "44.7.0",
+    "electron-builder": "27.0.0-alpha.10"
+  }
 }

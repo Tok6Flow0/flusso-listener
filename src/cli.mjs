@@ -40,7 +40,7 @@ async function main(args) {
       console.log('This URL unlocks the local Journal. Keep it private. Press Ctrl+C to stop.');
       if (!args.includes('--no-browser')) await openBrowser(app.url).catch(() => console.log('Open the displayed local URL in your browser.'));
       let closing = false;
-      const close = async () => { if (closing) return; closing = true; listener.stop(); await app.close(); const current = JSON.parse(await readFile(runtime, 'utf8').catch(() => '{}')); if (current.pid === process.pid) await unlink(runtime).catch(() => {}); await releaseInstance(); store.close(); process.exit(0); };
+      const close = async () => { if (closing) return; closing = true; const drained = listener.stop(); await app.close(); await drained; const current = JSON.parse(await readFile(runtime, 'utf8').catch(() => '{}')); if (current.pid === process.pid) await unlink(runtime).catch(() => {}); await releaseInstance(); store.close(); process.exit(0); };
       process.on('SIGINT', close); process.on('SIGTERM', close); return;
       } catch (error) { listener.stop(); if (app) await app.close(); await releaseInstance(); throw error; }
     }

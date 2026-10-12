@@ -1,0 +1,260 @@
+name: Desktop release
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Release channel (production requires stable tooling and platform certificates)
+        type: choice
+        options: [preview, production]
+        default: preview
+      publish:
+        description: Publish the complete build to GitHub Releases
+        type: boolean
+        default: false
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      channel: ${{ steps.plan.outputs.channel }}
+      version: ${{ steps.plan.outputs.version }}
+      publish: ${{ steps.plan.outputs.publish }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.21.0
+      - id: plan
+        name: Validate release channel and signing prerequisites
+        env:
+          REQUESTED_CHANNEL: ${{ inputs.channel }}
+          REQUESTED_PUBLISH: ${{ inputs.publish }}
+          UPDATE_KEY: ${{ secrets.ELECTRON_BUILDER_UPDATE_SIGN_KEY }}
+          MAC_CERT: ${{ secrets.MAC_CSC_LINK }}
+          MAC_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          WIN_CERT: ${{ secrets.WIN_CSC_LINK }}
+          WIN_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          APPLE_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, appendFileSync } from 'node:fs';
+          import { createPrivateKey } from 'node:crypto';
+          const p = JSON.parse(readFileSync('package.json'));
+          const channel = process.env.REQUESTED_CHANNEL || (p.version.includes('-') ? 'preview' : 'production');
+          if (!['preview', 'production'].includes(channel)) throw new Error('Invalid release channel.');
+          if (!process.env.UPDATE_KEY || createPrivateKey(process.env.UPDATE_KEY).asymmetricKeyType !== 'ed25519') throw new Error('An Ed25519 signed-manifest key is required for desktop CI.');
+          if (process.env.GITHUB_REF_TYPE === 'tag' && process.env.GITHUB_REF_NAME !== `v${p.version}`) throw new Error('Release tag must match package.json exactly.');
+          if (channel === 'preview' && !p.version.includes('-')) throw new Error('Preview releases require a prerelease version.');
+          if (channel === 'production') {
+            if ([p.version, p.devDependencies['electron-builder'], p.dependencies['electron-updater']].some(v => v.includes('-'))) throw new Error('Production requires stable app, builder and updater versions.');
+            for (const name of ['MAC_CERT', 'MAC_PASSWORD', 'WIN_CERT', 'WIN_PASSWORD', 'APPLE_KEY', 'APPLE_KEY_ID', 'APPLE_ISSUER']) if (!process.env[name]) throw new Error(`Missing production signing prerequisite: ${name}`);
+          }
+          const publish = process.env.GITHUB_REF_TYPE === 'tag' || process.env.REQUESTED_PUBLISH === 'true';
+          appendFileSync(process.env.GITHUB_OUTPUT, `channel=${channel}\nversion=${p.version}\npublish=${publish}\n`);
+          NODE
+
+  build:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-15, platform: darwin, target: mac, arch: arm64 }
+          - { os: macos-15-intel, platform: darwin, target: mac, arch: x64 }
+          - { os: windows-11-arm, platform: win32, target: win, arch: arm64 }
+          - { os: windows-2025, platform: win32, target: win, arch: x64 }
+          - { os: ubuntu-24.04-arm, platform: linux, target: linux, arch: arm64 }
+          - { os: ubuntu-24.04, platform: linux, target: linux, arch: x64 }
+    runs-on: ${{ matrix.os }}
+    env:
+      FLUSSO_RELEASE_CHANNEL: ${{ needs.plan.outputs.channel }}
+      FLUSSO_BUILD_ARCH: ${{ matrix.arch }}
+      FLUSSO_DESKTOP_SMOKE_FILE: ${{ runner.temp }}/flusso-desktop-smoke.json
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.21.0
+          cache: npm
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-0 libfuse2t64 libnss3 libgbm1 xvfb dbus-x11 gnome-keyring
+      - run: npm ci
+      - run: npm run check
+      - name: Prepare the pinned CPU inference runtime
+        run: npm run desktop:prepare -- ${{ matrix.platform }}-${{ matrix.arch }}
+      - name: Verify native Electron modules
+        shell: bash
+        env:
+          ELECTRON_RUN_AS_NODE: '1'
+        run: |
+          ./node_modules/.bin/electron --input-type=module -e "import { DatabaseSync } from 'node:sqlite'; import '@napi-rs/keyring'; const db = new DatabaseSync(':memory:'); if (db.prepare('SELECT 1 AS ready').get().ready !== 1) throw new Error('SQLite smoke failed'); db.close(); console.log('Electron native SQLite and OS keyring loaded.');"
+      - name: Configure macOS production signing
+        id: macsign
+        if: needs.plan.outputs.channel == 'production' && runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_KEY_CONTENT: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { writeFileSync, appendFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          const keyFile = join(process.env.RUNNER_TEMP, 'flusso-notarization.p8');
+          writeFileSync(keyFile, process.env.APPLE_KEY_CONTENT, { mode: 0o600, flag: 'wx' });
+          appendFileSync(process.env.GITHUB_OUTPUT, `keyfile=${keyFile}\n`);
+          NODE
+      - name: Build native installers and signed manifests
+        env:
+          ELECTRON_BUILDER_UPDATE_SIGN_KEY: ${{ secrets.ELECTRON_BUILDER_UPDATE_SIGN_KEY }}
+          CSC_LINK: ${{ needs.plan.outputs.channel == 'production' && runner.os == 'macOS' && secrets.MAC_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ needs.plan.outputs.channel == 'production' && runner.os == 'macOS' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
+          WIN_CSC_LINK: ${{ needs.plan.outputs.channel == 'production' && runner.os == 'Windows' && secrets.WIN_CSC_LINK || '' }}
+          WIN_CSC_KEY_PASSWORD: ${{ needs.plan.outputs.channel == 'production' && runner.os == 'Windows' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
+          APPLE_API_KEY: ${{ steps.macsign.outputs.keyfile }}
+          APPLE_API_KEY_ID: ${{ needs.plan.outputs.channel == 'production' && runner.os == 'macOS' && secrets.APPLE_API_KEY_ID || '' }}
+          APPLE_API_ISSUER: ${{ needs.plan.outputs.channel == 'production' && runner.os == 'macOS' && secrets.APPLE_API_ISSUER || '' }}
+        run: npm run desktop:dist -- --${{ matrix.target }} --${{ matrix.arch }}
+      - name: Verify every update manifest signature
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, readdirSync } from 'node:fs';
+          import { createHash } from 'node:crypto';
+          import { join, basename } from 'node:path';
+          import yaml from 'js-yaml';
+          import { normalizePublicKeyList, verifyManifestSignatures } from 'builder-util-runtime';
+          function findConfig(directory) {
+            for (const entry of readdirSync(directory, { withFileTypes: true })) {
+              const path = join(directory, entry.name);
+              if (entry.isFile() && entry.name === 'app-update.yml') return path;
+              if (entry.isDirectory()) { const result = findConfig(path); if (result) return result; }
+            }
+          }
+          const configPath = findConfig('dist');
+          if (!configPath) throw new Error('Packaged app has no update trust configuration.');
+          const keys = normalizePublicKeyList(yaml.load(readFileSync(configPath, 'utf8')).updateManifestPublicKey);
+          const files = readdirSync('dist').filter(name => /^(preview|latest)-.*\.yml$/.test(name));
+          if (!files.length) throw new Error('No architecture-specific update manifests were generated.');
+          for (const file of files) {
+            const info = yaml.load(readFileSync(`dist/${file}`, 'utf8'));
+            if (!verifyManifestSignatures(info, keys).ok || verifyManifestSignatures({ ...info, version: `${info.version}-tampered` }, keys).ok) throw new Error('Update manifest verification failed.');
+            for (const asset of info.files) {
+              if (basename(asset.url) !== asset.url) throw new Error('Expected a release asset filename.');
+              const bytes = readFileSync(join('dist', asset.url));
+              if (bytes.length !== asset.size || createHash('sha512').update(bytes).digest('base64') !== asset.sha512) throw new Error('Release asset differs from signed metadata.');
+            }
+          }
+          console.log(`Verified ${files.length} signed update manifest(s).`);
+          NODE
+      - name: Smoke-test packaged macOS app
+        if: runner.os == 'macOS'
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          app=$(find dist -maxdepth 2 -name '*.app' -type d -print -quit)
+          test -n "$app"
+          "$app/Contents/MacOS/Flusso Journal" --smoke-test > "$FLUSSO_DESKTOP_SMOKE_FILE"
+      - name: Smoke-test packaged Windows app
+        if: runner.os == 'Windows'
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          $app = Get-ChildItem dist -Recurse -Filter 'Flusso Journal.exe' | Select-Object -First 1
+          if (-not $app) { throw 'Missing packaged Windows app.' }
+          $process = Start-Process -FilePath $app.FullName -ArgumentList '--smoke-test' -RedirectStandardOutput $env:FLUSSO_DESKTOP_SMOKE_FILE -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Packaged app smoke failed.' }
+      - name: Smoke-test packaged Linux app
+        if: runner.os == 'Linux'
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          app=$(find dist -maxdepth 2 -name flusso-journal -type f -print -quit)
+          test -n "$app"
+          xvfb-run -a "$app" --smoke-test > "$FLUSSO_DESKTOP_SMOKE_FILE"
+      - name: Require packaged native smoke receipt
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const receipts = readFileSync(process.env.FLUSSO_DESKTOP_SMOKE_FILE, 'utf8').split('\n').flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } });
+          if (!receipts.some(r => r.smoke === 'passed' && r.runtime === 'b11559' && r.electron === '44.7.0' && r.node === '24.21.0' && r.platform === process.platform && r.arch === process.arch)) throw new Error('Packaged app did not produce the required native smoke receipt.');
+          console.log('Packaged Electron, SQLite, keyring and inference runtime smoke passed.');
+          NODE
+      - name: Verify macOS production signature and notarization
+        if: needs.plan.outputs.channel == 'production' && runner.os == 'macOS'
+        shell: bash
+        run: |
+          app=$(find dist -maxdepth 2 -name '*.app' -type d -print -quit)
+          test -n "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          spctl --assess --type execute --verbose=2 "$app"
+          xcrun stapler validate "$app"
+          for dmg in dist/*.dmg; do xcrun stapler validate "$dmg"; done
+      - name: Verify Windows production signatures
+        if: needs.plan.outputs.channel == 'production' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem dist -Filter *.exe)
+          if ($installers.Count -eq 0) { throw 'Missing Windows installer.' }
+          foreach ($file in $installers) { if ((Get-AuthenticodeSignature $file.FullName).Status -ne 'Valid') { throw 'Installer Authenticode verification failed.' } }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.exe
+            dist/*.AppImage
+            dist/*.blockmap
+            dist/preview-*.yml
+            dist/latest-*.yml
+      - name: Remove temporary notarization key
+        if: always() && steps.macsign.outputs.keyfile != ''
+        shell: bash
+        env:
+          NOTARIZATION_KEY_FILE: ${{ steps.macsign.outputs.keyfile }}
+        run: |
+          node -e "require('node:fs').rmSync(process.env.NOTARIZATION_KEY_FILE, { force: true })"
+
+  release:
+    needs: [plan, build]
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: desktop-*
+          merge-multiple: true
+          path: release-assets
+      - name: Publish the complete release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+          RELEASE_CHANNEL: ${{ needs.plan.outputs.channel }}
+        run: |
+          tag="v${RELEASE_VERSION}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo 'Release already exists; refusing to overwrite immutable desktop assets.' >&2
+            exit 1
+          fi
+          if [ "$RELEASE_CHANNEL" = preview ]; then
+            gh release create "$tag" release-assets/* --target "$GITHUB_SHA" --prerelease --latest=false --title "Flusso Journal ${RELEASE_VERSION} — preview" --notes 'Preview build. Installers are not yet signed by Apple or Microsoft. Automatic production updates are disabled. Review docs/desktop-releases.md before installation.'
+          else
+            gh release create "$tag" release-assets/* --target "$GITHUB_SHA" --latest --title "Flusso Journal ${RELEASE_VERSION}" --generate-notes
+          fi

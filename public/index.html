@@ -2,14 +2,14 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Flusso Listener — your local Journal</title>
+  <title>Flusso Journal — your private workspace</title>
   <link rel="icon" href="/flusso-mark.png"><link rel="stylesheet" href="/tokens.css"><link rel="stylesheet" href="/styles.css">
   <script src="/app.mjs" type="module"></script>
 </head>
 <body>
 <div class="app-shell">
   <aside class="sidebar">
-    <a class="brand" href="/"><img src="/flusso-mark.png" alt="Flusso" width="36" height="36"><span>flusso<span class="brand-sub">Listener</span></span></a>
+    <a class="brand" href="/"><img src="/flusso-mark.png" alt="Flusso" width="36" height="36"><span>flusso<span class="brand-sub">Journal</span></span></a>
     <p class="eyebrow">Your private workspace</p>
     <nav aria-label="Workspace">
       <button type="button" class="nav-button active" data-view="journal" aria-current="page">Journal</button>
@@ -17,11 +17,23 @@
       <button type="button" class="nav-button" data-view="policy">Execution policy</button>
       <button type="button" class="nav-button" data-view="activity">Activity</button>
     </nav>
-    <div class="sidebar-bottom"><span class="privacy-dot"></span> Stored on this computer<p>Cloud sync and execution are separate choices.</p><code id="listener-id">Local workspace</code></div>
+    <div class="sidebar-bottom"><div class="workspace-privacy"><span class="privacy-dot"></span> Stored on this computer<p>Cloud sync and execution are separate choices.</p></div>
+      <div class="account-area" id="account-area">
+        <section class="account-menu" id="account-menu" aria-label="Account and app settings" hidden>
+          <p class="account-menu-heading">Workspace</p><p class="helper" id="account-menu-detail">Your Journal is stored on this computer.</p>
+          <button id="account-connect" type="button">Connect Flusso</button><button id="account-disconnect" type="button" hidden>Disconnect locally</button>
+          <a id="account-settings" href="https://flusso.stream/app/settings#profile" target="_blank" rel="noopener noreferrer">Account settings <span aria-hidden="true">↗</span></a>
+          <div class="native-controls" id="native-controls" hidden><p class="account-menu-heading">Desktop app</p><label class="check-label"><input id="start-on-login" type="checkbox"> Open at login</label><button id="check-updates" type="button">Check for updates</button><p id="app-update-status" class="helper" role="status"></p><p class="app-version"><span id="app-mode">Desktop app</span> <span id="app-version" class="mono"></span></p></div>
+          <p class="workspace-identifier">Workspace ID <code id="listener-id">Local workspace</code></p>
+        </section>
+        <button id="account-toggle" class="account-toggle" type="button" aria-expanded="false" aria-controls="account-menu"><span id="account-avatar" class="account-avatar" aria-hidden="true">F</span><span class="account-copy"><strong id="account-name">Local workspace</strong><span id="account-detail">On this computer</span></span><span class="account-chevron" aria-hidden="true">⌃</span></button>
+      </div>
+    </div>
   </aside>
   <main>
     <header class="topbar"><span class="eyebrow">Local Journal + signal listener</span><div class="status-row"><span class="pill" id="cloud-state">Local only</span><span class="pill" id="listener-state">Listener off</span></div></header>
     <div id="notice" class="notice" role="status" hidden></div>
+    <section class="model-setup" id="model-setup" aria-labelledby="model-setup-title" hidden><div class="model-setup-copy"><h2 id="model-setup-title">Add a local listener</h2><p>Your Journal is ready. Set up <code>qwen3:1.7b</code> when you want the Listener to help read your notes.</p><p class="helper" id="model-setup-status" role="status"></p><div class="setup-progress" id="model-progress-wrap" hidden><progress id="model-progress" max="100" aria-label="Local model setup"></progress><span id="model-progress-label" class="mono"></span></div></div><button id="setup-model" type="button">Set up local model</button></section>
     <section id="view-journal" class="view">
       <div class="page-heading"><div><p class="eyebrow">Make a record. Keep the context.</p><h1>Your Journal</h1><p class="lede">Notes, analysis, and structured observations in one private place.</p></div><button id="new-entry" type="button" class="primary">New entry</button></div>
       <div class="journal-toolbar"><label>Notebook<select id="journal-filter"><option value="">All notebooks</option></select></label><button id="sync" type="button">Sync cloud Journal</button><form id="notebook-form" class="inline-form"><label class="sr-only" for="notebook-name">New local notebook name</label><input id="notebook-name" placeholder="New local notebook" maxlength="120" required><button type="submit">Add notebook</button></form></div>
@@ -30,7 +42,7 @@
     </section>
     <section id="view-listener" class="view" hidden>
       <div class="page-heading"><div><p class="eyebrow">Quietly attentive. Under your control.</p><h1>Your listener</h1><p class="lede">Choose where to look and what deserves attention.</p></div></div>
-      <div class="two-column"><section class="panel"><h2>Connection</h2><p>Use browser sign-in to approve this device. Your password and API credentials stay out of agent chats.</p><div class="status-row"><button id="connect" class="primary" type="button">Connect Flusso</button><button id="disconnect" type="button">Disconnect locally</button></div><p class="helper" id="connection-detail">Cloud access is optional for a local Journal.</p></section><section class="panel"><h2>Local model</h2><p><code>qwen3:1.7b</code> via Ollama. A small classifier helps select notes; server policies decide what execution is allowed.</p><p id="model-state" class="helper">Checking the local model…</p><div class="code-scroll"><code>ollama pull qwen3:1.7b</code></div><p class="helper">No cloud model fallback. Keep Ollama on its default loopback address.</p></section></div>
+      <div class="two-column"><section class="panel"><h2>Connection</h2><p>Use browser sign-in to approve this device. Your password and API credentials stay out of agent chats.</p><div class="status-row"><button id="connect" class="primary" type="button">Connect Flusso</button><button id="disconnect" type="button">Disconnect locally</button></div><p class="helper" id="connection-detail">Cloud access is optional for a local Journal.</p></section><section class="panel"><h2>Local model</h2><p><code>qwen3:1.7b</code> <span id="model-engine">via Ollama.</span> A small classifier helps select notes; server policies decide what execution is allowed.</p><p id="model-state" class="helper">Checking the local model…</p><button id="setup-model-panel" type="button" hidden>Set up local model</button><div class="code-scroll" id="model-manual-command"><code>ollama pull qwen3:1.7b</code></div><p class="helper" id="model-privacy">No cloud model fallback. Keep Ollama on its default loopback address.</p></section></div>
       <section class="panel"><form id="settings-form"><h2>What to watch</h2><div class="form-grid"><label>Source<select id="source"><option value="local">Local Journal</option><option value="cloud">Cloud Journal</option><option value="both">Both</option></select></label><label>Check every (seconds)<input id="interval" type="number" min="15" max="3600" step="1" required></label></div><label>Notebooks<select id="watch-notebooks" multiple size="4"></select></label><p class="helper">Leave all notebooks unselected to watch every notebook from the selected source.</p><label>Heading filter (optional)<input id="section" maxlength="200" placeholder="For example: Morning opportunities"></label><label>Research instructions<textarea id="instructions" rows="4" maxlength="1000" placeholder="For example: Select fresh Bitcoin observations from my morning research. Keep uncertain signals for review."></textarea></label><p class="helper">Instructions guide classification. They cannot change budgets, instruments, risk checks, credentials, or server permissions.</p><div class="toggle-card"><label class="check-label"><input id="enabled" type="checkbox"> Listener on</label><p>Runs while this app is open and the computer is awake. Existing notes become a baseline when you turn it on.</p></div><div class="toggle-card"><label class="check-label"><input id="execution" type="checkbox"> Allow execution under my approved policy</label><p>Off by default. Requires a policy approved below for this connection. Only supported fresh structured signals can request an order. Text alone is kept for review.</p><code id="selected-policy">No approved policy selected</code></div><div class="form-actions"><button id="check-now" type="button">Check now</button><button type="submit" class="primary">Save listener settings</button></div></form><p id="last-check" class="helper">No check yet.</p></section>
     </section>
     <section id="view-policy" class="view" hidden>
@@ -41,8 +53,9 @@
       <p class="helper">Manage and revoke active authorizations in your Flusso account. Execution stays off here after approval until you explicitly enable it in Listener settings.</p>
     </section>
     <section id="view-activity" class="view" hidden><div class="page-heading"><div><p class="eyebrow">A record of what happened</p><h1>Listener activity</h1><p class="lede">Classifications and command receipts are distinct from completed trades.</p></div></div><div id="activity-list" class="activity-list"><p class="empty">No observations processed yet.</p></div><section class="panel"><h2>Execution attempts</h2><p class="helper">An unknown or planned outcome pauses new execution until canonical readback resolves it. The original retry identity stays stored.</p><div class="code-scroll"><pre id="attempts">No execution attempts.</pre></div></section></section>
-    <footer>Flusso Listener <span class="mono">0.1.0</span> · Private local workspace · No microphone or screen access</footer>
+    <footer>Flusso Journal <span id="footer-version" class="mono" hidden></span> · Private local workspace · No microphone or screen access</footer>
   </main>
 </div>
+<aside class="update-corner" id="update-corner" aria-label="App update" hidden><button id="dismiss-update" class="dismiss-update" type="button" aria-label="Dismiss update notice">×</button><div><strong id="update-title">An update is ready</strong><p class="helper" id="update-detail" role="status"></p><div class="setup-progress" id="update-progress-wrap" hidden><progress id="update-progress" max="100" aria-label="Update download"></progress><span id="update-progress-label" class="mono"></span></div></div><button id="update-action" type="button">Download update</button></aside>
 </body>
 </html>

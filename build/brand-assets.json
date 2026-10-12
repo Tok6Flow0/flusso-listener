@@ -1,0 +1,37 @@
+{
+  "source": "Flusso approved C3 Faceted Flow artwork, approved 2026-10-06",
+  "sourceSha256": "9a17668d68e1d0418174973deaf7b4b5ec2e94baddad6768e8013faff3cae833",
+  "method": "Approved C3 artwork downscaled with the existing Flusso Resvg workflow; ICNS packed by iconutil; ICO contains unchanged PNG frames.",
+  "outputs": {
+    "build/icon.png": {
+      "sha256": "57826fdae3e23a95a38f6555697317a19a76f354ccee86021fecf35c86c75ddb"
+    },
+    "build/icon.icns": {
+      "sha256": "9eb4d188ab6ea53f3cbe7774ec6170d06e0a79d5bc6fb1a7d5c4f793baab12e4"
+    },
+    "build/icon.ico": {
+      "sha256": "86f0930701a7d36a6eeb28cd23cc7f9d966ed555a3cd8859100e24bb0b94f8d3"
+    },
+    "build/icons/16x16.png": {
+      "sha256": "e309509ca201c144ff0d60f05a040e165fe8c341319f360ed3487e223440182c"
+    },
+    "build/icons/32x32.png": {
+      "sha256": "d0aab7caba2366bcba7343ae3fd390ca17d7df34426de899c602991a1f43c087"
+    },
+    "build/icons/48x48.png": {
+      "sha256": "cf61cd9fbaa065e02c16dca24ad021c6be488964d4027d4ac997a5ccf9addf5d"
+    },
+    "build/icons/64x64.png": {
+      "sha256": "50d1b6c863e01271a05c0e40f777d84f1aa25740444bf08fb1546bfd3d0245fb"
+    },
+    "build/icons/128x128.png": {
+      "sha256": "2cebc78b7f02dfc248008596b44728e23af014f2bcf4e38f4900b96f898fe878"
+    },
+    "build/icons/256x256.png": {
+      "sha256": "7322950143c11ab33f8bb0fea03cf61ebe1d1f56d04dc3d5c8ff5ee63a9db6cb"
+    },
+    "build/icons/512x512.png": {
+      "sha256": "78c60dd59f18feae353ab418cf29297852f855e1be89ac31f3495e488a27e470"
+    }
+  }
+}

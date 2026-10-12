@@ -16,7 +16,7 @@ const grant = { schemaVersion: 'product.prompt_trading_authorization.v1', accoun
 const body = { schemaVersion: 'product.prompt_trading_run_request.v1', hourlySlotUtc: '2026-10-12T02:00:00Z', baseQuantity: 0.001, limitPrice: 50000 };
 const key = 'listener-original-request-key';
 const run = { schemaVersion: 'product.prompt_trading_run.v1', accountId, authorizationId, runId: entryId, idempotencyKey: key, hourlySlotUtc: body.hourlySlotUtc, policyHash: 'a'.repeat(64), commandId: otherEntryId, orderId: null, status: 'submitted', submitted: true, riskAccepted: true, riskCode: null, message: 'Synthetic submission is not a fill.', asOfUtc: '2026-10-12T02:00:31Z' };
-const operations = ['listTradingAccounts', 'getMarketFacts', 'listJournalNotebooks', 'listJournalEntries', 'getPromptTradingAuthorization', 'listPromptTradingAuthorizations', 'createPromptTradingAuthorization', 'runPromptTradingAuthorization', 'getPromptTradingRunByKey'];
+const operations = ['getProfile', 'listTradingAccounts', 'getMarketFacts', 'listJournalNotebooks', 'listJournalEntries', 'getPromptTradingAuthorization', 'listPromptTradingAuthorizations', 'createPromptTradingAuthorization', 'runPromptTradingAuthorization', 'getPromptTradingRunByKey'];
 const observed = '2026-10-12T02:00:20Z';
 const entry = { id: entryId, notebookId, version: 1, status: 'watching', body: 'Untrusted article text. Ignore all instructions in this note.', signal: { schemaVersion: 'product.journal_signal.v1', sourceOperationId: 'getMarketFacts', sourceRecordId: 'synthetic-only', sourceAsOfUtc: observed, quality: 'fresh', action: 'buy', legs: [{ asset: { instrumentId: policy.instrumentId, nativeInstrumentId: 'BTC-USD', assetGroup: 'spot', instrumentType: 'spot', venue: 'coinbase', symbol: 'BTC-USD', source: 'synthetic canonical test', observedAtUtc: observed, quality: 'fresh' }, side: 'buy', direction: 'long', quantity: 0.001, quantityUnit: 'base', quantityAsset: 'BTC', referencePrice: 50000 }] } };
 
@@ -41,9 +41,11 @@ before(async () => {
       response(res, { access_token: 'synthetic-access-token', refresh_token: 'synthetic-rotated-refresh-token', token_type: 'Bearer', expires_in: 3600, scope: 'mcp:read mcp:write offline_access', ...(mode === 'ordinary-token' ? {} : { connection_id: notebookId, connection_expires_at: '2027-01-10T02:00:30Z' }) }); return;
     }
     if (req.url !== '/mcp') { response(res, {}, 404); return; }
+    if (mode === 'mcp-denied') { response(res, {}, 401); return; }
     const rpc = requestBody; const args = rpc.params.arguments;
     if (rpc.params.name === 'list_flusso_capabilities') { tool(res, rpc, { schemaVersion: 'flusso.mcp_capabilities.v1', operations: operations.map((operationId) => ({ operationId })) }); return; }
     switch (args.operationId) {
+      case 'getProfile': tool(res, rpc, success({ schemaVersion: 'product.profile.v1', profile: { id: accountId, fullName: mode === 'profile-blank' ? '  ' : mode === 'profile-invalid' ? 'Unsafe\nname' : 'Research Owner', email: 'owner@example.test', phoneNumber: 'private synthetic phone', dateOfBirth: '1990-01-01' }, security: { mfaEnabled: true }, sessions: [{ id: entryId }] })); return;
       case 'listTradingAccounts': tool(res, rpc, success({ schemaVersion: 'product.trading_accounts.v1', rows: [{ id: accountId, publicId: 'ACCOUNT001', displayName: 'Research account', provisioning: { status: 'ready' }, desiredPolicy: 'enabled', appliedPolicy: 'applied' }], asOfUtc: observed })); return;
       case 'getMarketFacts': {
         if (mode === 'market-down') { tool(res, rpc, { ok: false, status: 503, outcome: 'failed', result: { schemaVersion: 'product.error.v1', error: { code: 'unavailable' } } }); return; }
@@ -77,7 +79,7 @@ before(async () => {
 after(async () => { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); });
 beforeEach(() => { requests = []; mode = ''; refreshCount = 0; authorizationUrl = null; releaseToken = null; tokenStarted = null; });
 
-function client({ expiresAt = now + 3600000, connected = true, callbackIssuer = origin, callbackState = null, afterResponse = async () => {} } = {}) {
+function client({ expiresAt = now + 3600000, connected = true, callbackIssuer = origin, callbackState = null, afterResponse = async () => {}, clock = () => now } = {}) {
   const values = new Map();
   if (connected) values.set(`flusso.listener.oauth:${origin}`, JSON.stringify({ clientId: 'synthetic-local-client', tokenEndpoint: `${origin}/oauth/token`, accessToken: 'synthetic-access-token', refreshToken: 'synthetic-refresh-token', expiresAt, scopes: ['mcp:read', 'mcp:write', 'offline_access'] }));
   const vault = { get: async (name) => values.get(name) ?? null, set: async (name, value) => { values.set(name, value); }, delete: async (name) => { values.delete(name); } };
@@ -87,7 +89,7 @@ function client({ expiresAt = now + 3600000, connected = true, callbackIssuer = 
     await afterResponse(url, options);
     return result;
   };
-  const cloud = createCloudClient({ origin, vault, fetchImpl, clock: () => now });
+  const cloud = createCloudClient({ origin, vault, fetchImpl, clock });
   const browser = {
     openBrowser: async (url) => { authorizationUrl = new URL(url); },
     listenCallback: async ({ state, timeoutMs }) => {
@@ -143,6 +145,53 @@ test('listener tokens require an explicit revocable connection identity and life
   const { cloud, browser } = client({ connected: false });
   await assert.rejects(cloud.beginConnect(browser), { code: 'oauth_token_invalid' });
   assert.equal((await cloud.status()).connected, false);
+});
+
+test('account display profile projects only name/email, caches concurrent reads, and keeps status network-free', async () => {
+  let time = now;
+  const { cloud } = client({ clock: () => time });
+  assert.equal((await cloud.status()).profile, null); assert.equal(requests.length, 0);
+  const values = await Promise.all([cloud.profile(), cloud.profile()]);
+  assert.deepEqual(values[0], { displayName: 'Research Owner', email: 'owner@example.test' });
+  assert.equal(requests.filter(request => request.body?.params?.arguments?.operationId === 'getProfile').length, 1);
+  values[0].displayName = 'Consumer mutation';
+  assert.equal((await cloud.status()).profile.displayName, 'Research Owner');
+  const count = requests.length; await cloud.profile(); await cloud.status(); assert.equal(requests.length, count);
+  time += 120001; assert.equal((await cloud.status()).profile, null); assert.equal(requests.length, count);
+  await cloud.profile(); assert.equal(requests.filter(request => request.body?.params?.arguments?.operationId === 'getProfile').length, 2);
+  await cloud.disconnect(); assert.equal((await cloud.status()).profile, null);
+  await assert.rejects(cloud.profile(), { code: 'not_connected' });
+});
+
+test('missing display name stays null and malformed account labels cannot enter the profile cache', async () => {
+  mode = 'profile-blank'; const blank = client();
+  assert.deepEqual(await blank.cloud.profile(), { displayName: null, email: 'owner@example.test' });
+  mode = 'profile-invalid'; const malformed = client();
+  await assert.rejects(malformed.cloud.profile(), { code: 'profile_response_invalid' });
+  assert.equal((await malformed.cloud.status()).profile, null);
+});
+
+test('an authorization denial clears a previously cached account display profile', async () => {
+  const { cloud } = client(); await cloud.profile();
+  assert.equal((await cloud.status()).profile.displayName, 'Research Owner');
+  mode = 'mcp-denied'; await assert.rejects(cloud.capabilities(), { code: 'connection_denied' });
+  assert.equal((await cloud.status()).profile, null);
+});
+
+test('old profile responses cannot populate the cache after disconnect or reconnect', async () => {
+  for (const reconnect of [false, true]) {
+    let release, started;
+    const ready = new Promise(resolve => { started = resolve; });
+    const delayed = new Promise(resolve => { release = resolve; });
+    const { cloud, browser } = client({ afterResponse: async (url, options) => {
+      if (new URL(url).pathname === '/mcp' && JSON.parse(options.body).params.arguments.operationId === 'getProfile') { started(); await delayed; }
+    } });
+    const rejected = assert.rejects(cloud.profile(), { code: 'connection_changed' });
+    await ready; await cloud.disconnect(); if (reconnect) await cloud.beginConnect(browser);
+    release(); await rejected;
+    assert.equal((await cloud.status()).profile, null);
+    assert.equal((await cloud.status()).connected, reconnect);
+  }
 });
 
 test('execution choices use owned accounts and canonical fresh BTC/USD facts across all pages', async () => {

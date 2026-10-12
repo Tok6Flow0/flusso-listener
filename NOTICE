@@ -15,7 +15,12 @@ Open Font License 1.1. Full copyright notices and license texts are included
 beside their font files in public/fonts/*-OFL.txt. The Plex Mono name table was
 normalized in Flusso's source asset to preserve the shared family/weight lookup.
 
-Qwen3 model weights are not bundled. Ollama downloads qwen3:0.6b separately;
-the model is licensed under Apache 2.0 by its publisher. Ollama and its model
-runtime retain their own licenses. No model license is replaced by this repo's
-MIT license.
+Qwen3 1.7B model weights are downloaded separately after explicit setup, with
+pinned size and SHA-256 verification. Their Apache 2.0 license is included in
+build/QWEN-LICENSE and packaged resources/licenses/QWEN-LICENSE.
+
+The desktop app bundles the pinned llama.cpp runtime under MIT; its license is
+in build/LLAMA-LICENSE and resources/runtime/LLAMA-LICENSE. Electron and its
+Chromium dependencies retain their bundled notices. The advanced CLI can use
+Ollama, which is separately installed and retains its own license. This repo's
+MIT license does not replace any dependency or model license.

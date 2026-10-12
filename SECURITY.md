@@ -38,3 +38,25 @@ encrypted persistence, optimistic edits, duplicate signals, settings races and
 unknown submissions. They cannot prove that all prompt injection is impossible
 or that every OS/browser configuration is secure. Keep Node, Ollama and the OS
 credential store updated.
+
+
+## Desktop isolation and updates
+
+The renderer uses a sandbox, context isolation, no Node integration, an explicit
+CSP, and no granted browser permissions. A fixed preload bridge exposes only
+Journal app controls. IPC checks the live window, main frame and exact local
+document origin. External browser navigation is restricted to HTTPS Flusso URLs;
+new renderer windows and webviews are denied.
+
+The bundled engine and first-use model download are pinned and integrity checked;
+redirects are restricted to the official distribution hosts. Inference has a
+random loopback API key and no prompt logging. Quitting aborts setup and drains
+active work before closing the encrypted Journal. The model cannot download or
+install software.
+
+Production updates require Ed25519-signed manifests plus native platform checks.
+Downloads and installation each require a user action; the app disables automatic
+installation and downgrades. An update stops the listener and disables execution
+before restart. Preview builds disable automatic production updates. Distribution
+signing/notarization and prerelease tooling limits are documented in
+[desktop-releases.md](docs/desktop-releases.md).

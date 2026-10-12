@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { classifyEntry } from './model.mjs';
 
 export function createListener({ store, cloud, buildRunRequest, classify = classifyEntry, clock = Date.now }) {
-  let timer = null, busy = false, activeAbort = null;
+  let timer = null, busy = false, activeAbort = null, activeTick = null, stopped = false, scheduleGeneration = 0;
   const state = { running: false, busy: false, lastCheckedAtUtc: null, lastError: null, cloudComplete: null, cloudReason: null };
   const keyOf = entry => `${entry.origin}:${entry.id}`;
   function inScope(entry, settings) {
@@ -15,6 +15,7 @@ export function createListener({ store, cloud, buildRunRequest, classify = class
   }
   async function reconcileUnknown() {
     for (const attempt of store.all('attempt').filter(row => row.status === 'pending' || row.status === 'unknown')) {
+      if (activeAbort.signal.aborted) return false;
       try {
         const receipt = await cloud.reconcileRunByKey(attempt);
         if (receipt && ['submitted', 'blocked'].includes(receipt.status)) store.put('attempt', attempt.id, { ...attempt, receipt, status: 'reconciled' });
@@ -23,8 +24,12 @@ export function createListener({ store, cloud, buildRunRequest, classify = class
     }
     return true;
   }
-  async function tick() {
-    if (busy || !store.settings().enabled) return;
+  function tick() {
+    if (stopped || busy || !store.settings().enabled) return activeTick ?? Promise.resolve();
+    activeTick = runTick().finally(() => { activeTick = null; });
+    return activeTick;
+  }
+  async function runTick() {
     busy = true; state.busy = true; activeAbort = new AbortController();
     try {
       let settings = store.settings(); state.lastError = null;
@@ -77,14 +82,27 @@ export function createListener({ store, cloud, buildRunRequest, classify = class
     finally { busy = false; state.busy = false; activeAbort = null; }
   }
   function schedule() {
+    const generation = ++scheduleGeneration;
     if (timer) clearTimeout(timer); timer = null;
-    state.running = store.settings().enabled;
-    if (state.running) timer = setTimeout(async () => { await tick(); schedule(); }, store.settings().intervalSeconds * 1000);
+    state.running = !stopped && store.settings().enabled;
+    if (state.running) timer = setTimeout(async () => {
+      if (stopped || generation !== scheduleGeneration) return;
+      timer = null;
+      await tick();
+      if (!stopped && generation === scheduleGeneration) schedule();
+    }, store.settings().intervalSeconds * 1000);
   }
   return {
     status: () => ({ ...state }), tick,
-    start() { checkpointExisting(); schedule(); },
-    refresh({ baseline = false } = {}) { activeAbort?.abort(); if (baseline) checkpointExisting(); schedule(); },
-    stop() { if (timer) clearTimeout(timer); timer = null; activeAbort?.abort(); state.running = false; },
+    start() { stopped = false; checkpointExisting(); schedule(); },
+    refresh({ baseline = false } = {}) { if (stopped) return; activeAbort?.abort(); if (baseline) checkpointExisting(); schedule(); },
+    stop() {
+      stopped = true; scheduleGeneration += 1;
+      if (timer) clearTimeout(timer); timer = null;
+      activeAbort?.abort(); state.running = false;
+      // An already dispatched run must durably save its receipt or uncertainty
+      // before shutdown closes SQLite. Aborting does not retry or cancel an order.
+      return activeTick ?? Promise.resolve();
+    },
   };
 }

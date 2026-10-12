@@ -1,4 +1,4 @@
-# Flusso Listener
+# Flusso Journal
 
 Your private local Journal, with an optional listener that watches selected notes
 and structured market observations. Connect your Flusso account through browser
@@ -8,45 +8,53 @@ this computer. The app never listens to your microphone or reads your screen.
 The code is open source. Cloud account access remains subject to your Flusso
 plan, approved device scopes, and current server permissions.
 
-## Start in two steps
+## Download and open
 
-Prerequisites: [Node 24.19 or newer in the Node 24 series](https://nodejs.org/en/download)
-and, for local classification, [Ollama](https://ollama.com/download).
-The Journal works without a model. Use an unlocked OS credential store:
-macOS Keychain, Windows Credential Manager, or a Linux Secret Service such as
-GNOME Keyring or KWallet. A headless Linux machine needs a working user Secret
-Service; the app refuses to fall back to plaintext credentials.
+1. Download the installer for your computer from [desktop releases](https://github.com/Tok6Flow0/flusso-listener/releases): macOS (Apple silicon or Intel), Windows (ARM64 or x64), or Linux desktop (ARM64 or x64).
+2. Open **Flusso Journal**. Start writing immediately. Choose **Set up local model** if you want the Listener to review new observations; it downloads and verifies Qwen3 1.7B once, or reuses the exact verified model already in your local Ollama cache.
 
-1. Download and install this app:
+The standalone app includes its runtime. You do not install Node or Ollama.
+The full Flusso dashboard remains at [flusso.stream](https://flusso.stream).
+Choose the account control at the bottom left to connect, disconnect, open account settings, or check the app version and updates. Cloud access is optional.
 
-   ```sh
-   git clone https://github.com/Tok6Flow0/flusso-listener.git
-   cd flusso-listener
-   npm ci
-   ```
+The first version, **0.2.0-preview.1**, is an unsigned preview. Review the release's platform requirements and signing status. Preview automatic updates are disabled; signed production updates have a check, download, and restart flow that requires your clicks. Do not disable OS signature protections. See [desktop release details](docs/desktop-releases.md).
 
-2. Start it. For the listener, download the one default model first:
+Use an unlocked OS credential store: macOS Keychain, Windows Credential Manager,
+or Linux Secret Service (GNOME Keyring or KWallet). Linux AppImage builds also
+need the desktop's AppImage/FUSE support. The app refuses plaintext credentials.
+Closing the window keeps the app and opted-in Listener in the tray; choose
+**Quit Journal and stop Listener** to stop it. The computer must remain awake.
+Open-at-login is optional on macOS and Windows; Linux uses its desktop's startup settings.
+Installation never enables execution.
 
-   ```sh
-   ollama pull qwen3:1.7b
-   npm start
-   ```
+## Advanced source installation
 
-The GUI opens in your browser at an address on `127.0.0.1`. Its per-start private launch
-fragment unlocks the local session; keep that local URL private. No Flusso API
-credential appears in it. If the app is already running, `node src/cli.mjs open`
-opens its GUI again. See [always-on setup](docs/always-on.md) to opt into a
-per-user login service. Installation does not enable a service or execution.
+Maintainers need [Node 24.19 or newer in the Node 24 series](https://nodejs.org/en/download).
+
+```sh
+git clone https://github.com/Tok6Flow0/flusso-listener.git
+cd flusso-listener
+npm ci
+npm run desktop:prepare
+npm run desktop
+```
+
+For the existing browser/CLI interface, run `npm start`. Its classifier requires
+[Ollama](https://ollama.com/download) and `ollama pull qwen3:1.7b`; the desktop
+app does not. The browser GUI binds `127.0.0.1`, and its private per-start launch
+fragment unlocks the local session. Keep that URL private. `node src/cli.mjs open`
+reopens a running CLI app. [CLI login services](docs/always-on.md) remain optional;
+do not run a CLI service and desktop app against the same Journal simultaneously.
 
 ## Give this to your existing AI agent
 
 Copy this instruction into the agent you use to set up software on your computer:
 
-> Install the public Flusso Listener from
+> For advanced source setup, install the public Flusso Journal from
 > https://github.com/Tok6Flow0/flusso-listener. Read its README and SECURITY.md
-> before running setup. Use Node 24 and the existing OS credential store; keep
-> the app and Ollama bound to loopback. Install the pinned npm dependencies with
-> npm ci and the local Ollama model qwen3:1.7b. Start the app and let me complete
+> before running setup. Use Node 24 and the existing OS credential store. Follow the desktop source
+> commands in the README, prepare the pinned bundled runtime, and leave every
+> local service bound to loopback. Start the app and let me complete
 > browser sign-in myself. Never ask for my Flusso password, tokens, or API key in
 > this chat. Leave execution off. Do not install a background service, approve a
 > spending policy, or submit a real order unless I specifically request it.
@@ -116,13 +124,13 @@ later revisions are classified once per revision. Cloud synchronization scans
 all pages, bounded at 5,000 entries, so edits to older notes are found. An
 incomplete scan is displayed and does not authorize cloud execution.
 
-Qwen3 1.7B is an Apache 2.0 licensed default with an approximately 1.4 GB Ollama
+Qwen3 1.7B is an Apache 2.0 licensed default with an approximately 1.4 GB verified model
 download. That is model storage, not total runtime RAM. Actual RAM and speed
 depend on the computer and context length. We recommend at least 8 GB of system RAM for the app, model, and everyday OS use; test on the actual machine before leaving it unattended. This app uses a bounded 4,096-token
 context, one request at a time, and nonthinking structured output. A small model
 can miss relevant notes or misclassify them; its output is a suggestion, never a
-source of facts or permission. The model unloads after five idle minutes while
-the lightweight listener remains on. See [model and privacy notes](docs/model.md).
+source of facts or permission. The desktop model stays loaded until you quit the app; it uses inference CPU
+only for new in-scope observations. The advanced Ollama path unloads after five idle minutes. See [model and privacy notes](docs/model.md).
 
 ## Optional bounded execution
 
@@ -158,7 +166,7 @@ snapshots, and attempt bodies are encrypted with AES-256-GCM; the independent
 random encryption key and cloud credential bundle live in your OS credential
 store. They are not derived from your account password. The SQLite database
 still exposes opaque record identifiers and revision counts, not encrypted
-payload contents. Local GUI/Ollama communication uses HTTP on loopback only;
+payload contents. Local GUI/model communication uses HTTP on loopback only;
 it is **not TLS-encrypted** and never leaves the computer. Do not expose either
 port through a tunnel, reverse proxy, LAN bind or firewall forwarding.
 

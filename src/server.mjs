@@ -11,6 +11,7 @@ const assets = new Map([
   ['/styles.css', ['styles.css', 'text/css; charset=utf-8']], ['/tokens.css', ['tokens.css', 'text/css; charset=utf-8']],
   ['/format.mjs', ['format.mjs', 'text/javascript; charset=utf-8']], ['/flusso-mark.png', ['flusso-mark.png', 'image/png']],
   ['/markdown.mjs', ['markdown.mjs', 'text/javascript; charset=utf-8']],
+  ['/desktop-ui.mjs', ['desktop-ui.mjs', 'text/javascript; charset=utf-8']],
   ...['HankenGrotesk-400.ttf', 'HankenGrotesk-600.ttf', 'Newsreader-500.ttf', 'IBMPlexMono-400.ttf'].map(name => [`/fonts/${name}`, [`fonts/${name}`, 'font/ttf']]),
 ]);
 export async function startServer({ store, cloud, listener, port = 0, open = openBrowser, callback = listenCallback, checkModel = modelStatus }) {
@@ -47,6 +48,7 @@ export async function startServer({ store, cloud, listener, port = 0, open = ope
       if (!hasSession(request.headers.cookie, session)) return reply(401, { error: 'Open the app from its launcher to unlock this session.' });
       if (!url.pathname.startsWith('/api/') || url.search) return reply(404, { error: 'Route not found.' });
       if (request.method === 'GET' && url.pathname === '/api/session') return reply(200, { csrf });
+      if (request.method === 'GET' && url.pathname === '/api/profile') return reply(200, await cloud.profile());
       if (request.method === 'GET' && url.pathname === '/api/execution-choices') return reply(200, await cloud.discoverExecutionChoices());
       if (request.method !== 'GET' && (request.method !== 'POST' || request.headers.origin !== origin || !same(request.headers['x-flusso-csrf'], csrf))) return reply(403, { error: 'Request origin or session refused.' });
       if (request.method === 'GET' && url.pathname === '/api/status') return reply(200, { settings: store.settings(), listener: listener.status(), cloud: await cloud.status(), model: await checkModel(), notebooks: store.notebooks(), entries: store.entries().slice(0, 500), activity: store.all('activity').sort((a, b) => b.atUtc.localeCompare(a.atUtc)).slice(0, 100), attempts: store.all('attempt').map(({ body: _body, ...attempt }) => attempt).slice(-100) });

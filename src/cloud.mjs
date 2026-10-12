@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const MAX_PAGES = 50;
+const PROFILE_CACHE_MS = 120000;
 const UUID = /^[a-f\d]{8}-[a-f\d]{4}-[1-5][a-f\d]{3}-[89ab][a-f\d]{3}-[a-f\d]{12}$/i;
 const KEY = /^[!-~]{8,160}$/;
 const SCOPES = ['mcp:read', 'mcp:write', 'offline_access'];
@@ -143,7 +144,10 @@ export function createCloudClient({ origin = 'https://flusso.stream', vault, fet
   const vaultName = `flusso.listener.oauth:${origin}`;
   const previews = new Map();
   let refreshPending = null; let connectionPending = false; let credentialGeneration = 0;
+  let profileCache = null, profilePending = null;
   let vaultWrites = Promise.resolve();
+  const clearProfile = () => { profileCache = null; profilePending = null; };
+  const profileIdentity = (credentials) => `${credentials.clientId}\0${credentials.connectionId ?? ''}`;
   const requireGeneration = (generation) => { if (generation !== credentialGeneration) fail('connection_changed', 'This connection changed while the request was in progress.'); };
   const bundle = async () => { const value = await vault.get(vaultName); return value ? parseJson(value) : null; };
   const writeVault = (action) => { const next = vaultWrites.catch(() => {}).then(action); vaultWrites = next; return next; };
@@ -165,7 +169,7 @@ export function createCloudClient({ origin = 'https://flusso.stream', vault, fet
     const result = parseJson(text);
     if (!response.ok) {
       if (result.error === 'invalid_grant' && generation === credentialGeneration) {
-        credentialGeneration += 1; previews.clear(); await writeVault(() => vault.delete(vaultName));
+        credentialGeneration += 1; previews.clear(); clearProfile(); await writeVault(() => vault.delete(vaultName));
       }
       fail(result.error === 'invalid_grant' ? 'connection_revoked' : 'authentication_failed', 'Flusso authorization failed. Reconnect in the browser.', response.status);
     }
@@ -183,7 +187,7 @@ export function createCloudClient({ origin = 'https://flusso.stream', vault, fet
     const generation = credentialGeneration;
     const current = await bundle();
     if (generation !== credentialGeneration) fail('connection_changed', 'This connection changed while the request was in progress.');
-    if (!current?.accessToken || !current?.clientId || !current?.refreshToken) fail('not_connected', 'Connect your Flusso account first.');
+    if (!current?.accessToken || !current?.clientId || !current?.refreshToken) { clearProfile(); fail('not_connected', 'Connect your Flusso account first.'); }
     if (current.expiresAt > clock() + 30000) return { ...current, generation };
     if (!refreshPending) refreshPending = (async () => {
       const refreshed = await token(safeEndpoint(current.tokenEndpoint, origin, '/oauth/token'), { grant_type: 'refresh_token', refresh_token: current.refreshToken, client_id: current.clientId, resource: `${origin}/mcp` }, current, generation);
@@ -198,7 +202,10 @@ export function createCloudClient({ origin = 'https://flusso.stream', vault, fet
     const requestId = randomUUID();
     const { response, text } = await request(`${origin}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${credentials.accessToken}`, 'mcp-protocol-version': '2025-06-18' }, body: JSON.stringify({ jsonrpc: '2.0', id: requestId, method: 'tools/call', params: { name, arguments: args } }) });
     requireGeneration(credentials.generation);
-    if (!response.ok) fail(response.status === 401 || response.status === 403 ? 'connection_denied' : 'cloud_unavailable', 'Flusso could not complete this request.', response.status);
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) clearProfile();
+      fail(response.status === 401 || response.status === 403 ? 'connection_denied' : 'cloud_unavailable', 'Flusso could not complete this request.', response.status);
+    }
     const rpc = rpcPayload(text, response.headers.get('content-type') ?? '', requestId);
     if (rpc.jsonrpc !== '2.0' || rpc.id !== requestId || rpc.error || !object(rpc.result)) fail('mcp_response_invalid', 'Flusso returned an invalid tool response.');
     const result = rpc.result.structuredContent ?? parseJson(rpc.result.content?.find((item) => item.type === 'text')?.text ?? 'null');
@@ -218,14 +225,49 @@ export function createCloudClient({ origin = 'https://flusso.stream', vault, fet
   }
 
   function unwrap(value) {
-    if (value.ok !== true || !object(value.result)) fail('operation_failed', 'Flusso refused this operation.', Number(value.status) || 0);
+    if (value.ok !== true || !object(value.result)) {
+      if (value.status === 401 || value.status === 403) clearProfile();
+      fail('operation_failed', 'Flusso refused this operation.', Number(value.status) || 0);
+    }
     return value.result;
   }
   const read = async (operationId, pathParameters, query, headers) => mcp('read_flusso', { operationId, ...(pathParameters ? { pathParameters } : {}), ...(query ? { query } : {}), ...(headers ? { headers } : {}) });
 
   async function status() {
     const current = await bundle();
-    return { connected: Boolean(current?.refreshToken && current?.clientId), scopes: current?.scopes ?? [], expiresAt: current?.expiresAt ?? null, clientId: current?.clientId ?? null, connectionId: current?.connectionId ?? null, connectionExpiresAt: current?.connectionExpiresAt ?? null };
+    const connected = Boolean(current?.refreshToken && current?.clientId);
+    if (!connected) clearProfile();
+    const cached = connected && profileCache?.generation === credentialGeneration && profileCache.identity === profileIdentity(current) && profileCache.expiresAt > clock() ? { ...profileCache.value } : null;
+    return { connected, scopes: current?.scopes ?? [], expiresAt: current?.expiresAt ?? null, clientId: current?.clientId ?? null, connectionId: current?.connectionId ?? null, connectionExpiresAt: current?.connectionExpiresAt ?? null, profile: cached };
+  }
+
+  async function profile() {
+    if (connectionPending) fail('connection_pending', 'Complete the browser connection before loading the account profile.');
+    const generation = credentialGeneration, current = await bundle();
+    requireGeneration(generation);
+    if (!current?.refreshToken || !current?.clientId) { clearProfile(); fail('not_connected', 'Connect your Flusso account first.'); }
+    const identity = profileIdentity(current);
+    if (profileCache?.generation === generation && profileCache.identity === identity && profileCache.expiresAt > clock()) return { ...profileCache.value };
+    if (profilePending?.generation === generation && profilePending.identity === identity) return profilePending.promise;
+    const pending = { generation, identity };
+    profilePending = pending;
+    pending.promise = (async () => {
+      await requireOperations(['getProfile']); requireGeneration(generation);
+      // flusso.400369b5edb1: reuse the owned profile MCP read, projecting only
+      // the account label; security, session and other profile fields stay private.
+      const result = unwrap(await read('getProfile')); requireGeneration(generation);
+      const account = result.profile;
+      if (result.schemaVersion !== 'product.profile.v1' || !object(account)
+        || typeof account.fullName !== 'string' || account.fullName.length > 160 || /\p{Cc}/u.test(account.fullName)
+        || typeof account.email !== 'string' || account.email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(account.email) || /\p{Cc}/u.test(account.email)) {
+        fail('profile_response_invalid', 'Flusso returned an invalid account display profile.');
+      }
+      const value = { displayName: account.fullName.trim() || null, email: account.email };
+      requireGeneration(generation);
+      profileCache = { generation, identity, expiresAt: clock() + PROFILE_CACHE_MS, value };
+      return { ...value };
+    })().finally(() => { if (profilePending === pending) profilePending = null; });
+    return pending.promise;
   }
 
   async function beginConnect({ openBrowser, listenCallback }) {
@@ -233,6 +275,7 @@ export function createCloudClient({ origin = 'https://flusso.stream', vault, fet
     if (typeof openBrowser !== 'function' || typeof listenCallback !== 'function') throw new TypeError('Browser and loopback callback adapters are required.');
     connectionPending = true;
     const generation = ++credentialGeneration;
+    clearProfile();
     let callback;
     try {
       const { response, text } = await request(`${origin}/.well-known/oauth-authorization-server`, { headers: { accept: 'application/json' } });
@@ -261,7 +304,7 @@ export function createCloudClient({ origin = 'https://flusso.stream', vault, fet
     } finally { connectionPending = false; await callback?.close?.(); }
   }
 
-  async function disconnect() { credentialGeneration += 1; previews.clear(); await writeVault(() => vault.delete(vaultName)); }
+  async function disconnect() { credentialGeneration += 1; previews.clear(); clearProfile(); await writeVault(() => vault.delete(vaultName)); }
 
   async function discoverExecutionChoices() {
     await requireOperations(['listTradingAccounts', 'getMarketFacts']);
@@ -406,5 +449,5 @@ export function createCloudClient({ origin = 'https://flusso.stream', vault, fet
     fail('run_reconciliation_unavailable', 'The original run is still unresolved. Keep execution paused.');
   }
 
-  return { status, beginConnect, disconnect, capabilities, discoverExecutionChoices, readJournal, listPolicies, getPolicy, previewPolicy, confirmPolicy, runApprovedSignal, reconcileRunByKey };
+  return { status, profile, beginConnect, disconnect, capabilities, discoverExecutionChoices, readJournal, listPolicies, getPolicy, previewPolicy, confirmPolicy, runApprovedSignal, reconcileRunByKey };
 }

@@ -6,17 +6,25 @@ Apache 2.0 model licensing. This choice favors a small installation for bounded
 note classification. It is not a claim that the smallest model is the most
 accurate model or that it can run well on every PC.
 
-The app sends a compact, bounded observation to `127.0.0.1:11434`, requests
-nonthinking output with a JSON schema, and independently validates the result.
-The output cannot contain a tool call or an execution instruction. Qwen3
-classification can be wrong: test representative notes and review Activity
-before deciding whether to enable any separately approved execution policy.
+The desktop app bundles a pinned llama.cpp CPU engine and downloads the exact
+Q4_K_M GGUF named in `desktop/resources.json`. Both engine archives and model
+weights are checked against pinned size and SHA-256 values. A verified matching
+Ollama cache file can be copied without changing the user's Ollama installation.
+The engine binds a random IPv4 loopback port with a per-process random API key.
+The key is supplied through a private temporary file and removed after startup;
+Journal content and credentials never enter process arguments or model logs.
 
-Inference runs only when there is a new in-scope note revision, one at a time.
-The model is retained for five idle minutes rather than consuming inference CPU
-continuously. The lightweight process keeps checking while the model is unloaded.
-Total memory includes the runtime and context cache, in addition to downloaded
-weights. CPU inference is supported by Ollama, but speed depends on hardware.
+Inference runs only for a new in-scope note revision, one at a time, in a bounded
+4,096-token context. Nonthinking JSON-schema output is validated again by the
+app. The model stays loaded until the desktop app exits. Total memory includes
+the runtime, context cache, Electron and the OS; recommend at least 8 GB of system
+RAM and test on the actual computer. There is no cloud inference fallback.
+
+The advanced browser/CLI path instead sends compact observations to local
+Ollama at `127.0.0.1:11434`; it retains the model for five idle minutes. Neither
+runtime exposes tools, HTTP clients, shell commands, or credentials to the model.
+Classification can be wrong. Review Activity before considering any separately
+approved execution policy.
 
 [Ollama's FAQ](https://docs.ollama.com/faq) documents loopback defaults, memory
 behavior and local-only mode. Keep `OLLAMA_HOST=127.0.0.1:11434` and configure

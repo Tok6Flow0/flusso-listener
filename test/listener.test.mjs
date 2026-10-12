@@ -5,6 +5,7 @@ import { buildRunRequest } from '../src/cloud.mjs';
 import { workspace, note, signal, fakeCloud, enable, now, notebookId } from './helpers.mjs';
 
 const candidate = async () => ({ decision: 'candidate', reason: 'Fixture match.' });
+function deferred() { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; }
 test('turning on baselines old notes; a new typed signal submits at most once across edits and copies', async () => {
   const w = await workspace(); let calls = 0;
   const listener = createListener({ store: w.store, cloud: fakeCloud({ runApprovedSignal: async () => { calls++; return { status: 'submitted' }; } }), buildRunRequest, classify: candidate, clock: () => now });
@@ -65,4 +66,59 @@ test('an interrupted cloud check discards its late snapshot before importing or 
     assert.equal(w.store.get('sync', 'baseline'), null);
     assert.equal(w.store.all('attempt').length, 0);
   } finally { release(); listener.stop(); await w.close(); }
+});
+
+test('stop drains an active scheduled classification and its old timer cannot restart the listener', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const w = await workspace(), started = deferred(), finish = deferred(); let classifications = 0;
+  const listener = createListener({ store: w.store, cloud: fakeCloud(), buildRunRequest, classify: async () => { classifications++; started.resolve(); return finish.promise; }, clock: () => now });
+  try {
+    enable(w.store, { intervalSeconds: 15, executionEnabled: false }); listener.start();
+    const entry = w.store.createEntry(note(w.store));
+    t.mock.timers.tick(15000); await started.promise;
+    let drained = false; const stopping = listener.stop().then(() => { drained = true; });
+    await Promise.resolve(); assert.equal(drained, false);
+    finish.resolve({ decision: 'review', reason: 'Synthetic research.' }); await stopping;
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(listener.status().busy, false); assert.equal(listener.status().running, false);
+    assert.equal(w.store.get('checkpoint', `local:${entry.id}`), null);
+    w.store.createEntry(note(w.store)); listener.refresh(); await listener.tick();
+    t.mock.timers.tick(60000); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(classifications, 1); assert.equal(listener.status().running, false);
+  } finally { finish.resolve({ decision: 'review', reason: 'Cleanup.' }); await listener.stop(); await w.close(); }
+});
+
+test('stop preserves the receipt or uncertainty of an already dispatched run before draining', async () => {
+  for (const outcome of ['submitted', 'unknown', 'failed-response']) {
+    const w = await workspace(), started = deferred(), finish = deferred(); let calls = 0;
+    const listener = createListener({ store: w.store, cloud: fakeCloud({ runApprovedSignal: async () => { calls++; started.resolve(); await finish.promise; if (outcome === 'failed-response') throw new Error('Synthetic lost response.'); return { status: outcome }; } }), buildRunRequest, classify: candidate, clock: () => now });
+    try {
+      enable(w.store); listener.start(); w.store.createEntry(note(w.store, { signal: signal() }));
+      w.store.createEntry(note(w.store, { signal: signal({ sourceRecordId: 'second-signal' }) }));
+      const checking = listener.tick(); await started.promise;
+      let drained = false; const stopping = listener.stop().then(() => { drained = true; });
+      await Promise.resolve(); assert.equal(drained, false);
+      assert.equal(w.store.all('attempt')[0].status, 'pending');
+      finish.resolve(); await stopping; await checking;
+      assert.equal(calls, 1); const attempts = w.store.all('attempt'); assert.equal(attempts.length, 1);
+      assert.equal(attempts[0].status, outcome === 'submitted' ? 'answered' : 'unknown');
+      if (outcome !== 'failed-response') assert.equal(attempts[0].receipt.status, outcome);
+    } finally { finish.resolve(); await listener.stop(); await w.close(); }
+  }
+});
+
+test('stop drains the current canonical readback and does not begin another reconciliation', async () => {
+  const w = await workspace(), started = deferred(), finish = deferred(); let reads = 0;
+  const listener = createListener({ store: w.store, cloud: fakeCloud({ reconcileRunByKey: async () => { reads++; started.resolve(); await finish.promise; return { status: 'submitted' }; } }), buildRunRequest, classify: candidate, clock: () => now });
+  try {
+    enable(w.store); listener.start();
+    w.store.put('attempt', 'original-a', { id: 'original-a', status: 'unknown', idempotencyKey: 'original-key-a' });
+    w.store.put('attempt', 'original-b', { id: 'original-b', status: 'unknown', idempotencyKey: 'original-key-b' });
+    const checking = listener.tick(); await started.promise;
+    let drained = false; const stopping = listener.stop().then(() => { drained = true; });
+    await Promise.resolve(); assert.equal(drained, false);
+    finish.resolve(); await stopping; await checking;
+    assert.equal(reads, 1); assert.equal(w.store.get('attempt', 'original-a').status, 'reconciled');
+    assert.equal(w.store.get('attempt', 'original-b').status, 'unknown');
+  } finally { finish.resolve(); await listener.stop(); await w.close(); }
 });

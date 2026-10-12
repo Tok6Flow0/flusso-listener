@@ -12,3 +12,9 @@ runtime.*.tmp
 key.init
 instance.lock
 login-task.xml
+dist/
+build/runtime/
+build/downloads/
+*.pem
+*.p12
+*.pfx

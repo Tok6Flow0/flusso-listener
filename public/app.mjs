@@ -1,8 +1,12 @@
-import { formatCount, formatPrice, formatQuantity, formatMoney } from './format.mjs';
+import { formatCount, formatPrice, formatQuantity, formatPercentLabel } from './format.mjs';
 import { renderMarkdown } from './markdown.mjs';
+import { accountPresentation, updatePresentation, modelPresentation } from './desktop-ui.mjs';
 
 const $ = id => document.getElementById(id);
 let csrf, snapshot, selected = null, editing = null, previewId = null, entryRetryKey = crypto.randomUUID();
+const desktop = window.flussoDesktop;
+let desktopStatus = null, connectionBusy = false, connectionOperation = null, connectionGeneration = 0, profileConnectionKey = null, profileGeneration = 0, dismissedUpdate = null;
+const nativeTasks = new Set();
 function element(tag, content, className) { const node = document.createElement(tag); if (content != null) node.textContent = content; if (className) node.className = className; return node; }
 function notify(message, success = false) { $('notice').hidden = false; $('notice').textContent = message; $('notice').className = `notice${success ? ' success' : ''}`; }
 async function api(path, body, headers = {}) {
@@ -10,6 +14,80 @@ async function api(path, body, headers = {}) {
   const value = await response.json(); if (!response.ok) throw new Error(value.error || 'The request could not be completed.'); return value;
 }
 async function action(button, work) { if (button?.disabled) return; if (button) button.disabled = true; try { await work(); } catch (error) { notify(error.message); } finally { if (button) button.disabled = false; } }
+function connectionKey(cloud) { return cloud?.connected ? `${cloud.clientId || ''}:${cloud.connectionId || ''}` : null; }
+function closeAccountMenu({ focus = false } = {}) { $('account-menu').hidden = true; $('account-toggle').setAttribute('aria-expanded', 'false'); if (focus) $('account-toggle').focus(); }
+function renderAccount() {
+  const account = accountPresentation(connectionBusy ? { ...snapshot?.cloud, profile: null } : snapshot?.cloud);
+  $('account-name').textContent = account.name; $('account-detail').textContent = account.detail; $('account-avatar').textContent = account.initial;
+  $('account-toggle').setAttribute('aria-label', `${account.name} — account and app settings`);
+  if (connectionBusy) $('account-detail').textContent = 'Updating connection…';
+  $('account-menu-detail').textContent = account.connected ? 'Cloud access is connected. Your local Journal stays on this computer.' : 'Keep your Journal local, or connect your Flusso account to sync.';
+  $('account-connect').hidden = account.connected || connectionBusy; $('account-disconnect').hidden = !account.connected && !connectionBusy;
+  for (const id of ['account-connect', 'connect']) $(id).disabled = connectionBusy;
+  for (const id of ['account-disconnect', 'disconnect']) { $(id).disabled = connectionOperation === 'disconnect' || (!account.connected && !connectionBusy); $(id).textContent = connectionOperation === 'connect' ? 'Cancel sign-in' : 'Disconnect locally'; }
+  $('connect').textContent = account.connected ? 'Reconnect Flusso' : 'Connect Flusso';
+}
+async function loadProfile(key, generation = profileGeneration) {
+  try { const profile = await api('/api/profile'); if (!connectionBusy && generation === profileGeneration && connectionKey(snapshot?.cloud) === key) { snapshot.cloud.profile = profile; renderAccount(); } } catch { /* A profile read cannot invent an identity or block a local Journal. */ }
+}
+function refreshAccountProfile() {
+  const key = connectionKey(snapshot?.cloud);
+  if (!connectionBusy && key !== profileConnectionKey) { profileConnectionKey = key; if (key !== null) void loadProfile(key); }
+}
+function renderProgress(prefix, visible, percent) {
+  $(`${prefix}-progress-wrap`).hidden = !visible;
+  if (percent === null) $(`${prefix}-progress`).removeAttribute('value'); else $(`${prefix}-progress`).value = percent;
+  $(`${prefix}-progress-label`).textContent = percent === null ? '' : formatPercentLabel(percent);
+}
+function renderDesktop() {
+  if (!desktop) return;
+  $('native-controls').hidden = false; $('model-manual-command').hidden = true;
+  $('model-engine').textContent = 'Bundled local runtime.';
+  $('model-privacy').textContent = 'No cloud model fallback. The model reads selected Journal entries locally.';
+  if (!desktopStatus) return;
+  const update = updatePresentation(desktopStatus.update ?? {}), model = modelPresentation(desktopStatus.model ?? {});
+  $('app-version').textContent = desktopStatus.version || 'Version unavailable'; $('footer-version').textContent = desktopStatus.version || '—'; $('footer-version').hidden = false;
+  $('app-mode').textContent = desktopStatus.packaged ? 'Desktop app' : 'Development desktop';
+  $('start-on-login').checked = desktopStatus.startOnLogin === true; $('start-on-login').disabled = desktopStatus.startOnLoginSupported === false || nativeTasks.has('setStartOnLogin');
+  $('start-on-login').closest('label').title = desktopStatus.startOnLoginSupported === false ? 'Use your Linux desktop’s startup application settings.' : '';
+  $('check-updates').disabled = update.busy || update.state === 'unsupported' || nativeTasks.has('checkUpdates');
+  $('app-update-status').textContent = update.message || update.label;
+  $('update-corner').hidden = !update.visible || dismissedUpdate === `${update.state}:${update.version}`;
+  $('update-title').textContent = ({ available: 'An update is ready', checking: 'Checking for updates', downloading: 'Downloading your update', downloaded: 'Ready when you are', error: 'Update needs attention' })[update.state] || 'App update';
+  $('update-detail').replaceChildren();
+  if (update.version) $('update-detail').append(element('span', `v${update.version}`, 'mono'), document.createTextNode(' · '));
+  $('update-detail').append(document.createTextNode(update.message || (update.state === 'downloaded' ? 'Restart the app to install it.' : update.state === 'available' ? 'Download it in the background.' : update.label)));
+  $('update-action').textContent = update.label; $('update-action').disabled = !update.action || nativeTasks.has(update.action);
+  renderProgress('update', update.state === 'downloading', update.percent);
+  $('model-setup').hidden = !model.visible;
+  $('model-setup-status').textContent = model.message || (model.busy ? 'Preparing the local runtime and model. You can keep writing.' : 'Downloads the local runtime and model. Inference stays on this computer.');
+  $('model-state').textContent = model.message || (desktopStatus.model?.state === 'ready' ? 'Local model ready. Inference stays on this computer.' : model.label);
+  for (const id of ['setup-model', 'setup-model-panel']) { $(id).textContent = model.label; $(id).disabled = model.busy || nativeTasks.has('setupModel'); }
+  $('setup-model-panel').hidden = !model.visible;
+  renderProgress('model', model.busy && model.visible, model.percent);
+}
+async function nativeAction(method, argument) {
+  if (!desktop || nativeTasks.has(method)) return;
+  nativeTasks.add(method); renderDesktop();
+  try { await desktop[method](argument); desktopStatus = await desktop.status(); }
+  catch (error) { notify(error.message || 'The desktop action could not be completed.'); }
+  finally { nativeTasks.delete(method); renderDesktop(); }
+}
+async function initializeDesktop() {
+  if (!desktop) return;
+  const unsubscribe = desktop.onStatus(status => { desktopStatus = status; renderDesktop(); });
+  window.addEventListener('beforeunload', () => unsubscribe(), { once: true });
+  desktopStatus = await desktop.status(); renderDesktop();
+}
+$('account-toggle').addEventListener('click', () => { const open = $('account-menu').hidden; $('account-menu').hidden = !open; $('account-toggle').setAttribute('aria-expanded', String(open)); });
+document.addEventListener('click', event => { if (!$('account-area').contains(event.target)) closeAccountMenu(); });
+document.addEventListener('keydown', event => { if (event.key === 'Escape' && !$('account-menu').hidden) closeAccountMenu({ focus: true }); });
+$('account-settings').addEventListener('click', event => { if (desktop) { event.preventDefault(); nativeAction('openAccountSettings'); } closeAccountMenu(); });
+$('start-on-login').addEventListener('change', event => nativeAction('setStartOnLogin', event.currentTarget.checked));
+$('check-updates').addEventListener('click', () => { closeAccountMenu(); dismissedUpdate = null; nativeAction('checkUpdates'); });
+$('dismiss-update').addEventListener('click', () => { const update = updatePresentation(desktopStatus?.update ?? {}); dismissedUpdate = `${update.state}:${update.version}`; renderDesktop(); });
+$('update-action').addEventListener('click', () => { const update = updatePresentation(desktopStatus?.update ?? {}); if (update.action) nativeAction(update.action); });
+for (const id of ['setup-model', 'setup-model-panel']) $(id).addEventListener('click', () => nativeAction('setupModel'));
 function switchView(view) { document.querySelectorAll('.view').forEach(node => { node.hidden = node.id !== `view-${view}`; }); document.querySelectorAll('[data-view]').forEach(button => { button.classList.toggle('active', button.dataset.view === view); if (button.dataset.view === view) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current'); }); }
 document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => { switchView(button.dataset.view); if (button.dataset.view === 'policy' && snapshot?.cloud.connected) loadExecutionChoices().catch(error => notify(error.message)); }));
 async function loadExecutionChoices() {
@@ -23,13 +101,14 @@ async function loadExecutionChoices() {
 
 async function load({ forms = false } = {}) {
   snapshot = await api('/api/status');
+  renderAccount(); renderDesktop();
+  refreshAccountProfile();
   $('cloud-state').textContent = snapshot.cloud.connected ? 'Cloud connected' : 'Local only'; $('cloud-state').classList.toggle('on', snapshot.cloud.connected);
   $('listener-state').textContent = snapshot.settings.enabled ? 'Listener on' : 'Listener off'; $('listener-state').classList.toggle('on', snapshot.settings.enabled);
   $('listener-id').textContent = snapshot.settings.listenerId;
   $('connection-detail').textContent = snapshot.cloud.connected ? 'Connected with browser-approved scopes: ' + snapshot.cloud.scopes.join(', ') + '. Revoke this device from your Flusso account to end server access.' : 'Cloud access is optional for a local Journal.';
-  $('model-state').textContent = snapshot.model.installed ? 'Local model ready. Inference stays on this computer.' : snapshot.model.available ? 'Ollama is running. Download the model using the command below.' : 'Start Ollama, then download the model using the command below.';
+  if (!desktop) $('model-state').textContent = snapshot.model.installed ? 'Local model ready. Inference stays on this computer.' : snapshot.model.available ? 'Ollama is running. Download the model using the command below.' : 'Start Ollama, then download the model using the command below.';
   $('sync').disabled = !snapshot.cloud.connected;
-  $('disconnect').disabled = !snapshot.cloud.connected;
   $('last-check').textContent = snapshot.listener.lastError || (snapshot.listener.lastCheckedAtUtc ? 'Last checked: ' + new Date(snapshot.listener.lastCheckedAtUtc).toLocaleString() + (snapshot.listener.cloudComplete === false ? ' · Cloud scan incomplete' : '') : 'No check yet.');
   const selectedFilter = $('journal-filter').value;
   $('journal-filter').replaceChildren(new Option('All notebooks', ''), ...snapshot.notebooks.map(row => new Option(`${row.name} · ${row.origin}`, `${row.origin}:${row.id}`)));
@@ -88,8 +167,20 @@ $('entry-form').addEventListener('submit', event => { event.preventDefault(); ac
 }); });
 $('notebook-form').addEventListener('submit', event => { event.preventDefault(); action(event.submitter, async () => { await api('/api/notebooks', { name: $('notebook-name').value }); $('notebook-name').value = ''; await load({ forms: true }); notify('Local notebook created.', true); }); });
 $('sync').addEventListener('click', event => action(event.currentTarget, async () => { const result = await api('/api/sync', {}); await load({ forms: true }); notify(result.complete ? 'Cloud Journal copied to this encrypted local workspace.' : result.reason, result.complete); }));
-$('connect').addEventListener('click', event => action(event.currentTarget, async () => { notify('Complete sign-in and device consent in the browser. This may take a few minutes.'); await api('/api/connect', {}); await load({ forms: true }); notify('Flusso connected. Sync your cloud Journal when you are ready.', true); }));
-$('disconnect').addEventListener('click', event => action(event.currentTarget, async () => { await api('/api/disconnect', {}); await load({ forms: true }); notify('Local credentials removed and Listener stopped. Revoke the device in Flusso settings to end server authorization.', true); }));
+async function changeConnection(connect) {
+  if ((connectionBusy && connect) || connectionOperation === 'disconnect') return;
+  const generation = ++connectionGeneration;
+  connectionBusy = true; connectionOperation = connect ? 'connect' : 'disconnect'; profileGeneration++; profileConnectionKey = null; renderAccount(); closeAccountMenu();
+  try {
+    if (connect) notify('Complete sign-in and device consent in the browser. This may take a few minutes.');
+    await api(connect ? '/api/connect' : '/api/disconnect', {}); if (generation !== connectionGeneration) return;
+    await load({ forms: true }); if (generation !== connectionGeneration) return;
+    notify(connect ? 'Flusso connected. Sync your cloud Journal when you are ready.' : 'Local credentials removed and Listener stopped. Revoke the device in Flusso settings to end server authorization.', true);
+  } catch (error) { if (generation === connectionGeneration) notify(error.message); }
+  finally { if (generation === connectionGeneration) { connectionBusy = false; connectionOperation = null; renderAccount(); refreshAccountProfile(); } }
+}
+for (const id of ['connect', 'account-connect']) $(id).addEventListener('click', () => changeConnection(true));
+for (const id of ['disconnect', 'account-disconnect']) $(id).addEventListener('click', () => changeConnection(false));
 $('settings-form').addEventListener('submit', event => { event.preventDefault(); action(event.submitter, async () => { await api('/api/settings', { version: snapshot.settings.version, enabled: $('enabled').checked, executionEnabled: $('execution').checked, source: $('source').value, notebookIds: [...$('watch-notebooks').selectedOptions].map(option => option.value), section: $('section').value, instructions: $('instructions').value, intervalSeconds: Number($('interval').value), accountId: snapshot.settings.accountId, authorizationId: snapshot.settings.authorizationId }); await load({ forms: true }); notify('Listener settings saved. Existing notes are a baseline when turning on.', true); }); });
 $('check-now').addEventListener('click', event => action(event.currentTarget, async () => { await api('/api/check', {}); await load(); notify(snapshot.settings.enabled ? 'Check completed. See Activity and the latest check status.' : 'Turn the Listener on and save its settings before checking.'); }));
 const policyNumbers = ['maxBaseQuantity', 'maxLimitPrice', 'maxOrderQuoteNotionalUsd', 'maxDailyQuoteNotionalUsd', 'maxLifetimeQuoteNotionalUsd', 'maxAdmittedRuns'];
@@ -113,3 +204,4 @@ async function initialize() {
   setInterval(() => { if (!document.hidden) load().catch(error => notify(error.message)); }, 10000);
 }
 initialize().catch(error => notify(error.message));
+initializeDesktop().catch(error => { $('app-update-status').textContent = 'Desktop status unavailable'; notify(error.message || 'Desktop status could not be read.'); });
