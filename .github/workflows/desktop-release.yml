@@ -81,7 +81,7 @@ jobs:
     env:
       FLUSSO_RELEASE_CHANNEL: ${{ needs.plan.outputs.channel }}
       FLUSSO_BUILD_ARCH: ${{ matrix.arch }}
-      FLUSSO_DESKTOP_SMOKE_FILE: ${{ runner.temp }}/flusso-desktop-smoke.json
+      FLUSSO_DESKTOP_SMOKE_FILE: flusso-desktop-smoke.json
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
