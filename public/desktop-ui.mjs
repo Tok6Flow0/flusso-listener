@@ -56,9 +56,32 @@ export function entryStatus(entry) {
   return entry.ticket.error ? { label: 'ticket error', tone: 'warn' } : { label: 'order ticket', tone: 'info' };
 }
 
-const RESULT = { submitted: ['sent', 'pos'], partial: ['partly sent', 'warn'], blocked: ['refused', 'neg'], unknown: ['unconfirmed', 'warn'], pending: ['sending', 'info'], sending: ['sending', 'info'], review: ['held', 'warn'] };
+const RESULT = { submitted: ['sent', 'pos'], partial: ['partly sent', 'warn'], blocked: ['refused', 'neg'], unknown: ['unconfirmed', 'warn'], pending: ['sending', 'info'], sending: ['sending', 'info'], review: ['not placed', 'neg'], waiting: ['waiting', 'warn'] };
 const DECISION = { candidate: ['flagged', 'info'], review: ['review', ''], ignore: ['ignored', ''], ticket: ['ticket', 'info'] };
 export function activityStatus(row = {}) {
   const [label, tone] = RESULT[row.status] ?? (row.status === 'observed' ? DECISION[row.decision] : null) ?? [text(row.status) || 'noted', ''];
   return { label, tone };
+}
+
+// What the listener did with an entry's ticket, as one word and a filter group.
+const LISTENER_RESULT = {
+  submitted: ['placed', 'pos', 'placed'], partial: ['partly placed', 'warn', 'placed'],
+  blocked: ['refused', 'neg', 'refused'], review: ['not placed', 'neg', 'refused'],
+  waiting: ['waiting', 'warn', 'open'], sending: ['sending', 'info', 'open'], pending: ['sending', 'info', 'open'],
+  unknown: ['unconfirmed', 'warn', 'open'], observed: ['seen', '', 'open'],
+};
+export function listenerResult(entry) {
+  if (!entry?.ticket) return null;
+  const [label, tone, group] = LISTENER_RESULT[entry.listener?.status] ?? ['not actioned', '', 'open'];
+  return { label, tone, group };
+}
+export const RESULT_FILTERS = Object.freeze([
+  { value: '', label: 'All entries' }, { value: 'tickets', label: 'Order tickets' },
+  { value: 'placed', label: 'Placed' }, { value: 'refused', label: 'Refused or not placed' }, { value: 'open', label: 'Not actioned yet' },
+]);
+export function matchesResultFilter(entry, filter) {
+  if (!filter) return true;
+  const result = listenerResult(entry);
+  if (!result) return false;
+  return filter === 'tickets' || result.group === filter;
 }

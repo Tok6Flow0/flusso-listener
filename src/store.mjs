@@ -57,6 +57,10 @@ export async function openStore({ directory, vault, encryptionKey, clock = () =>
         reason: `A retired listener submission is unconfirmed. Check its orders, fills and positions in Flusso before marking it resolved. Original retry key: ${attempt.idempotencyKey ?? attempt.id}. It will never be resent.`,
       });
     }
+    // Revision 2: tickets are decided within a 6-hour window by default, and results are
+    // noted on their Journal entries. Only the old 15-minute default is raised.
+    const current = get('settings', 'main');
+    if ((current.settingsRevision ?? 1) < 2) put('settings', 'main', { ...current, maxSignalAgeSeconds: current.maxSignalAgeSeconds === 900 ? 21600 : current.maxSignalAgeSeconds, writeBack: current.writeBack ?? true, settingsRevision: 2, version: current.version + 1 });
     if (!all('notebook').length) { const id = randomUUID(); put('notebook', `local:${id}`, { id, name: 'My Journal', origin: 'local', version: 1, telegramEnabled: false }); }
   });
   return {

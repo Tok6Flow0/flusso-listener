@@ -17,7 +17,7 @@ The standalone app includes its runtime. You do not install Node or Ollama.
 The full Flusso dashboard remains at [flusso.stream](https://flusso.stream).
 Choose the account control at the bottom left to connect, disconnect, open account settings, or check the app version and updates. Cloud access is optional.
 
-Version **0.2.0-preview.4** remains an unsigned preview. Review the release's platform requirements and signing status. Preview automatic updates are disabled; signed production updates have a check, download, and restart flow that requires your clicks. Do not disable OS signature protections. See [desktop release details](docs/desktop-releases.md).
+Version **0.2.0-preview.5** remains an unsigned preview. Review the release's platform requirements and signing status. Preview automatic updates are disabled; signed production updates have a check, download, and restart flow that requires your clicks. Do not disable OS signature protections. See [desktop release details](docs/desktop-releases.md).
 
 Use an unlocked OS credential store: macOS Keychain, Windows Credential Manager,
 or Linux Secret Service (GNOME Keyring or KWallet). On Ubuntu 24.04, use the DEB
@@ -119,7 +119,12 @@ Source/notebook/heading filters are enforced by code; freeform instructions guid
 the small model's classification. They are not hard financial controls.
 
 Existing notes become a baseline on startup or when switching the listener on.
-The first automatic cloud import also becomes a baseline. New watched notes and
+The first automatic cloud import also becomes a baseline. Order tickets are the
+exception: any ticket written within **Act on tickets from the last** (6 hours by
+default) that hasn't been acted on is decided, placed or refused, even if it
+arrived while the app was closed. A setup gap, such as auto-trade being off, is not
+a decision: the ticket waits and is decided once the gap is fixed, if it is still
+inside the window. New watched notes and
 later revisions are classified once per revision; explicit order tickets use
 deterministic validation and do not need a model. Cloud synchronization scans
 all pages, bounded at 5,000 entries, so edits to older notes are found. An
@@ -176,6 +181,13 @@ ownership, live plan, connection consent, margin,
 venue terms, risk and writer authority. A model cannot override those checks or
 create a ticket from research text. Turning auto-trade off during a preview
 prevents its confirmation; it cannot recall an order already sent.
+
+With **Note results on the entry** on (the default), every decision is written
+back to the ticket's own Journal entry: a `## Listener result` section with
+placed, partly placed, refused or not placed, the reason, and each order's
+result, and the entry is marked reviewed. Cloud entries are updated through your
+Flusso connection, so you and your agents see the outcome in Flusso too. The
+Journal list shows the same result on each ticket and can filter by it.
 
 Each possible submission is durably saved before dispatch. Activity retains
 separate `submitted`, `blocked`, `unknown` or `not_sent` results for every element;

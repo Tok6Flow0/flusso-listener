@@ -97,3 +97,26 @@ export function buildOrderRequest({ entry, settings, now = Date.now() }) {
   const signalIdentity = createHash('sha256').update(JSON.stringify({ schemaVersion: 'flusso.listener_ticket.v1', id: ticket.id })).digest('hex');
   return { eligible: true, ticketId: ticket.id ?? null, orders, signalIdentity };
 }
+
+// The listener notes each decision on the ticket's own Journal entry, so the
+// author (you or your agent) can see what happened without opening the app.
+export const RESULT_HEADING = '## Listener result';
+const RESULT_TITLE = { submitted: 'Placed', partial: 'Partly placed', blocked: 'Refused', review: 'Not placed' };
+const LINE_STATUS = { submitted: 'sent', blocked: 'refused', unknown: 'unconfirmed', not_sent: 'not sent' };
+const BODY_LIMIT = 20000;
+
+/** Replaces any earlier listener result at the end of the body with this one. */
+export function withResult(body, { status, reason = null, lines = [], atUtc }) {
+  const text = typeof body === 'string' ? body : '';
+  const previous = text.lastIndexOf(`\n${RESULT_HEADING}\n`);
+  const base = (previous >= 0 ? text.slice(0, previous) : text.startsWith(`${RESULT_HEADING}\n`) ? '' : text).trimEnd();
+  const when = `${new Date(atUtc).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+  const head = [RESULT_HEADING, '', `**${RESULT_TITLE[status] ?? 'Result'}** · ${when}`];
+  if (reason) head.push('', String(reason).replace(/\s+/g, ' ').trim().slice(0, 500));
+  const foot = ['', 'Noted by Flusso Journal. Sent is not filled.'];
+  const rows = lines.map(line => `- ${line.side} ${line.instrumentId} ${line.quantity} @ ${line.limitPrice}: ${LINE_STATUS[line.status] ?? line.status}${line.message ? ` (${String(line.message).replace(/\s+/g, ' ').trim().slice(0, 200)})` : ''}`);
+  const compose = list => `${base}${base ? '\n\n' : ''}${[...head, ...(list.length ? ['', ...list] : []), ...foot].join('\n')}\n`;
+  let result = compose(rows);
+  for (let keep = rows.length - 1; result.length > BODY_LIMIT && keep >= 0; keep -= 1) result = compose([...rows.slice(0, keep), `- ${rows.length - keep} more orders, see Activity`]);
+  return result.length > BODY_LIMIT ? null : result;
+}

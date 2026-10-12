@@ -57,7 +57,7 @@ export async function startServer({ store, cloud, listener, port = 0, open = ope
       if (request.method === 'GET' && url.pathname === '/api/profile') return reply(200, await cloud.profile());
       if (request.method === 'GET' && url.pathname === '/api/accounts') return reply(200, { accounts: await cloud.listAccounts() });
       if (request.method !== 'GET' && (request.method !== 'POST' || request.headers.origin !== origin || !same(request.headers['x-flusso-csrf'], csrf))) return reply(403, { error: 'Request origin or session refused.' });
-      if (request.method === 'GET' && url.pathname === '/api/status') return reply(200, { settings: store.settings(), listener: listener.status(), cloud: await cloud.status(), model: await checkModel(), display: { theme: theme() }, notebooks: store.notebooks(), entries: store.entries().slice(0, 500).map(entry => ({ ...entry, ticket: readTicket(entry.body) })), activity: store.all('activity').sort((a, b) => Number(b.kind === 'legacy' && unconfirmed(b)) - Number(a.kind === 'legacy' && unconfirmed(a)) || newest(a, b)).slice(0, 100), attempts: store.all('attempt').filter(row => ['orders', 'legacy'].includes(row.kind)).sort((a, b) => Number(unconfirmed(b)) - Number(unconfirmed(a)) || newest(a, b)).slice(0, 100).map(row => ({ ...row, orders: row.orders ?? [] })) });
+      if (request.method === 'GET' && url.pathname === '/api/status') return reply(200, { settings: store.settings(), listener: listener.status(), cloud: await cloud.status(), model: await checkModel(), display: { theme: theme() }, notebooks: store.notebooks(), entries: annotate(store.entries().slice(0, 500), store.all('activity')), activity: store.all('activity').sort((a, b) => Number(b.kind === 'legacy' && unconfirmed(b)) - Number(a.kind === 'legacy' && unconfirmed(a)) || newest(a, b)).slice(0, 100), attempts: store.all('attempt').filter(row => ['orders', 'legacy'].includes(row.kind)).sort((a, b) => Number(unconfirmed(b)) - Number(unconfirmed(a)) || newest(a, b)).slice(0, 100).map(row => ({ ...row, orders: row.orders ?? [] })) });
       const input = request.method === 'POST' ? await readJson(request) : null;
       if (url.pathname === '/api/connect' && request.method === 'POST') {
         object(input, []);
@@ -130,6 +130,18 @@ export async function startServer({ store, cloud, listener, port = 0, open = ope
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
   origin = `http://127.0.0.1:${server.address().port}`;
   return { server, origin, url: `${origin}/#${bootstrap}`, close: () => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }) };
+}
+// Each entry carries its ticket (if any) and the listener's latest decision on it.
+function annotate(entries, activity) {
+  const latest = new Map();
+  for (const row of activity) {
+    const key = `${row.origin}:${row.entryId}`, seen = latest.get(key);
+    if (!seen || row.atUtc > seen.atUtc) latest.set(key, row);
+  }
+  return entries.map(entry => {
+    const row = latest.get(`${entry.origin}:${entry.id}`);
+    return { ...entry, ticket: readTicket(entry.body), listener: row ? { decision: row.decision ?? null, status: row.status, reason: row.reason ?? null, atUtc: row.atUtc } : null };
+  });
 }
 function same(left, right) { if (typeof left !== 'string') return false; const a = Buffer.from(left), b = Buffer.from(right); return a.length === b.length && timingSafeEqual(a, b); }
 function hasSession(cookie, session) { return typeof cookie === 'string' && cookie.split(';').some(part => same(part.trim(), `flusso_listener=${session}`)); }

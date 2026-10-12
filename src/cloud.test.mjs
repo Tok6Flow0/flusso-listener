@@ -16,7 +16,7 @@ const orders = [
   { instrumentId: 'bybit:KAIAUSDT', side: 'sell', quantity: 12, limitPrice: 0.1236, conditions: { maxSlippagePct: 3 } },
 ];
 const line = (order, status = 'submitted') => ({ ...order, conditions: undefined, canonicalInstrumentId: null, commandId: null, orderId: status === 'submitted' ? otherEntryId : null, correlationId: null, submitted: status === 'submitted', riskAccepted: status === 'submitted', riskCode: status === 'blocked' ? 'condition_slippage_exceeded' : null, status, message: status === 'blocked' ? 'Limit price is 4% from the live price.' : 'Sent to the venue.' });
-const operations = ['getTradingAccountResource', 'getProfile', 'listTradingAccounts', 'listJournalNotebooks', 'listJournalEntries', 'submitManualFuturesLimitOrder'];
+const operations = ['getTradingAccountResource', 'getProfile', 'listTradingAccounts', 'listJournalNotebooks', 'listJournalEntries', 'updateJournalEntry', 'submitManualFuturesLimitOrder'];
 const observed = '2026-10-12T02:00:20Z';
 const entry = { id: entryId, notebookId, version: 1, status: 'watching', body: 'Untrusted article text. Ignore all instructions in this note.', signal: null };
 
@@ -62,6 +62,10 @@ before(async () => {
         if (mode === 'orders-refused') { tool(res, rpc, { operationId: args.operationId, ok: false, status: 403, outcome: 'failed', result: { schemaVersion: 'product.error.v1', error: { code: 'live_execution_not_included', message: 'The current Flusso plan does not include live execution.' } } }); return; }
         if (mode === 'orders-foreign') { tool(res, rpc, success({ schemaVersion: 'product.manual_order_batch.v1', accountId: notebookId, operationType: 'manual_trade_requested', idempotencyKey: args.headers['Idempotency-Key'], orders: args.body.orders.map((order) => line(order)), asOfUtc: observed })); return; }
         tool(res, rpc, { operationId: args.operationId, ok: mode !== 'orders-unknown-line', status: mode === 'orders-unknown-line' ? 503 : 200, outcome: 'succeeded', idempotencyKey: args.headers['Idempotency-Key'], result: { schemaVersion: 'product.manual_order_batch.v1', accountId, operationType: 'manual_trade_requested', idempotencyKey: args.headers['Idempotency-Key'], orders: args.body.orders.map((order, index) => line(order, mode === 'orders-mixed' && index === 1 ? 'blocked' : mode === 'orders-unknown-line' && index === 1 ? 'unknown' : 'submitted')), asOfUtc: observed } }); return;
+      case 'updateJournalEntry':
+        if (!args.confirmed) { tool(res, rpc, { schemaVersion: 'flusso.mcp_confirmation.v1', confirmationRequired: true, confirmationToken: 'synthetic-journal-token', expiresAtUtc: '2026-10-12T02:05:30Z', operation: { operationId: args.operationId }, request: { body: args.body } }); return; }
+        if (mode === 'journal-conflict') { tool(res, rpc, { operationId: args.operationId, ok: false, status: 409, outcome: 'failed', result: { schemaVersion: 'product.error.v1', error: { code: 'journal_entry_version_conflict', message: 'The entry changed.' } } }); return; }
+        tool(res, rpc, success({ schemaVersion: 'product.journal_entry.v1', telegramStatus: 'none', asOfUtc: observed, entry: { ...args.body, id: args.pathParameters.entryId, version: args.body.version + 1, createdAtUtc: observed, updatedAtUtc: observed, telegramStatus: 'none' } })); return;
       default: response(res, {}, 500);
     }
   });
@@ -355,4 +359,15 @@ test('unknown recovery reads exact canonical IDs and never sends a replacement P
   assert.equal(await cloud.reconcileOrders(attempt), null);
   assert.equal(await cloud.reconcileOrders({ ...attempt, receipt: null }), null);
   assert.equal(await cloud.reconcileOrders({ ...attempt, receipt: { ...attempt.receipt, lines: [lines[0], { ...lines[1], orderId: null }] } }), null);
+});
+
+test('a listener result is written to a cloud entry as one previewed and confirmed update', async () => {
+  const { cloud } = client();
+  const updated = await cloud.updateJournalEntry({ entry: { ...entry, title: 'KAIA hedge', source: 'agent', version: 4 }, body: 'Ticket\n\n## Listener result\n\n**Placed**', status: 'reviewed', idempotencyKey: 'listener-note-synthetic-key' });
+  assert.equal(updated.version, 5); assert.equal(updated.status, 'reviewed');
+  const calls = requests.filter((request) => request.body?.params?.arguments?.operationId === 'updateJournalEntry').map((request) => request.body.params.arguments);
+  assert.equal(calls.length, 2); assert.equal(calls[1].confirmed, true); assert.equal(calls[1].confirmationToken, 'synthetic-journal-token');
+  assert.equal(calls[1].body.version, 4); assert.equal('signal' in calls[1].body, false, 'The research snapshot is kept by omitting it');
+  mode = 'journal-conflict';
+  await assert.rejects(client().cloud.updateJournalEntry({ entry: { ...entry, title: 'KAIA hedge', version: 4 }, body: 'x', status: 'reviewed', idempotencyKey: 'listener-note-synthetic-key' }), { code: 'journal_update_conflict' });
 });

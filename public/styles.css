@@ -253,3 +253,5 @@ tr:last-child td{border-bottom:0}
   .update-corner{right:12px;bottom:12px;max-width:calc(100vw - 24px)}
 }
 @media(max-width:380px){main{padding:16px 12px 36px}.segmented>label span{padding:0 12px}.form-actions>button{flex:1 1 auto}}
+.ticket-result{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 10px}
+#save-settings:disabled{opacity:.6}

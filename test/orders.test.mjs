@@ -98,3 +98,16 @@ test('seven independent order ceilings conservatively fit the total permission',
   assert.deepEqual(ceilings, Array(7).fill(257.14));
   assert.ok(ceilings.reduce((sum, amount) => sum + amount, 0) <= 1800);
 });
+
+test('a listener result replaces the previous one and keeps the ticket readable', async () => {
+  const { withResult, readTicket: read } = await import('../src/orders.mjs');
+  const first = withResult(ticket(), { status: 'blocked', reason: 'Flusso refused the orders.', lines: [{ side: 'buy', instrumentId: 'gate:KAIA_USDT', quantity: 120, limitPrice: 0.1234, status: 'blocked', message: 'Too far from the live price.' }], atUtc: '2026-10-12T10:05:00Z' });
+  assert.match(first, /\*\*Refused\*\* · 2026-10-12 10:05 UTC/);
+  const second = withResult(first, { status: 'review', reason: 'Daily limit reached.', atUtc: '2026-10-12T11:00:00Z' });
+  assert.equal(second.match(/## Listener result/g).length, 1);
+  assert.doesNotMatch(second, /Refused/);
+  assert.equal(read(second).ticket.id, 'kaia-2026-10-12T01');
+  const many = Array.from({ length: 400 }, (_, index) => ({ side: 'buy', instrumentId: `venue:INSTRUMENT_${index}`, quantity: 1, limitPrice: 1, status: 'submitted', message: 'x'.repeat(40) }));
+  const bounded = withResult('x'.repeat(5000), { status: 'submitted', lines: many, atUtc: '2026-10-12T10:05:00Z' });
+  assert.ok(bounded.length <= 20000); assert.match(bounded, /more orders, see Activity/);
+});

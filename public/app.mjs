@@ -1,6 +1,6 @@
 import { formatCount, formatPrice, formatQuantity, formatPercentLabel, formatMoney, formatPercent } from './format.mjs';
 import { renderMarkdown } from './markdown.mjs';
-import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, activityStatus } from './desktop-ui.mjs';
+import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, activityStatus, listenerResult, RESULT_FILTERS, matchesResultFilter } from './desktop-ui.mjs';
 
 const $ = id => document.getElementById(id);
 let csrf, snapshot, selected = null, editing = null, entryRetryKey = crypto.randomUUID();
@@ -186,6 +186,7 @@ function fillSettings() {
   $('max-slippage').value = risk.maxSlippagePct ?? ''; $('max-order').value = risk.maxOrderUsd ?? ''; $('min-volume').value = risk.minVolume24hUsd ?? '';
   $('max-tickets').value = settings.maxTicketsPerDay ?? 24; $('max-ticket').value = risk.maxTicketUsd ?? ''; $('max-leverage').value = risk.maxLeverage ?? '';
   $('together').checked = risk.together !== false;
+  $('write-back').checked = settings.writeBack !== false;
   $('watch-notebooks').replaceChildren(...snapshot.notebooks.map(row => {
     const label = element('label'), input = element('input'), chip = element('span', row.name);
     input.type = 'checkbox'; input.value = row.id; input.checked = settings.notebookIds.includes(row.id);
@@ -194,7 +195,7 @@ function fillSettings() {
   }));
   if (!snapshot.notebooks.length) $('watch-notebooks').append(element('span', 'No notebooks yet.', 'hint'));
   renderAccountChoice();
-  formDirty = false; $('save-settings').disabled = true;
+  formDirty = false; $('save-settings').disabled = true; $('save-settings').textContent = 'Saved';
 }
 function ensureOption(select, value, label) { if (![...select.options].some(option => option.value === String(value))) select.append(new Option(label, String(value))); }
 function amount(id) { const raw = $(id).value.trim(); if (!raw) return null; const value = Number(raw); if (!Number.isFinite(value) || value <= 0) throw new Error('Limits must be positive numbers, or left blank.'); return value; }
@@ -204,7 +205,7 @@ function settingsBody(overrides = {}) {
     source: document.querySelector('input[name=source]:checked')?.value ?? 'local',
     notebookIds: [...$('watch-notebooks').querySelectorAll('input:checked')].map(input => input.value),
     section: $('section').value, instructions: $('instructions').value, intervalSeconds: Number($('interval').value),
-    maxSignalAgeSeconds: Number($('max-age').value), maxTicketsPerDay: Number($('max-tickets').value), accountId: $('account').value || null,
+    maxSignalAgeSeconds: Number($('max-age').value), maxTicketsPerDay: Number($('max-tickets').value), writeBack: $('write-back').checked, accountId: $('account').value || null,
     risk: { maxSlippagePct: amount('max-slippage'), maxOrderUsd: amount('max-order'), maxTicketUsd: amount('max-ticket'), maxLeverage: amount('max-leverage'), minVolume24hUsd: amount('min-volume'), together: $('together').checked },
     ...overrides,
   };
@@ -213,7 +214,7 @@ async function saveSettings(message) {
   try { await api('/api/settings', settingsBody()); await load({ forms: true }); notify(message, true); }
   catch (error) { await load({ forms: true }).catch(() => {}); throw error; }
 }
-$('settings-form').addEventListener('input', () => { formDirty = true; $('save-settings').disabled = false; });
+$('settings-form').addEventListener('input', () => { formDirty = true; $('save-settings').disabled = false; $('save-settings').textContent = 'Save'; });
 $('settings-form').addEventListener('submit', event => { event.preventDefault(); action(event.submitter, () => saveSettings('Saved.')); });
 // Switches act immediately, like any other switch.
 $('enabled').addEventListener('change', event => { event.stopPropagation(); action(null, () => saveSettings($('enabled').checked ? 'Listener on. Existing notes are skipped.' : 'Listener off.')); });
@@ -225,12 +226,14 @@ $('ticket-example').textContent = '```flusso-orders\n' + JSON.stringify(TICKET_E
 
 /* --------------------------------------------------------------- journal */
 function renderEntries() {
-  const filter = $('journal-filter').value, rows = snapshot.entries.filter(row => !filter || `${row.origin}:${row.notebookId}` === filter);
+  const filter = $('journal-filter').value, result = $('result-filter').value;
+  const rows = snapshot.entries.filter(row => (!filter || `${row.origin}:${row.notebookId}` === filter) && matchesResultFilter(row, result));
   $('entry-list').replaceChildren(...rows.map(row => {
     const button = element('button', null, 'entry-card'); button.type = 'button'; button.classList.toggle('selected', selected?.id === row.id && selected.origin === row.origin);
-    const meta = element('span', null, 'meta'), status = entryStatus(row);
+    const meta = element('span', null, 'meta'), status = entryStatus(row), outcome = listenerResult(row);
     meta.append(element('span', when(row.updatedAtUtc)));
-    if (status) meta.append(pill(status.label, status.tone));
+    if (row.ticket?.error && status) meta.append(pill(status.label, status.tone));
+    else if (outcome) meta.append(pill(outcome.label, outcome.tone));
     if (row.origin === 'cloud') meta.append(pill('cloud'));
     button.append(element('strong', row.title), meta);
     button.addEventListener('click', () => { selected = row; renderEntries(); renderDetail(); }); return button;
@@ -265,6 +268,12 @@ function renderDetail() {
     const section = element('section', null, 'detail-section'), head = element('div', null, 'card-head');
     head.append(element('h3', 'Order ticket'), row.ticket.ticket?.id ? element('code', row.ticket.ticket.id) : element('span'));
     section.append(head);
+    const outcome = listenerResult(row);
+    if (outcome) {
+      const line = element('p', null, 'hint ticket-result');
+      line.append(pill(outcome.label, outcome.tone), document.createTextNode(row.listener ? ` ${when(row.listener.atUtc)}${row.listener.reason ? ` · ${row.listener.reason}` : ''}` : ' The listener has not acted on this ticket yet.'));
+      section.append(line);
+    }
     if (row.ticket.error) section.append(element('p', row.ticket.error, 'hint'));
     else section.append(ordersTable(row.ticket.ticket.orders));
     detail.append(section);
@@ -295,7 +304,9 @@ $('insert-ticket').addEventListener('click', () => {
   if (TICKET_FENCE.test(body.value)) { TICKET_FENCE.lastIndex = 0; notify('This entry already has an order ticket.'); return; }
   TICKET_FENCE.lastIndex = 0; body.value = `${body.value.trimEnd()}${body.value.trim() ? '\n\n' : ''}${block}`; $('entry-status').value = 'watching'; body.focus();
 });
+$('result-filter').replaceChildren(...RESULT_FILTERS.map(option => new Option(option.label, option.value)));
 $('journal-filter').addEventListener('change', renderEntries);
+$('result-filter').addEventListener('change', renderEntries);
 $('new-entry').addEventListener('click', () => showEditor()); $('cancel-edit').addEventListener('click', () => { $('editor').hidden = true; });
 $('entry-form').addEventListener('submit', event => { event.preventDefault(); action(event.submitter, async () => {
   let signal = null; if ($('entry-signal').value.trim()) { try { signal = JSON.parse($('entry-signal').value); } catch { throw new Error('The structured signal is not valid JSON.'); } }

@@ -391,5 +391,30 @@ export function createCloudClient({ origin = 'https://flusso.stream', vault, fet
     return null;
   }
 
-  return { status, profile, beginConnect, disconnect, capabilities, listAccounts, readJournal, submitOrders, reconcileOrders };
+  /**
+   * Notes the listener's decision on a cloud Journal entry (flusso.updateJournalEntry):
+   * the same entry with its result appended and status reviewed. The signal snapshot
+   * is omitted so the server keeps it. Journal writes never place an order.
+   */
+  async function updateJournalEntry({ entry, body, status, idempotencyKey }) {
+    retryKey(idempotencyKey);
+    if (!UUID.test(entry?.id ?? '') || !UUID.test(entry?.notebookId ?? '') || !Number.isInteger(entry.version) || typeof body !== 'string' || !['watching', 'reviewed', 'closed'].includes(status)) fail('journal_update_invalid', 'A complete cloud entry and its latest version are required.');
+    const generation = credentialGeneration;
+    await requireOperations(['updateJournalEntry']);
+    const args = { operationId: 'updateJournalEntry', pathParameters: { entryId: entry.id }, headers: { 'Idempotency-Key': idempotencyKey },
+      body: { notebookId: entry.notebookId, title: entry.title, body, instrument: entry.instrument ?? null, venue: entry.venue ?? null, status,
+        observedAtUtc: entry.observedAtUtc ?? null, source: entry.source === 'manual' ? 'manual' : 'agent', version: entry.version } };
+    const preview = await mcp('act_in_flusso', args);
+    if (preview.schemaVersion !== 'flusso.mcp_confirmation.v1' || typeof preview.confirmationToken !== 'string' || preview.operation?.operationId !== args.operationId) fail('journal_update_refused', short(preview.message) || 'Flusso refused the Journal update.');
+    requireGeneration(generation);
+    const value = await mcp('act_in_flusso', { ...args, confirmed: true, confirmationToken: preview.confirmationToken });
+    requireGeneration(generation);
+    const updated = value.result?.entry;
+    if (value.result?.schemaVersion !== 'product.journal_entry.v1' || !object(updated) || !equalId(updated.id, entry.id) || !Number.isInteger(updated.version) || updated.version <= entry.version) {
+      fail(value.status === 409 ? 'journal_update_conflict' : 'journal_update_failed', short(value.result?.error?.message) || 'Flusso did not confirm the Journal update.', Number(value.status) || 0);
+    }
+    return updated;
+  }
+
+  return { status, profile, beginConnect, disconnect, capabilities, listAccounts, readJournal, submitOrders, reconcileOrders, updateJournalEntry };
 }

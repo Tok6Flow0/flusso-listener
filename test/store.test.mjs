@@ -80,7 +80,7 @@ test('a preview.1 policy setting is retired on open and execution restarts off',
     const second = await openStore({ directory, encryptionKey: Buffer.from(key) });
     const settings = second.settings();
     assert.equal('policy' in settings, false); assert.equal('authorizationId' in settings, false);
-    assert.equal(settings.executionEnabled, false); assert.equal(settings.maxSignalAgeSeconds, 900);
+    assert.equal(settings.executionEnabled, false); assert.equal(settings.maxSignalAgeSeconds, 21600); assert.equal(settings.writeBack, true);
     assert.deepEqual(settings.risk, { maxSlippagePct: null, maxOrderUsd: null, maxTicketUsd: null, maxLeverage: null, minVolume24hUsd: null, together: true });
     assert.deepEqual(second.get('attempt', original.id), { ...original, kind: 'legacy' });
     assert.equal(second.get('attempt', 'listener-retired-pending').kind, 'legacy');
@@ -95,4 +95,19 @@ test('a preview.1 policy setting is retired on open and execution restarts off',
     assert.deepEqual(third.get('attempt', original.id).body, original.body);
     third.close();
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+test('a saved 15-minute ticket window is raised to six hours once, and other choices are kept', async () => {
+  for (const [saved, expected] of [[900, 21600], [3600, 3600]]) {
+    const directory = await mkdtemp(join(tmpdir(), 'flusso-window-test-')), key = randomBytes(32);
+    try {
+      const first = await openStore({ directory, encryptionKey: Buffer.from(key) });
+      const { settingsRevision: _revision, writeBack: _writeBack, ...older } = first.settings();
+      first.put('settings', 'main', { ...older, maxSignalAgeSeconds: saved });
+      first.close();
+      const second = await openStore({ directory, encryptionKey: Buffer.from(key) });
+      assert.equal(second.settings().maxSignalAgeSeconds, expected);
+      assert.equal(second.settings().writeBack, true); assert.equal(second.settings().settingsRevision, 2);
+      second.close();
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  }
 });

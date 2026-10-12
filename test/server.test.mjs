@@ -16,7 +16,7 @@ async function appFixture(cloudOverrides = {}) {
 }
 function deferred() { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; }
 function settingsBody(store, additions = {}) {
-  const { model: _model, listenerId: _listenerId, ...body } = store.settings();
+  const { model: _model, listenerId: _listenerId, settingsRevision: _revision, ...body } = store.settings();
   return { ...body, ...additions };
 }
 test('loopback GUI refuses wrong Host/Origin and unauthorized requests; session can reopen with private per-start launcher', async () => {

@@ -8,17 +8,79 @@ const noModel = async () => { throw new Error('The model must not read order tic
 function deferred() { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; }
 const sent = orders => ({ status: 'submitted', lines: orders.map(order => ({ ...order, status: 'submitted', orderId: null, riskCode: null, message: 'Sent.' })), message: null });
 
-test('turning on baselines old tickets; a new ticket is placed once across edits and copies', async () => {
+test('a new ticket is placed once across edits and copies, and its result is noted on the entry', async () => {
   const w = await workspace(); const calls = [];
   const listener = createListener({ store: w.store, cloud: fakeCloud({ submitOrders: async attempt => { calls.push(attempt); return sent(attempt.orders); } }), classify: noModel, clock: () => now });
   try {
-    w.store.createEntry(note(w.store, { body: ticket({ id: 'old-ticket' }) })); enable(w.store); listener.start(); await listener.tick(); assert.equal(calls.length, 0);
+    enable(w.store); listener.start();
     const entry = w.store.createEntry(note(w.store, { body: ticket() })); await listener.tick(); assert.equal(calls.length, 1);
     assert.equal(calls[0].accountId, accountId); assert.match(calls[0].idempotencyKey, /^listener-[a-f\d]{64}$/);
-    w.store.updateEntry(entry.id, { ...note(w.store), body: ticket() + '\nEdited prose.', version: entry.version }); await listener.tick(); assert.equal(calls.length, 1);
+    const noted = w.store.entry(entry.id);
+    assert.equal(noted.status, 'reviewed'); assert.equal(noted.version, entry.version + 1);
+    assert.match(noted.body, /## Listener result\n\n\*\*Placed\*\*/); assert.match(noted.body, /buy gate:KAIA_USDT 120 @ 0\.1234: sent/);
+    assert.equal(w.store.get('checkpoint', `local:${entry.id}`).version, noted.version, 'Writing the result is not another decision');
+    w.store.updateEntry(entry.id, { ...note(w.store), body: ticket() + '\nEdited prose.', version: noted.version }); await listener.tick(); assert.equal(calls.length, 1);
     w.store.createEntry(note(w.store, { body: ticket() })); await listener.tick(); assert.equal(calls.length, 1);
     const activity = w.store.all('activity').find(row => row.attemptId === calls[0].id);
     assert.equal(activity.status, 'submitted'); assert.match(activity.reason, /2 orders sent/);
+  } finally { listener.stop(); await w.close(); }
+});
+test('starting up decides unactioned tickets inside the window and skips older ones', async () => {
+  const w = await workspace(); const calls = []; let clock = now;
+  const listener = createListener({ store: w.store, cloud: fakeCloud({ submitOrders: async attempt => { calls.push(attempt); return sent(attempt.orders); } }), classify: noModel, clock: () => clock });
+  try {
+    enable(w.store, { maxSignalAgeSeconds: 21600 });
+    const old = w.store.createEntry(note(w.store, { body: ticket({ id: 'written-yesterday' }) }));
+    clock = now + 7 * 3600000; // the app was closed for seven hours
+    const recent = { ...note(w.store, { body: ticket({ id: 'written-while-closed' }) }) };
+    const fresh = w.store.createEntry(recent);
+    // createEntry stamps the store clock; move the old one outside the six-hour window.
+    w.store.put('entry', `local:${old.id}`, { ...w.store.entry(old.id), updatedAtUtc: new Date(now - 3600000).toISOString(), createdAtUtc: new Date(now - 3600000).toISOString() });
+    w.store.put('entry', `local:${fresh.id}`, { ...w.store.entry(fresh.id), updatedAtUtc: new Date(clock - 3600000).toISOString(), createdAtUtc: new Date(clock - 3600000).toISOString() });
+    listener.start(); await listener.tick();
+    assert.deepEqual(calls.map(call => call.ticketId), ['written-while-closed']);
+    assert.equal(w.store.get('checkpoint', `local:${old.id}`).state, 'baseline');
+  } finally { listener.stop(); await w.close(); }
+});
+test('a setup gap leaves the ticket unactioned until it is fixed, then it is decided', async () => {
+  const w = await workspace(); let calls = 0;
+  const listener = createListener({ store: w.store, cloud: fakeCloud({ submitOrders: async ({ orders }) => { calls++; return sent(orders); } }), classify: noModel, clock: () => now });
+  try {
+    enable(w.store, { executionEnabled: false }); listener.start();
+    const entry = w.store.createEntry(note(w.store, { body: ticket({ id: 'set-up-later' }) })); await listener.tick();
+    assert.equal(calls, 0); assert.equal(w.store.entry(entry.id).status, 'watching', 'Nothing is written while auto-trade is off');
+    assert.equal(w.store.all('activity').find(row => row.entryId === entry.id).status, 'waiting');
+    enable(w.store, { executionEnabled: true }); await listener.tick();
+    assert.equal(calls, 1); assert.equal(w.store.entry(entry.id).status, 'reviewed');
+  } finally { listener.stop(); await w.close(); }
+});
+test('a refused ticket is noted as not placed, and write-back can be turned off', async () => {
+  const w = await workspace();
+  const listener = createListener({ store: w.store, cloud: fakeCloud(), classify: noModel, clock: () => now });
+  try {
+    enable(w.store); listener.start();
+    const refused = w.store.createEntry(note(w.store, { body: ticket({ id: 'venue-refuses' }) })); await listener.tick();
+    assert.match(w.store.entry(refused.id).body, /\*\*Refused\*\*/); assert.match(w.store.entry(refused.id).body, /refused \(Fixture refusal\.\)/);
+    enable(w.store, { writeBack: false });
+    const quiet = w.store.createEntry(note(w.store, { body: ticket({ id: 'not-noted' }) })); await listener.tick();
+    assert.equal(w.store.entry(quiet.id).status, 'watching'); assert.doesNotMatch(w.store.entry(quiet.id).body, /Listener result/);
+  } finally { listener.stop(); await w.close(); }
+});
+test('a cloud ticket result is written back through Flusso and its new revision is not decided again', async () => {
+  const w = await workspace(); const updates = []; let calls = 0;
+  const cloudEntry = { ...note(w.store), body: ticket({ id: 'cloud-ticket' }), id: '00000000-0000-4000-8000-000000000044', notebookId, version: 3, createdAtUtc: new Date(now).toISOString(), updatedAtUtc: new Date(now).toISOString(), signal: null };
+  let rows = [cloudEntry];
+  const listener = createListener({ store: w.store, cloud: fakeCloud({
+    readJournal: async () => ({ notebooks: [{ id: notebookId, name: 'Cloud', version: 1 }], entries: rows, complete: true }),
+    submitOrders: async ({ orders }) => { calls++; return sent(orders); },
+    updateJournalEntry: async ({ entry, body, status }) => { updates.push({ entry, body, status }); const next = { ...entry, body, status, version: entry.version + 1 }; rows = [next]; return next; },
+  }), classify: noModel, clock: () => now });
+  try {
+    enable(w.store, { source: 'cloud', notebookIds: [notebookId] }); w.store.put('sync', 'baseline', { atUtc: new Date(now).toISOString() });
+    listener.start(); await listener.tick();
+    assert.equal(calls, 1); assert.equal(updates.length, 1);
+    assert.equal(updates[0].status, 'reviewed'); assert.equal(updates[0].entry.version, 3); assert.match(updates[0].body, /## Listener result/);
+    await listener.tick(); assert.equal(calls, 1); assert.equal(updates.length, 1);
   } finally { listener.stop(); await w.close(); }
 });
 test('ticket orders keep the owner risk limits and both legs share one release time', async () => {
@@ -41,6 +103,7 @@ test('prose, structured research and off auto-trade never place orders', async (
     enable(w.store, { executionEnabled: false }); w.store.createEntry(note(w.store, { body: ticket({ id: 'while-off' }) })); await listener.tick();
     assert.equal(calls, 0);
     assert.match(w.store.all('activity').find(row => row.decision === 'ticket').reason, /Auto-trade is off/);
+    assert.equal(w.store.all('activity').find(row => row.decision === 'ticket').status, 'waiting');
   } finally { listener.stop(); await w.close(); }
 });
 test('a broken local model does not hold up an order ticket', async () => {
@@ -57,7 +120,7 @@ test('invalid and stale tickets stay in Activity for review', async () => {
   const w = await workspace(); let calls = 0;
   const listener = createListener({ store: w.store, cloud: fakeCloud({ submitOrders: async () => { calls++; } }), classify: noModel, clock: () => now + 3600000 });
   try {
-    enable(w.store); listener.start();
+    enable(w.store, { maxSignalAgeSeconds: 900 }); listener.start();
     w.store.createEntry(note(w.store, { body: ticket({ id: 'stale' }) }));
     w.store.createEntry(note(w.store, { body: '```flusso-orders\n{"id":"invalid-identity","orders":[{"instrumentId":"BTC","side":"buy","quantity":1,"limitPrice":1}]}\n```' }));
     await listener.tick(); assert.equal(calls, 0);
