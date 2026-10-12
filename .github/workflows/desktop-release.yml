@@ -182,7 +182,13 @@ jobs:
         run: |
           app=$(find dist -maxdepth 2 -name flusso-journal -type f -print -quit)
           test -n "$app"
-          xvfb-run -a "$app" --smoke-test > "$FLUSSO_DESKTOP_SMOKE_FILE"
+          if xvfb-run -a "$app" --enable-logging=stderr --smoke-test > "$FLUSSO_DESKTOP_SMOKE_FILE" 2>&1; then
+            cat "$FLUSSO_DESKTOP_SMOKE_FILE"
+          else
+            result=$?
+            cat "$FLUSSO_DESKTOP_SMOKE_FILE"
+            exit "$result"
+          fi
       - name: Require packaged native smoke receipt
         shell: bash
         run: |
