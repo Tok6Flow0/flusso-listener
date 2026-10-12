@@ -141,6 +141,13 @@ before enabling **Auto-trade** and saving. These local limits are ceilings, not
 an allocation or a server-persisted trading policy. Optional slippage and volume
 conditions can tighten each order. The app never raises account or venue leverage.
 
+Auto-trade is a Flusso Automate and Pro feature, and Flusso enforces it on its
+servers, not in this app. Every order placed through a connected AI or app,
+this listener included, counts toward your plan's daily allowance of order legs
+(Trader 10, Automate 100, Pro 500). Orders you place in Flusso itself don't
+count, and cancels and closes are never limited. If an allowance or plan check
+refuses a ticket, Activity shows why and nothing was placed.
+
 Execution requires an explicit `flusso-orders` Markdown code fence in a new
 in-scope entry with status `watching`. Its JSON contains `id`, optional
 `together`, and an `orders` array. Give every intended submission a unique stable
