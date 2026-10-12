@@ -26,7 +26,7 @@ module.exports = {
   extraMetadata: { flussoReleaseChannel: channel, flussoAutoUpdateEnabled: production },
   asar: { unpack: ['**/*.node', '**/*.dylib', '**/*.so', '**/*.dll'] },
   nativeModules: { npmRebuild: true, buildDependenciesFromSource: false, verifyNativeBinaries: true },
-  toolsets: { winCodeSign: '1.3.0', appimage: '1.1.0', nsis: '1.2.1', sevenZip: '1.0.1', icons: '1.2.3' },
+  toolsets: { winCodeSign: '1.3.0', appimage: '1.1.0', fpm: '2.2.1', nsis: '1.2.1', sevenZip: '1.0.1', icons: '1.2.3' },
   generateUpdatesFilesForAllChannels: false,
   updateManifest: {},
   publish: [{
@@ -53,5 +53,7 @@ module.exports = {
     oneClick: false, perMachine: false, allowElevation: false,
     allowToChangeInstallationDirectory: true, deleteAppDataOnUninstall: false,
   },
-  linux: { target: ['AppImage'], icon: 'build/icons', category: 'Office;Finance', executableName: 'flusso-journal' },
+  linux: { target: ['AppImage', 'deb'], icon: 'build/icons', category: 'Office;Finance', executableName: 'flusso-journal' },
+  // Reuse builder's AppArmor/SUID postinstall so Ubuntu can keep Chromium sandboxing enabled.
+  deb: { maintainer: 'Flusso <support@flusso.stream>', depends: ['default', 'libgbm1'] },
 };

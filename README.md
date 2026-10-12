@@ -20,8 +20,10 @@ Choose the account control at the bottom left to connect, disconnect, open accou
 The first version, **0.2.0-preview.1**, is an unsigned preview. Review the release's platform requirements and signing status. Preview automatic updates are disabled; signed production updates have a check, download, and restart flow that requires your clicks. Do not disable OS signature protections. See [desktop release details](docs/desktop-releases.md).
 
 Use an unlocked OS credential store: macOS Keychain, Windows Credential Manager,
-or Linux Secret Service (GNOME Keyring or KWallet). Linux AppImage builds also
-need the desktop's AppImage/FUSE support. The app refuses plaintext credentials.
+or Linux Secret Service (GNOME Keyring or KWallet). On Ubuntu 24.04, use the DEB
+installer; it configures Chromium's sandbox through the standard package lifecycle.
+AppImage builds require compatible AppImage/FUSE and sandbox support on your
+distribution. The app refuses plaintext credentials.
 Closing the window keeps the app and opted-in Listener in the tray; choose
 **Quit Journal and stop Listener** to stop it. The computer must remain awake.
 Open-at-login is optional on macOS and Windows; Linux uses its desktop's startup settings.

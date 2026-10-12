@@ -175,13 +175,21 @@ jobs:
           if (-not $app) { throw 'Missing packaged Windows app.' }
           $process = Start-Process -FilePath $app.FullName -ArgumentList '--smoke-test' -RedirectStandardOutput $env:FLUSSO_DESKTOP_SMOKE_FILE -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw 'Packaged app smoke failed.' }
-      - name: Smoke-test packaged Linux app
+      - name: Install the native Linux package
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          package=$(find dist -maxdepth 1 -name '*.deb' -type f -print -quit)
+          test -n "$package"
+          sudo apt-get install -y "./$package"
+          test -x '/opt/Flusso Journal/flusso-journal'
+          stat -c '%U %a %n' '/opt/Flusso Journal/chrome-sandbox'
+      - name: Smoke-test installed Linux app
         if: runner.os == 'Linux'
         timeout-minutes: 3
         shell: bash
         run: |
-          app=$(find dist -maxdepth 2 -name flusso-journal -type f -print -quit)
-          test -n "$app"
+          app='/opt/Flusso Journal/flusso-journal'
           if xvfb-run -a "$app" --enable-logging=stderr --smoke-test > "$FLUSSO_DESKTOP_SMOKE_FILE" 2>&1; then
             cat "$FLUSSO_DESKTOP_SMOKE_FILE"
           else
@@ -195,7 +203,9 @@ jobs:
           node --input-type=module <<'NODE'
           import { readFileSync } from 'node:fs';
           const receipts = readFileSync(process.env.FLUSSO_DESKTOP_SMOKE_FILE, 'utf8').split('\n').flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } });
-          if (!receipts.some(r => r.smoke === 'passed' && r.runtime === 'b11559' && r.electron === '44.7.0' && r.node === '24.21.0' && r.platform === process.platform && r.arch === process.arch)) throw new Error('Packaged app did not produce the required native smoke receipt.');
+          const receipt = receipts.find(r => r.smoke === 'passed' && r.runtime === 'b11559' && r.electron === '44.7.0' && r.node === '24.21.0' && r.platform === process.platform && r.arch === process.arch);
+          if (!receipt) throw new Error('Packaged app did not produce the required native smoke receipt.');
+          console.log(JSON.stringify({ smoke: receipt.smoke, runtime: receipt.runtime, electron: receipt.electron, node: receipt.node, platform: receipt.platform, arch: receipt.arch }));
           console.log('Packaged Electron, SQLite, keyring and inference runtime smoke passed.');
           NODE
       - name: Verify macOS production signature and notarization
@@ -224,6 +234,7 @@ jobs:
             dist/*.zip
             dist/*.exe
             dist/*.AppImage
+            dist/*.deb
             dist/*.blockmap
             dist/preview-*.yml
             dist/latest-*.yml

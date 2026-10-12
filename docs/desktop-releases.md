@@ -15,11 +15,15 @@ build does not establish that a release has been published or installed.
 | --- | --- | --- |
 | macOS 13.3 or later | Apple silicon and Intel | DMG and ZIP |
 | Windows | ARM64 and x64 | Per-user NSIS EXE |
-| Linux desktop | ARM64 and x64 | AppImage |
+| Linux desktop | ARM64 and x64 | DEB (Ubuntu 24.04) and optional AppImage |
 
 Linux needs an unlocked Secret Service such as GNOME Keyring or KWallet. The app
 does not substitute a plaintext credential file. Windows installs without
 administrator privileges. Uninstalling does not erase the existing Journal.
+On Ubuntu 24.04, install the DEB through your package manager. Its standard
+postinstall configures Chromium's sandbox and AppArmor profile. AppImage requires
+compatible FUSE and sandbox support; it is not the recommended Ubuntu installer.
+Never disable the Chromium sandbox or the operating system's security controls.
 
 ## Preview status
 
@@ -130,3 +134,6 @@ an in-memory SQLite query inside the bundled Electron Node runtime. This checks
 native compatibility; an unlocked real OS vault and end-to-end browser consent
 still need testing in the installed app on each supported system. No release
 check submits a real trade.
+Linux CI installs the DEB and runs the installed application with sandboxing
+enabled. The optional AppImage is built and checked against its signed update
+manifest, but is not the Linux runtime smoke-test target.
