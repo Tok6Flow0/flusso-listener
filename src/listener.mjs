@@ -30,6 +30,7 @@ export function createListener({ store, cloud, buildRunRequest, classify = class
       let settings = store.settings(); state.lastError = null;
       if (settings.source !== 'local') {
         const snapshot = await cloud.readJournal({ notebookIds: settings.notebookIds });
+        if (activeAbort.signal.aborted || !store.settings().enabled || store.settings().version !== settings.version) return;
         store.importCloud(snapshot);
         state.cloudComplete = snapshot.complete; state.cloudReason = snapshot.reason ?? null;
         // First connection/import is a baseline, not an instruction to trade old notes.

@@ -77,13 +77,15 @@ before(async () => {
 after(async () => { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); });
 beforeEach(() => { requests = []; mode = ''; refreshCount = 0; authorizationUrl = null; releaseToken = null; tokenStarted = null; });
 
-function client({ expiresAt = now + 3600000, connected = true, callbackIssuer = origin, callbackState = null } = {}) {
+function client({ expiresAt = now + 3600000, connected = true, callbackIssuer = origin, callbackState = null, afterResponse = async () => {} } = {}) {
   const values = new Map();
   if (connected) values.set(`flusso.listener.oauth:${origin}`, JSON.stringify({ clientId: 'synthetic-local-client', tokenEndpoint: `${origin}/oauth/token`, accessToken: 'synthetic-access-token', refreshToken: 'synthetic-refresh-token', expiresAt, scopes: ['mcp:read', 'mcp:write', 'offline_access'] }));
   const vault = { get: async (name) => values.get(name) ?? null, set: async (name, value) => { values.set(name, value); }, delete: async (name) => { values.delete(name); } };
   const fetchImpl = async (url, options) => {
     assert.equal(new URL(url).origin, origin, 'Credentials never leave the configured HTTPS origin');
-    return fetch(`${local}${new URL(url).pathname}`, options);
+    const result = await fetch(`${local}${new URL(url).pathname}`, options);
+    await afterResponse(url, options);
+    return result;
   };
   const cloud = createCloudClient({ origin, vault, fetchImpl, clock: () => now });
   const browser = {
@@ -188,6 +190,39 @@ test('a delayed refresh cannot restore credentials after Disconnect', async () =
   await rejected;
   assert.equal((await cloud.status()).connected, false);
   assert.equal(requests.some((request) => request.path === '/mcp'), false);
+});
+
+test('a final Journal response from an old connection is discarded after disconnect or reconnect', async () => {
+  for (const reconnect of [false, true]) {
+    let release, started;
+    const ready = new Promise((resolve) => { started = resolve; });
+    const delayed = new Promise((resolve) => { release = resolve; });
+    const { cloud, browser } = client({ afterResponse: async (url, options) => {
+      if (new URL(url).pathname !== '/mcp') return;
+      const args = JSON.parse(options.body).params.arguments;
+      if (args.operationId === 'listJournalEntries' && args.query.cursor === 'page-two') { started(); await delayed; }
+    } });
+    const pending = cloud.readJournal();
+    const rejected = assert.rejects(pending, { code: 'connection_changed' });
+    await ready; await cloud.disconnect();
+    if (reconnect) await cloud.beginConnect(browser);
+    release(); await rejected;
+    assert.equal((await cloud.status()).connected, reconnect);
+  }
+});
+
+test('an old confirmed-policy response cannot return authority after disconnect', async () => {
+  let release, started;
+  const ready = new Promise((resolve) => { started = resolve; });
+  const delayed = new Promise((resolve) => { release = resolve; });
+  const { cloud } = client({ afterResponse: async (url, options) => {
+    if (new URL(url).pathname === '/mcp' && JSON.parse(options.body).params.arguments.confirmed) { started(); await delayed; }
+  } });
+  const preview = await cloud.previewPolicy({ accountId, policy, idempotencyKey: key });
+  const pending = cloud.confirmPolicy(preview.previewId);
+  const rejected = assert.rejects(pending, { code: 'connection_changed' });
+  await ready; await cloud.disconnect(); release(); await rejected;
+  assert.equal(requests.filter((request) => request.body?.params?.arguments?.confirmed).length, 1);
 });
 
 test('Journal full pagination preserves later edits to old entries', async () => {

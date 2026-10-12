@@ -86,7 +86,13 @@ export async function startServer({ store, cloud, listener, port = 0, open = ope
       }
       if (url.pathname === '/api/check' && request.method === 'POST') { object(input, []); await listener.tick(); return reply(200, listener.status()); }
       if (url.pathname === '/api/sync' && request.method === 'POST') {
-        object(input, []); const snapshot = await cloud.readJournal({ notebookIds: [] }); store.importCloud(snapshot); return reply(200, { complete: snapshot.complete, reason: snapshot.reason ?? null, asOfUtc: snapshot.asOfUtc });
+        object(input, []);
+        if (connectPending) throw new InputError('Complete the current browser connection before syncing the Journal.', 409);
+        const generation = connectionGeneration, connection = await cloud.status();
+        const snapshot = await cloud.readJournal({ notebookIds: [] });
+        requireStableConnection(generation, connection, await cloud.status());
+        store.importCloud(snapshot);
+        return reply(200, { complete: snapshot.complete, reason: snapshot.reason ?? null, asOfUtc: snapshot.asOfUtc });
       }
       if (url.pathname === '/api/notebooks' && request.method === 'POST') { object(input, ['name']); return reply(201, store.createNotebook(input.name)); }
       if (url.pathname === '/api/entries' && request.method === 'POST') return reply(201, store.createEntry(input, request.headers['idempotency-key'] ?? randomUUID()));

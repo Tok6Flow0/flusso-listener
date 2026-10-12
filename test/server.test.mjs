@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { startServer } from '../src/server.mjs';
-import { workspace, fakeCloud, note, accountId, authorizationId, policy } from './helpers.mjs';
+import { workspace, fakeCloud, note, accountId, authorizationId, policy, notebookId, now } from './helpers.mjs';
 
 async function appFixture(cloudOverrides = {}) {
   const w = await workspace(), grant = { schemaVersion: 'product.prompt_trading_authorization.v1', accountId, authorizationId, status: 'active', policy, policyHash: 'a'.repeat(64) };
@@ -61,6 +61,7 @@ test('pending browser connection refuses settings and policy mutations and finis
     assert.equal((await w.post('/api/settings', settingsBody(w.store, { enabled: true, executionEnabled: true, accountId, authorizationId }))).status, 409);
     assert.equal((await w.post('/api/policy/preview', { accountId, policy })).status, 409);
     assert.equal((await w.post('/api/policy/approve', { previewId: 'test-preview' })).status, 409);
+    assert.equal((await w.post('/api/sync', {})).status, 409);
     finish.resolve(); assert.equal((await connecting).status, 200);
     assert.equal(w.store.settings().enabled, false); assert.equal(w.store.settings().executionEnabled, false);
     assert.equal(w.store.settings().authorizationId, null); assert.equal(w.store.settings().policy, null);
@@ -99,4 +100,26 @@ test('disconnect cancels pending browser connection without restoring authority'
     finish.resolve(); assert.equal((await connecting).status, 409);
     assert.equal(w.store.settings().executionEnabled, false); assert.equal(w.store.settings().authorizationId, null);
   } finally { finish.resolve(); await w.close(); }
+});
+
+test('manual sync never imports an old account snapshot after reconnect or disconnect', async () => {
+  for (const change of ['connect', 'disconnect']) {
+    const started = deferred(), finish = deferred(); let clientId = 'fixture-client', connected = true;
+    const w = await appFixture({
+      status: async () => ({ connected, clientId }),
+      readJournal: async () => {
+        started.resolve(); await finish.promise;
+        return { notebooks: [{ id: notebookId, name: 'Old account research', version: 1 }], entries: [{ ...note(w.store), id: accountId, notebookId, version: 1, createdAtUtc: new Date(now).toISOString(), updatedAtUtc: new Date(now).toISOString() }], complete: true };
+      },
+      beginConnect: async () => { clientId = 'replacement-client'; return { connected, clientId }; },
+      disconnect: async () => { connected = false; },
+    });
+    try {
+      await w.unlock(); const syncing = w.post('/api/sync', {}); await started.promise;
+      assert.equal((await w.post('/api/' + change, {})).status, 200);
+      finish.resolve(); assert.equal((await syncing).status, 409);
+      assert.equal(w.store.entries().length, 0);
+      assert.equal(w.store.notebooks().some(row => row.origin === 'cloud'), false);
+    } finally { finish.resolve(); await w.close(); }
+  }
 });

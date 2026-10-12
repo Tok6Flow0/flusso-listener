@@ -144,6 +144,7 @@ export function createCloudClient({ origin = 'https://flusso.stream', vault, fet
   const previews = new Map();
   let refreshPending = null; let connectionPending = false; let credentialGeneration = 0;
   let vaultWrites = Promise.resolve();
+  const requireGeneration = (generation) => { if (generation !== credentialGeneration) fail('connection_changed', 'This connection changed while the request was in progress.'); };
   const bundle = async () => { const value = await vault.get(vaultName); return value ? parseJson(value) : null; };
   const writeVault = (action) => { const next = vaultWrites.catch(() => {}).then(action); vaultWrites = next; return next; };
   const save = (value, generation) => writeVault(async () => {
@@ -196,6 +197,7 @@ export function createCloudClient({ origin = 'https://flusso.stream', vault, fet
     if (credentials.generation !== credentialGeneration) fail('connection_changed', 'This connection changed while the request was in progress.');
     const requestId = randomUUID();
     const { response, text } = await request(`${origin}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${credentials.accessToken}`, 'mcp-protocol-version': '2025-06-18' }, body: JSON.stringify({ jsonrpc: '2.0', id: requestId, method: 'tools/call', params: { name, arguments: args } }) });
+    requireGeneration(credentials.generation);
     if (!response.ok) fail(response.status === 401 || response.status === 403 ? 'connection_denied' : 'cloud_unavailable', 'Flusso could not complete this request.', response.status);
     const rpc = rpcPayload(text, response.headers.get('content-type') ?? '', requestId);
     if (rpc.jsonrpc !== '2.0' || rpc.id !== requestId || rpc.error || !object(rpc.result)) fail('mcp_response_invalid', 'Flusso returned an invalid tool response.');
@@ -297,9 +299,12 @@ export function createCloudClient({ origin = 'https://flusso.stream', vault, fet
   }
 
   async function readJournal({ notebookIds = [] } = {}) {
+    const generation = credentialGeneration;
     if (!Array.isArray(notebookIds) || notebookIds.length > 200 || notebookIds.some((value) => !UUID.test(value))) fail('journal_selection_invalid', 'Select owned notebook identifiers.');
     await requireOperations(['listJournalNotebooks', 'listJournalEntries']);
+    requireGeneration(generation);
     const notebooks = unwrap(await read('listJournalNotebooks'));
+    requireGeneration(generation);
     if (notebooks.schemaVersion !== 'product.journal_notebooks.v1' || !Array.isArray(notebooks.rows) || notebooks.rows.some((row) => !UUID.test(row?.id ?? ''))) fail('journal_response_invalid', 'Flusso returned an invalid notebook list.');
     if (notebookIds.some((selected) => !notebooks.rows.some((row) => equalId(row.id, selected)))) fail('journal_selection_missing', 'A selected notebook is unavailable in this account.');
     const entries = new Map(); let asOfUtc = notebooks.asOfUtc; let pages = 0;
@@ -309,6 +314,7 @@ export function createCloudClient({ origin = 'https://flusso.stream', vault, fet
       while (true) {
         if (pages++ >= MAX_PAGES) return { notebooks: selectedNotebooks, entries: [...entries.values()], complete: false, asOfUtc, reason: 'The selection exceeds the bounded 50-page Journal scan. Execution stays paused until the selected notebooks can be scanned completely.' };
         const result = unwrap(await read('listJournalEntries', null, { limit: 100, ...(notebookId ? { notebookId } : {}), ...(cursor ? { cursor } : {}) }));
+        requireGeneration(generation);
         if (result.schemaVersion !== 'product.journal_entries.v1' || !Array.isArray(result.rows) || result.rows.length > 100 || typeof result.hasMore !== 'boolean'
           || result.hasMore !== (typeof result.nextCursor === 'string' && result.nextCursor.length > 0)
           || result.nextCursor != null && (result.nextCursor.length > 2048 || seen.has(result.nextCursor))) fail('journal_response_invalid', 'Flusso returned an invalid Journal page.');

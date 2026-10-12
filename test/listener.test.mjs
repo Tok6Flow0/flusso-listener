@@ -46,3 +46,23 @@ test('first cloud sync baselines imported notes; a changed old note is discovere
   try { enable(w.store, { source: 'cloud', executionEnabled: false }); listener.start(); await listener.tick(); assert.equal(classifications, 0); revision = 2; await listener.tick(); assert.equal(classifications, 1); await listener.tick(); assert.equal(classifications, 1); }
   finally { listener.stop(); await w.close(); }
 });
+
+test('an interrupted cloud check discards its late snapshot before importing or baselining notes', async () => {
+  const w = await workspace(); let release, started;
+  const ready = new Promise(resolve => { started = resolve; });
+  const delayed = new Promise(resolve => { release = resolve; });
+  const cloudEntry = { ...note(w.store), id: '00000000-0000-4000-8000-000000000004', notebookId, version: 1, createdAtUtc: new Date(now).toISOString(), updatedAtUtc: new Date(now).toISOString(), signal: null };
+  const listener = createListener({ store: w.store, cloud: fakeCloud({ readJournal: async () => {
+    started(); await delayed;
+    return { notebooks: [{ id: notebookId, name: 'Old connection', version: 1 }], entries: [cloudEntry], complete: true };
+  } }), buildRunRequest, classify: candidate, clock: () => now });
+  try {
+    enable(w.store, { source: 'cloud' }); listener.start(); const checking = listener.tick(); await ready;
+    enable(w.store, { enabled: false, executionEnabled: false }); listener.refresh();
+    release(); await checking;
+    assert.equal(w.store.entries().length, 0);
+    assert.equal(w.store.notebooks().some(row => row.origin === 'cloud'), false);
+    assert.equal(w.store.get('sync', 'baseline'), null);
+    assert.equal(w.store.all('attempt').length, 0);
+  } finally { release(); listener.stop(); await w.close(); }
+});
