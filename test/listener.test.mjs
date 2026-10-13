@@ -54,6 +54,75 @@ test('a setup gap leaves the ticket unactioned until it is fixed, then it is dec
     assert.equal(calls, 1); assert.equal(w.store.entry(entry.id).status, 'reviewed');
   } finally { listener.stop(); await w.close(); }
 });
+test('a failed connection status read leaves an unclaimed ticket available for the next check', async () => {
+  const w = await workspace(); let checks = 0, calls = 0;
+  const cloud = fakeCloud({
+    status: async () => {
+      if (++checks === 1) throw new Error('Synthetic temporary vault failure.');
+      return { connected: true, clientId: 'fixture-client', scopes: ['mcp:read', 'mcp:write'] };
+    },
+    submitOrders: async ({ orders }) => { calls++; return sent(orders); },
+  });
+  const listener = createListener({ store: w.store, cloud, classify: noModel, clock: () => now });
+  try {
+    enable(w.store); listener.start();
+    const entry = w.store.createEntry(note(w.store, { body: ticket({ id: 'connection-recovers' }) }));
+    await listener.tick();
+    assert.equal(calls, 0); assert.equal(w.store.all('attempt').length, 0);
+    assert.equal(w.store.get('checkpoint', `local:${entry.id}`), null);
+    assert.equal(w.store.entry(entry.id).status, 'watching');
+    assert.equal(w.store.all('activity')[0].status, 'waiting');
+    assert.match(w.store.all('activity')[0].reason, /connection status is temporarily unavailable/);
+    await listener.tick(); await listener.tick();
+    assert.equal(calls, 1); assert.equal(w.store.all('attempt').length, 1);
+    assert.equal(w.store.entry(entry.id).status, 'reviewed');
+  } finally { await listener.stop(); await w.close(); }
+});
+test('a settings refresh during the pre-claim status read leaves the ticket waiting for current settings', async () => {
+  const w = await workspace(), started = deferred(), finish = deferred(); let checks = 0, calls = 0;
+  const cloud = fakeCloud({
+    status: async () => {
+      if (++checks === 1) { started.resolve(); await finish.promise; }
+      return { connected: true, clientId: 'fixture-client', scopes: ['mcp:read', 'mcp:write'] };
+    },
+    submitOrders: async ({ orders }) => { calls++; return sent(orders); },
+  });
+  const listener = createListener({ store: w.store, cloud, classify: noModel, clock: () => now });
+  try {
+    enable(w.store); listener.start();
+    const entry = w.store.createEntry(note(w.store, { body: ticket({ id: 'settings-refresh' }) }));
+    const checking = listener.tick(); await started.promise;
+    enable(w.store, { executionEnabled: false }); listener.refresh(); finish.resolve(); await checking;
+    assert.equal(calls, 0); assert.equal(w.store.all('attempt').length, 0);
+    assert.equal(w.store.get('checkpoint', `local:${entry.id}`), null);
+    assert.equal(w.store.entry(entry.id).status, 'watching');
+    assert.match(w.store.all('activity')[0].reason, /settings changed before dispatch/);
+    await listener.tick(); assert.equal(calls, 0, 'The current off setting is enforced.');
+    enable(w.store); listener.refresh(); await listener.tick(); await listener.tick();
+    assert.equal(calls, 1); assert.equal(w.store.all('attempt').length, 1);
+  } finally { finish.resolve(); await listener.stop(); await w.close(); }
+});
+test('stopping during the pre-claim status read does not consume the ticket on restart', async () => {
+  const w = await workspace(), started = deferred(), finish = deferred(); let checks = 0, calls = 0;
+  const cloud = fakeCloud({
+    status: async () => {
+      if (++checks === 1) { started.resolve(); await finish.promise; }
+      return { connected: true, clientId: 'fixture-client', scopes: ['mcp:read', 'mcp:write'] };
+    },
+    submitOrders: async ({ orders }) => { calls++; return sent(orders); },
+  });
+  const listener = createListener({ store: w.store, cloud, classify: noModel, clock: () => now });
+  try {
+    enable(w.store); listener.start();
+    const entry = w.store.createEntry(note(w.store, { body: ticket({ id: 'stopped-before-claim' }) }));
+    const checking = listener.tick(); await started.promise;
+    const stopping = listener.stop(); finish.resolve(); await stopping; await checking;
+    assert.equal(calls, 0); assert.equal(w.store.all('attempt').length, 0);
+    assert.equal(w.store.get('checkpoint', `local:${entry.id}`), null);
+    listener.start(); await listener.tick(); await listener.tick();
+    assert.equal(calls, 1); assert.equal(w.store.all('attempt').length, 1);
+  } finally { finish.resolve(); await listener.stop(); await w.close(); }
+});
 test('a refused ticket is noted as not placed, and write-back can be turned off', async () => {
   const w = await workspace();
   const listener = createListener({ store: w.store, cloud: fakeCloud(), classify: noModel, clock: () => now });

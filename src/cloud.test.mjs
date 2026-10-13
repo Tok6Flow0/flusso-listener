@@ -43,6 +43,7 @@ before(async () => {
     if (req.url !== '/mcp') { response(res, {}, 404); return; }
     if (mode === 'mcp-denied') { response(res, {}, 401); return; }
     const rpc = requestBody; const args = rpc.params.arguments;
+    if (rpc.params.name === 'list_flusso_capabilities' && mode === 'capabilities-lost') { req.socket.destroy(); return; }
     if (rpc.params.name === 'list_flusso_capabilities') { tool(res, rpc, { schemaVersion: 'flusso.mcp_capabilities.v1', operations: operations.filter((operationId) => mode !== 'orders-unavailable' || operationId !== 'submitManualFuturesLimitOrder').map((operationId) => ({ operationId })) }); return; }
     switch (args.operationId) {
       case 'getProfile': tool(res, rpc, success({ schemaVersion: 'product.profile.v1', profile: { id: accountId, fullName: mode === 'profile-blank' ? '  ' : mode === 'profile-invalid' ? 'Unsafe\nname' : 'Research Owner', email: 'owner@example.test', phoneNumber: 'private synthetic phone', dateOfBirth: '1990-01-01' }, security: { mfaEnabled: true }, sessions: [{ id: entryId }] })); return;
@@ -55,6 +56,7 @@ before(async () => {
       case 'getTradingAccountResource': tool(res, rpc, success({ schemaVersion: 'canonical_orders.v1', accountId, rows: [{ id: otherEntryId, instrumentId: notebookId, externalOrderId: 'venue-order', side: 'sell', requestedQuantity: orders[1].quantity, limitPrice: orders[1].limitPrice, status: mode === 'readback-pending-no-venue' ? 'pending' : 'filled', ...(mode === 'readback-pending-no-venue' ? { externalOrderId: '' } : {}) }], hasMore: false, nextCursor: null })); return;
       case 'submitManualFuturesLimitOrder':
         if (!args.confirmed) {
+          if (mode === 'preview-lost') { req.socket.destroy(); return; }
           if (mode === 'orders-plan') { tool(res, rpc, { error: 'operation_not_available', operationId: args.operationId }); return; }
           tool(res, rpc, { schemaVersion: 'flusso.mcp_confirmation.v1', confirmationRequired: true, confirmationToken: 'synthetic-order-token', expiresAtUtc: '2026-10-12T02:05:30Z', operation: { operationId: args.operationId }, request: { method: mode === 'preview-method' ? 'DELETE' : 'POST', path: `/api/v1/me/trading-accounts/${accountId}/manual-orders`, query: null, headers: { 'Idempotency-Key': mode === 'preview-key' ? 'another-key' : args.headers['Idempotency-Key'] }, body: mode === 'preview-body' ? { ...args.body, orders: [] } : args.body }, effect: { liveTradingRequested: mode !== 'preview-effect', destructive: true } }); return;
         }
@@ -287,6 +289,17 @@ test('plan, scope and product refusals are definitive and send nothing further',
     const result = await client().cloud.submitOrders({ accountId, orders, idempotencyKey: key });
     assert.equal(result.status, 'blocked'); assert.ok(result.message);
     assert.equal(requests.filter((request) => request.body?.params?.arguments?.confirmed).length, refusal === 'orders-refused' ? 1 : 0);
+  }
+});
+
+test('lost access checks and previews are definitively unsent, never unresolved orders', async () => {
+  for (const failure of ['capabilities-lost', 'preview-lost', 'mcp-denied']) {
+    mode = failure; requests = [];
+    const result = await client().cloud.submitOrders({ accountId, orders, idempotencyKey: key });
+    assert.equal(result.status, 'blocked');
+    assert.match(result.message, /No order was sent/);
+    assert.deepEqual(result.lines, []);
+    assert.equal(requests.some(request => request.body?.params?.arguments?.confirmed), false);
   }
 });
 

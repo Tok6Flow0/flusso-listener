@@ -314,7 +314,11 @@ export function createCloudClient({ origin = 'https://flusso.stream', vault, fet
     if (!Array.isArray(orders) || orders.length < 1 || orders.length > 6000) fail('orders_invalid', 'A ticket needs at least one order.');
     const blocked = (message) => ({ status: 'blocked', lines: [], message });
     try { await requireOperations(['submitManualFuturesLimitOrder']); }
-    catch (error) { if (error instanceof CloudError && error.code === 'operation_unavailable') return blocked('Your Flusso connection cannot place orders. Reconnect with write access and check that your plan includes live trading.'); throw error; }
+    catch (error) {
+      return blocked(error instanceof CloudError && error.code === 'operation_unavailable'
+        ? 'Your Flusso connection cannot place orders. Reconnect with write access and check that your plan includes live trading.'
+        : 'Flusso could not check order access. No order was sent. Check your connection before creating another ticket.');
+    }
     const args = {
       operationId: 'submitManualFuturesLimitOrder', pathParameters: { id: accountId }, headers: { 'Idempotency-Key': idempotencyKey },
       body: { schemaVersion: 'product.manual_order_request.v3', orders, confirmation: {
@@ -324,7 +328,9 @@ export function createCloudClient({ origin = 'https://flusso.stream', vault, fet
         rollbackPath: 'Cancel open orders or close the resulting positions in Flusso.' } },
     };
     // A preview sends nothing, so its failures are definitive refusals.
-    const preview = await mcp('act_in_flusso', args);
+    let preview;
+    try { preview = await mcp('act_in_flusso', args); }
+    catch { return blocked('Flusso could not prepare the order preview. No order was sent. Check your connection before creating another ticket.'); }
     if (preview.error === 'operation_not_available') return blocked('Your Flusso plan or connection does not allow placing orders.');
     if (preview.schemaVersion !== 'flusso.mcp_confirmation.v1' || preview.confirmationRequired !== true || typeof preview.confirmationToken !== 'string'
       || preview.operation?.operationId !== args.operationId || preview.request?.method !== 'POST'

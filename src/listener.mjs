@@ -99,6 +99,10 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
     // A setup gap is not a decision about the ticket: it stays unactioned and is
     // decided once the gap closes, as long as it is still inside the action window.
     const wait = reason => { store.put('activity', activity.id, { ...activity, status: 'waiting', reason: `${reason} The ticket will be decided once this is fixed.` }); return 'retry'; };
+    const pauseBeforeClaim = () => {
+      wait('Listener settings changed before dispatch. No order was sent.');
+      return 'retry-stop';
+    };
     const refuse = async reason => {
       hold(reason);
       if (!await noteResult(entry, { status: 'review', reason })) store.put('activity', activity.id, { ...activity, status: 'review', reason: `${reason} The result could not be noted on the Journal entry.` });
@@ -113,11 +117,13 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
     const recent = store.all('attempt').filter(row => row.kind === 'orders' && Date.parse(row.atUtc) > since).length;
     if (recent >= (settings.maxTicketsPerDay ?? 24)) return refuse(`Daily limit reached: ${recent} tickets in the last 24 hours.`);
     if (!reconciled || (state.cloudComplete === false && entry.origin === 'cloud')) { store.put('activity', activity.id, { ...activity, status: 'waiting', reason: 'Waiting for a previous result or a complete cloud read. It will be tried again.' }); return 'retry'; }
-    if (!settings.enabled || settings.version !== settingsVersion || activeAbort.signal.aborted) return 'stop';
+    if (!settings.enabled || settings.version !== settingsVersion || activeAbort.signal.aborted) return pauseBeforeClaim();
     const idempotencyKey = 'listener-' + createHash('sha256').update(`${settings.listenerId}:${settings.accountId}:${request.signalIdentity}`).digest('hex');
-    const connection = await cloud.status();
+    let connection;
+    try { connection = await cloud.status(); }
+    catch { return wait('Flusso connection status is temporarily unavailable. No order was sent.'); }
     if (!connection.connected || !connection.scopes.includes('mcp:write')) return wait('Connect Flusso with write access.');
-    if (activeAbort.signal.aborted || store.settings().version !== settingsVersion) return 'stop';
+    if (activeAbort.signal.aborted || store.settings().version !== settingsVersion) return pauseBeforeClaim();
     const reference = request.ticketId ? `ticket ${request.ticketId}` : `Journal entry ${entry.id}`;
     const attempt = { id: idempotencyKey, kind: 'orders', signalIdentity: request.signalIdentity, idempotencyKey, accountId: settings.accountId, clientId: connection.clientId, connectionId: connection.connectionId ?? null, orders: structuredClone(request.orders), reference, ticketId: request.ticketId, entryId: entry.id, origin: entry.origin, title: entry.title, version: entry.version, status: 'pending', retries: 0, atUtc: activity.atUtc };
     if (!store.claimAttempt(attempt)) return refuse('This ticket was already placed. Editing or copying the entry does not place it again.');
@@ -167,8 +173,8 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
           store.put('activity', activity.id, { ...activity, decision: 'ticket', status: 'observed', reason: 'Order ticket found.' });
           store.put('checkpoint', key, { version: entry.version, state: 'observed', atUtc });
           const outcome = await placeTicket({ entry, request, activity: { ...activity, decision: 'ticket' }, settingsVersion, reconciled });
-          if (outcome === 'retry') store.delete('checkpoint', key); // Held, not decided: read it again next check.
-          if (outcome === 'stop') break;
+          if (outcome === 'retry' || outcome === 'retry-stop') store.delete('checkpoint', key); // No attempt was claimed: read it again next check.
+          if (outcome === 'stop' || outcome === 'retry-stop') break;
           continue;
         }
         let decision;
