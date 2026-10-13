@@ -22,6 +22,7 @@
     "desktop:pack": "electron-builder --config electron-builder.cjs --dir --publish never",
     "desktop:dist": "electron-builder --config electron-builder.cjs --publish never",
     "journal": "node src/cli.mjs journal",
+    "replay": "node scripts/replay-listener.mjs",
     "test": "node --test test/*.test.mjs src/*.test.mjs",
     "check": "node --check src/cli.mjs && node --check public/app.mjs && npm test"
   },

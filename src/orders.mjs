@@ -15,7 +15,7 @@ const TOGETHER_LEAD_MS = 3000;
 
 function plain(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 function positive(value) { return typeof value === 'number' && Number.isFinite(value) && value > 0; }
-const review = (reason) => ({ eligible: false, reason });
+const review = (reason, reasonCode) => ({ eligible: false, reason, reasonCode });
 
 /** Returns null when the entry has no ticket; otherwise the parsed ticket or a reason it cannot run. */
 export function readTicket(body) {
@@ -78,15 +78,15 @@ export function applyRisk(orders, risk = DEFAULT_RISK) {
 export function buildOrderRequest({ entry, settings, now = Date.now() }) {
   const parsed = readTicket(entry?.body);
   if (!parsed) return null;
-  if (parsed.error) return review(parsed.error);
-  if (entry.status !== 'watching') return review('Set the entry to watching to place its ticket.');
+  if (parsed.error) return review(parsed.error, 'malformed_ticket');
+  if (entry.status !== 'watching') return review('Set the entry to watching to place its ticket.', 'inactive_ticket');
   const maximumAge = settings.maxSignalAgeSeconds ?? 900;
   const written = Date.parse(entry.updatedAtUtc ?? entry.createdAtUtc);
-  if (!Number.isFinite(written) || written > now + 60000 || now - written > maximumAge * 1000) return review('This ticket is older than your signal age limit, so it was not placed.');
+  if (!Number.isFinite(written) || written > now + 60000 || now - written > maximumAge * 1000) return review('This ticket is older than your signal age limit, so it was not placed.', 'stale_ticket');
   const { ticket } = parsed;
   const risk = settings.risk ?? DEFAULT_RISK;
-  if (!positive(risk.maxOrderUsd) || !positive(risk.maxTicketUsd) || !positive(risk.maxLeverage) || risk.maxLeverage < 1) return review('Choose explicit maximum order, ticket notional and leverage limits before execution.');
-  if (perOrderCap(ticket.orders, risk) < 0.01) return review('The ticket ceiling cannot allocate at least one cent to each order.');
+  if (!positive(risk.maxOrderUsd) || !positive(risk.maxTicketUsd) || !positive(risk.maxLeverage) || risk.maxLeverage < 1) return review('Choose explicit maximum order, ticket notional and leverage limits before execution.', 'missing_risk_limits');
+  if (perOrderCap(ticket.orders, risk) < 0.01) return review('The ticket ceiling cannot allocate at least one cent to each order.', 'ticket_ceiling_too_small');
   const orders = applyRisk(ticket.orders, risk);
   if ((ticket.together ?? settings.risk?.together ?? true) && orders.length > 1) {
     const placeAtUtc = new Date(now + TOGETHER_LEAD_MS).toISOString();

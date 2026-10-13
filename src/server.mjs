@@ -6,6 +6,7 @@ import { InputError, ID, object, settingsInput, text, THEMES } from './schema.mj
 import { listenCallback, openBrowser } from './browser.mjs';
 import { modelStatus } from './model.mjs';
 import { readTicket } from './orders.mjs';
+import { describeEntryHandoff } from './handoff.mjs';
 
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']], ['/app.mjs', ['app.mjs', 'text/javascript; charset=utf-8']],
@@ -15,7 +16,7 @@ const assets = new Map([
   ['/desktop-ui.mjs', ['desktop-ui.mjs', 'text/javascript; charset=utf-8']],
   ...['HankenGrotesk-400.ttf', 'HankenGrotesk-600.ttf', 'Newsreader-500.ttf', 'IBMPlexMono-400.ttf'].map(name => [`/fonts/${name}`, [`fonts/${name}`, 'font/ttf']]),
 ]);
-export async function startServer({ store, cloud, listener, port = 0, open = openBrowser, callback = listenCallback, checkModel = modelStatus }) {
+export async function startServer({ store, cloud, listener, port = 0, open = openBrowser, callback = listenCallback, checkModel = modelStatus, clock = Date.now }) {
   const bootstrap = randomBytes(32).toString('base64url'), session = randomBytes(32).toString('base64url'), csrf = randomBytes(32).toString('base64url');
   let origin, connectPending = false, connectionGeneration = 0;
   const theme = () => { const saved = store.get('display', 'main')?.theme; return THEMES.includes(saved) ? saved : 'system'; };
@@ -57,7 +58,7 @@ export async function startServer({ store, cloud, listener, port = 0, open = ope
       if (request.method === 'GET' && url.pathname === '/api/profile') return reply(200, await cloud.profile());
       if (request.method === 'GET' && url.pathname === '/api/accounts') return reply(200, { accounts: await cloud.listAccounts() });
       if (request.method !== 'GET' && (request.method !== 'POST' || request.headers.origin !== origin || !same(request.headers['x-flusso-csrf'], csrf))) return reply(403, { error: 'Request origin or session refused.' });
-      if (request.method === 'GET' && url.pathname === '/api/status') return reply(200, { settings: store.settings(), listener: listener.status(), cloud: await cloud.status(), model: await checkModel(), display: { theme: theme() }, notebooks: store.notebooks(), entries: annotate(store.entries().slice(0, 500), store.all('activity')), activity: store.all('activity').sort((a, b) => Number(b.kind === 'legacy' && unconfirmed(b)) - Number(a.kind === 'legacy' && unconfirmed(a)) || newest(a, b)).slice(0, 100), attempts: store.all('attempt').filter(row => ['orders', 'legacy'].includes(row.kind)).sort((a, b) => Number(unconfirmed(b)) - Number(unconfirmed(a)) || newest(a, b)).slice(0, 100).map(row => ({ ...row, orders: row.orders ?? [] })) });
+      if (request.method === 'GET' && url.pathname === '/api/status') return reply(200, { settings: store.settings(), listener: listener.status(), cloud: await cloud.status(), model: await checkModel(), display: { theme: theme() }, notebooks: store.notebooks(), entries: annotate(store.entries().slice(0, 500), store.all('activity'), store, clock()), activity: store.all('activity').sort((a, b) => Number(b.kind === 'legacy' && unconfirmed(b)) - Number(a.kind === 'legacy' && unconfirmed(a)) || newest(a, b)).slice(0, 100), attempts: store.all('attempt').filter(row => ['orders', 'legacy'].includes(row.kind)).sort((a, b) => Number(unconfirmed(b)) - Number(unconfirmed(a)) || newest(a, b)).slice(0, 100).map(row => ({ ...row, orders: row.orders ?? [] })) });
       const input = request.method === 'POST' ? await readJson(request) : null;
       if (url.pathname === '/api/connect' && request.method === 'POST') {
         object(input, []);
@@ -132,15 +133,23 @@ export async function startServer({ store, cloud, listener, port = 0, open = ope
   return { server, origin, url: `${origin}/#${bootstrap}`, close: () => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }) };
 }
 // Each entry carries its ticket (if any) and the listener's latest decision on it.
-function annotate(entries, activity) {
-  const latest = new Map();
+function annotate(entries, activity, store, now) {
+  const settings = store.settings();
+  const latest = new Map(), attempts = new Map();
+  for (const row of store.all('attempt')) {
+    const key = `${row.origin}:${row.entryId}:${row.version}`;
+    if (!attempts.has(key)) attempts.set(key, []);
+    attempts.get(key).push(row);
+  }
   for (const row of activity) {
     const key = `${row.origin}:${row.entryId}`, seen = latest.get(key);
     if (!seen || row.atUtc > seen.atUtc) latest.set(key, row);
   }
   return entries.map(entry => {
     const row = latest.get(`${entry.origin}:${entry.id}`);
-    return { ...entry, ticket: readTicket(entry.body), listener: row ? { decision: row.decision ?? null, status: row.status, reason: row.reason ?? null, atUtc: row.atUtc } : null };
+    const ticket = readTicket(entry.body);
+    const handoff = describeEntryHandoff({ entry, settings, ticket, activity: row, attempts: attempts.get(`${entry.origin}:${entry.id}:${entry.version}`), checkpoint: store.get('checkpoint', `${entry.origin}:${entry.id}`), now });
+    return { ...entry, ticket, handoff, listener: row ? { decision: row.decision ?? null, status: row.status, reason: row.reason ?? null, atUtc: row.atUtc } : null };
   });
 }
 function same(left, right) { if (typeof left !== 'string') return false; const a = Buffer.from(left), b = Buffer.from(right); return a.length === b.length && timingSafeEqual(a, b); }

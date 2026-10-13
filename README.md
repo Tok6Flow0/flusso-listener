@@ -130,6 +130,17 @@ deterministic validation and do not need a model. Cloud synchronization scans
 all pages, bounded at 5,000 entries, so edits to older notes are found. An
 incomplete scan is displayed and does not authorize cloud execution.
 
+The private status response also explains each entry's hand-off state, including
+research without an explicit ticket, reviewed entries, baselined revisions,
+selection filters, malformed or stale tickets, and waiting setup. These are local
+diagnostics; they do not certify current server or venue admission.
+
+Run `npm run replay` for an isolated synthetic replay through the real Listener.
+It uses a temporary encrypted Journal and in-process fake cloud/model operations,
+checks research, explicit tickets, copies, restart and uncertain delivery, and
+labels every submission as simulated. It never opens your Journal or OS vault,
+downloads a model, or contacts Flusso or a venue.
+
 Qwen3 1.7B is an Apache 2.0 licensed default with an approximately 1.4 GB verified model
 download. That is model storage, not total runtime RAM. Actual RAM and speed
 depend on the computer and context length. We recommend at least 8 GB of system RAM for the app, model, and everyday OS use; test on the actual machine before leaving it unattended. This app uses a bounded 4,096-token

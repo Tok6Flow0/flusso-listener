@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { classifyEntry } from './model.mjs';
 import { buildOrderRequest, readTicket, withResult } from './orders.mjs';
+import { entryInScope as inScope, ticketSetupGap } from './handoff.mjs';
 
 const MAX_READBACK_CHECKS = 10;
 
@@ -19,11 +20,6 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
   let timer = null, busy = false, activeAbort = null, activeTick = null, stopped = false, scheduleGeneration = 0;
   const state = { running: false, busy: false, lastCheckedAtUtc: null, lastError: null, cloudComplete: null, cloudReason: null };
   const keyOf = entry => `${entry.origin}:${entry.id}`;
-  function inScope(entry, settings) {
-    return (settings.source === 'both' || entry.origin === settings.source)
-      && (!settings.notebookIds.length || settings.notebookIds.includes(entry.notebookId))
-      && (!settings.section || entry.body.split('\n').some(line => /^#{1,6}\s/.test(line) && line.replace(/^#{1,6}\s+/, '').trim().toLocaleLowerCase() === settings.section.toLocaleLowerCase()));
-  }
   // Old notes become a baseline, but an unactioned ticket from the action window is
   // still decided, even if it arrived while the app was closed or disconnected.
   function inWindow(entry) {
@@ -109,9 +105,8 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
       return 'continue';
     };
     if (!request.eligible) return refuse(request.reason);
-    if (!settings.executionEnabled) return wait('Auto-trade is off.');
-    if (!settings.accountId) return wait('Choose a trading account for auto-trade.');
-    if (!settings.notebookIds.length) return wait('Pick the notebooks auto-trade may act on.');
+    const setupGap = ticketSetupGap(settings);
+    if (setupGap) return wait(setupGap);
     // A flood of tickets, from a mistake or a hostile note, stops at the owner's daily cap.
     const since = clock() - 86400000;
     const recent = store.all('attempt').filter(row => row.kind === 'orders' && Date.parse(row.atUtc) > since).length;

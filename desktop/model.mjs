@@ -1,6 +1,6 @@
 import { readFile, mkdir, writeFile, unlink, copyFile, lstat } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer } from 'node:net';
@@ -9,8 +9,11 @@ import { MODEL, classificationMessages, decisionSchema, parseClassification } fr
 import { verifiedDownload, verifiedFile } from './download.mjs';
 
 const resources = JSON.parse(await readFile(new URL('./resources.json', import.meta.url)));
-export function createDesktopModel({ directory, runtimeDirectory, onChange = () => {} }) {
-  const resource = resources.model, modelPath = join(directory, 'models', resource.filename);
+export function createDesktopModel({ directory, runtimeDirectory, existingModelPath, onChange = () => {} }) {
+  // Trusted offline callers may reuse the installed weights without copying them.
+  // This option is never read from a note, renderer request, or desktop settings.
+  if (existingModelPath !== undefined && (typeof existingModelPath !== 'string' || !isAbsolute(existingModelPath))) throw new TypeError('Use an absolute existing model path.');
+  const resource = resources.model, modelPath = existingModelPath ?? join(directory, 'models', resource.filename);
   const lifetime = new AbortController();
   let state = { state: 'missing', message: 'Set up the local model when you want to review observations.' }, pending, child, endpoint, apiKey, stopping = false;
   const publish = value => { state = value; onChange({ ...state }); };
@@ -64,7 +67,10 @@ export function createDesktopModel({ directory, runtimeDirectory, onChange = () 
     } catch (error) { if (!lifetime.signal.aborted) publish({ state: 'error', message: /^The local model could not start|^The bundled inference|^An existing resource failed verification/.test(error.message) ? error.message : 'Local model setup could not finish. Retry when connectivity and disk space are available. Your Journal is preserved.' }); }
     return { ...state };
   }
-  async function ensure(download) { if (!pending) pending = work(download).finally(() => { pending = null; }); return pending; }
+  async function ensure(download) {
+    if (download && existingModelPath !== undefined) throw new Error('Existing-model mode cannot download or copy model resources.');
+    if (!pending) pending = work(download).finally(() => { pending = null; }); return pending;
+  }
   async function terminateChild() {
     stopping = true; endpoint = undefined;
     if (!child || child.exitCode !== null) { child = undefined; return; }
