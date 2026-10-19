@@ -157,7 +157,7 @@ test('ticket orders keep the owner risk limits and both legs share one release t
   const listener = createListener({ store: w.store, cloud: fakeCloud({ submitOrders: async value => { attempt = value; return sent(value.orders); } }), classify: noModel, clock: () => now });
   try {
     enable(w.store); listener.start(); w.store.createEntry(note(w.store, { body: ticket() })); await listener.tick();
-    assert.deepEqual(attempt.orders.map(order => order.conditions), [{ maxSlippagePct: 2, maxNotionalUsd: 50, maxLeverage: 10 }, { maxSlippagePct: 2, maxNotionalUsd: 50, maxLeverage: 10 }]);
+    assert.deepEqual(attempt.orders.map(order => order.conditions), [{ maxSlippagePct: 2, maxNotionalUsd: 50 }, { maxSlippagePct: 2, maxNotionalUsd: 50 }]);
     assert.equal(attempt.orders[0].placeAtUtc, attempt.orders[1].placeAtUtc);
     assert.equal(attempt.orders.map(order => order.instrumentId).join(), hedge.map(order => order.instrumentId).join());
   } finally { listener.stop(); await w.close(); }

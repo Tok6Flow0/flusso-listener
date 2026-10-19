@@ -75,6 +75,8 @@ test('combined notional and leverage caps tighten every independent leg without 
   const capped = applyRisk(orders, { maxOrderUsd: 900, maxTicketUsd: 1800, maxLeverage: 10 });
   assert.deepEqual(capped.map(order => order.conditions), Array(3).fill({ maxNotionalUsd: 600, maxLeverage: 10 }));
   assert.deepEqual(applyRisk([{ ...hedge[0], conditions: { maxNotionalUsd: 100, maxLeverage: 3 } }], { maxOrderUsd: 900, maxTicketUsd: 1800, maxLeverage: 10 })[0].conditions, { maxNotionalUsd: 100, maxLeverage: 3 });
+  // Local leverage ceiling alone does not invent a maxLeverage condition on the order.
+  assert.deepEqual(applyRisk([{ instrumentId: 'okx:BTC-USDT-SWAP', side: 'buy', quantity: 1, limitPrice: 1 }], { maxOrderUsd: 900, maxTicketUsd: 1800, maxLeverage: 10 })[0].conditions, { maxNotionalUsd: 900 });
   assert.equal(readTicket(ticket({ orders: [{ ...hedge[0], conditions: { maxLeverage: 0.5 } }] })).error.includes('conditions'), true);
 });
 

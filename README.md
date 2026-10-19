@@ -183,15 +183,18 @@ independent elements, dispatched in parallel with bounded concurrency. With
 does not make them atomic or guarantee simultaneous arrival or fills.
 
 Local order and ticket ceilings tighten the submitted `maxNotionalUsd`
-conditions; `maxLeverage` is also sent to execution. Where authenticated native
-per-order leverage is supported, execution binds a choice within the witnessed
-bounds and ceiling while preserving margin mode. Otherwise configured leverage
-must be proven at or below the ceiling. Missing private proof refuses the order;
-a public venue maximum is not the account's setting. The server still checks
-ownership, live plan, connection consent, margin,
-venue terms, risk and writer authority. A model cannot override those checks or
-create a ticket from research text. Turning auto-trade off during a preview
-prevents its confirmation; it cannot recall an order already sent.
+conditions. A ticket that already requests `maxLeverage` is tightened to the
+local leverage ceiling and that condition is sent to execution; the local
+ceiling alone does not invent a leverage condition on every order. Where
+authenticated native per-order leverage is supported, execution binds a choice
+within the witnessed bounds and ceiling while preserving margin mode. Otherwise
+configured leverage must be proven at or below the ceiling. Missing private
+proof refuses a ticket that requested `maxLeverage`; a public venue maximum is
+not the account's setting. The server still checks ownership, live plan,
+connection consent, margin, venue terms, risk and writer authority. A model
+cannot override those checks or create a ticket from research text. Turning
+auto-trade off during a preview prevents its confirmation; it cannot recall an
+order already sent.
 
 With **Note results on the entry** on (the default), every decision is written
 back to the ticket's own Journal entry: a `## Listener result` section with

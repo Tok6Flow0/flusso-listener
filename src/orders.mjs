@@ -61,14 +61,17 @@ function perOrderCap(orders, risk) {
   return cap;
 }
 
-/** Applies the owner's risk settings. A condition can only be tightened, never loosened. */
+/** Applies the owner's risk settings. A condition can only be tightened, never loosened.
+ * Local maxLeverage enables auto-trade and tightens a ticket that already requests
+ * maxLeverage; it is not injected onto every order, because sending that condition
+ * requires fresh authenticated configured-leverage evidence at Flusso. */
 export function applyRisk(orders, risk = DEFAULT_RISK) {
   return orders.map(({ conditions = {}, ...order }) => {
     const next = { ...conditions };
     if (positive(risk.maxSlippagePct)) next.maxSlippagePct = Math.min(next.maxSlippagePct ?? Infinity, risk.maxSlippagePct);
     const notionalCap = perOrderCap(orders, risk);
     if (Number.isFinite(notionalCap)) next.maxNotionalUsd = Math.min(next.maxNotionalUsd ?? Infinity, notionalCap);
-    if (positive(risk.maxLeverage)) next.maxLeverage = Math.min(next.maxLeverage ?? Infinity, risk.maxLeverage);
+    if (positive(risk.maxLeverage) && positive(next.maxLeverage)) next.maxLeverage = Math.min(next.maxLeverage, risk.maxLeverage);
     if (positive(risk.minVolume24hUsd)) next.minVolume24hUsd = Math.max(next.minVolume24hUsd ?? 0, risk.minVolume24hUsd);
     return Object.keys(next).length ? { ...order, conditions: next } : { ...order };
   });
