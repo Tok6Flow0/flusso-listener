@@ -47,8 +47,10 @@ async function start() {
   const cloud = createCloudClient({ vault }); listener = createListener({ store, cloud, classify: model.classify });
   server = await startServer({ store, cloud, listener, checkModel: model.modelStatus, open: value => shell.openExternal(externalUrl(value)) });
   updates = createUpdates({ updater: createRequire(import.meta.url)('electron-updater').autoUpdater, version: app.getVersion(), packaged: app.isPackaged, preview: app.getVersion().includes('-'), onChange: changed, beforeInstall: async () => {
+    updates?.stopAutoCheck?.();
     const settings = store.settings(); store.saveSettings({ ...settings, enabled: false, executionEnabled: false }); quitting = true; await shutdown();
   } });
+  updates.startAutoCheck();
   const iconPath = fileURLToPath(new URL('../public/flusso-mark.png', import.meta.url));
   window = new BrowserWindow({ title: 'Flusso Journal', width: 1180, height: 800, minWidth: 320, minHeight: 480, show: false, icon: iconPath, backgroundColor: '#faf9f6', webPreferences: { preload: fileURLToPath(new URL('./preload.cjs', import.meta.url)), sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, devTools: !app.isPackaged } });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));

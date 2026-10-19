@@ -422,5 +422,78 @@ export function createCloudClient({ origin = 'https://flusso.stream', vault, fet
     return updated;
   }
 
-  return { status, profile, beginConnect, disconnect, capabilities, listAccounts, readJournal, submitOrders, reconcileOrders, updateJournalEntry };
+  /**
+   * Closes owned positions through Flusso's reduce-only close path
+   * (flusso.b5b5efba7adc / closeTradingAccountPositions). Auto-trade on is the
+   * local approval; Flusso still checks ownership and venue rules.
+   */
+  async function closePositions({ accountId, positionIds, idempotencyKey, reference = 'a Journal close ticket' }, { canDispatch = async () => true } = {}) {
+    id(accountId); retryKey(idempotencyKey);
+    const generation = credentialGeneration;
+    positionIds = structuredClone(positionIds);
+    if (!Array.isArray(positionIds) || positionIds.length < 1 || positionIds.length > 25 || positionIds.some((value) => !UUID.test(value))) {
+      fail('positions_invalid', 'A close ticket needs 1–25 owned position IDs.');
+    }
+    const blocked = (message) => ({ status: 'blocked', lines: [], message });
+    try { await requireOperations(['closeTradingAccountPositions']); }
+    catch (error) {
+      return blocked(error instanceof CloudError && error.code === 'operation_unavailable'
+        ? 'Your Flusso connection cannot close positions. Reconnect with write access.'
+        : 'Flusso could not check close access. No close was sent.');
+    }
+    const args = {
+      operationId: 'closeTradingAccountPositions', pathParameters: { id: accountId }, headers: { 'Idempotency-Key': idempotencyKey },
+      body: { positionIds },
+    };
+    let preview;
+    try { preview = await mcp('act_in_flusso', args); }
+    catch { return blocked('Flusso could not prepare the close preview. No close was sent.'); }
+    if (preview.error === 'operation_not_available') return blocked('Your Flusso plan or connection does not allow closing positions.');
+    if (preview.schemaVersion !== 'flusso.mcp_confirmation.v1' || preview.confirmationRequired !== true || typeof preview.confirmationToken !== 'string'
+      || preview.operation?.operationId !== args.operationId || preview.request?.method !== 'POST'
+      || preview.request?.path !== `/api/v1/me/trading-accounts/${accountId}/positions/close`
+      || !isDeepStrictEqual(preview.request?.body, args.body) || preview.effect?.liveTradingRequested !== true
+      || preview.effect?.destructive !== true || Date.parse(preview.expiresAtUtc) <= clock()
+      || !Number.isFinite(Date.parse(preview.expiresAtUtc))) {
+      return blocked(short(preview.message) || 'Flusso refused the close preview. No close was sent.');
+    }
+    let value, dispatched = false;
+    try {
+      value = await mcp('act_in_flusso', { ...args, confirmed: true, confirmationToken: preview.confirmationToken }, {
+        timeoutMs: ORDER_TIMEOUT_MS,
+        beforeDispatch: async () => {
+          requireGeneration(generation);
+          if (!await canDispatch()) fail('execution_stopped', 'Auto-trade or its account changed before confirmation. No close was sent.');
+          requireGeneration(generation); dispatched = true;
+        },
+      });
+    } catch (error) {
+      if (!dispatched) return blocked(error instanceof CloudError && error.code === 'execution_stopped' ? error.message : 'The connection changed before confirmation. No close was sent.');
+      return { status: 'unknown', lines: [], message: 'Flusso did not confirm the close. Check positions in Flusso; this ticket will not be resent.' };
+    }
+    const receipt = value.result;
+    if (object(receipt) && receipt.schemaVersion === 'product.position_close_operation.v1' && equalId(receipt.accountId, accountId)
+      && Array.isArray(receipt.results) && receipt.results.length === positionIds.length
+      && Number.isSafeInteger(receipt.requestedCount) && receipt.requestedCount === positionIds.length
+      && Number.isSafeInteger(receipt.closedCount)) {
+      const lines = receipt.results.map((row, index) => {
+        const positionId = positionIds[index];
+        if (!object(row) || String(row.positionId).toLowerCase() !== positionId.toLowerCase()) return null;
+        if (row.status === 'closed') return { positionId, status: 'submitted', message: short(row.message) || 'Reduce-only close accepted.' };
+        return { positionId, status: 'blocked', message: short(row.message) || short(row.status) || 'Close refused.' };
+      });
+      if (lines.every(Boolean)) {
+        const closed = lines.filter((line) => line.status === 'submitted').length;
+        const status = closed === lines.length ? 'submitted' : closed === 0 ? 'blocked' : 'partial';
+        return { status, lines, message: status === 'blocked' ? (lines.find((line) => line.status === 'blocked')?.message || 'Flusso refused the closes.') : null };
+      }
+    }
+    if (value.result?.schemaVersion === 'product.error.v1' && value.status >= 400 && value.status < 500) {
+      return blocked(short(value.result.error?.message) || short(value.result.error?.code) || 'Flusso refused the close.');
+    }
+    if (value.error === 'confirmation_invalid') return blocked('The close preview expired before it was confirmed. No close was sent.');
+    return { status: 'unknown', lines: [], message: 'Flusso did not return a clear close result. Check positions in Flusso; this ticket will not be resent.' };
+  }
+
+  return { status, profile, beginConnect, disconnect, capabilities, listAccounts, readJournal, submitOrders, closePositions, reconcileOrders, updateJournalEntry };
 }

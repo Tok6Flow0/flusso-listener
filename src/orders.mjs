@@ -1,33 +1,36 @@
 import { createHash } from 'node:crypto';
 import { DEFAULT_RISK } from './schema.mjs';
 
-// An order ticket is a fenced ```flusso-orders block in a Journal entry. Its
-// orders use Flusso's existing manual order element exactly, so the listener
-// forwards them to submitManualFuturesLimitOrder without inventing a format.
+// An order ticket is a fenced ```flusso-orders block; a close ticket is
+// ```flusso-close. Orders reuse submitManualFuturesLimitOrder. Closes reuse
+// closeTradingAccountPositions (reduce-only) with exact owned position IDs.
 export const TICKET_FENCE = 'flusso-orders';
+export const CLOSE_FENCE = 'flusso-close';
 export const MAX_TICKET_ORDERS = 20;
+export const MAX_CLOSE_POSITIONS = 25;
 const TICKET_KEYS = new Set(['id', 'together', 'orders']);
+const CLOSE_KEYS = new Set(['id', 'positionIds']);
 const ORDER_KEYS = new Set(['instrumentId', 'side', 'quantity', 'limitPrice', 'conditions']);
 const CONDITION_KEYS = new Set(['maxSlippagePct', 'maxNotionalUsd', 'minVolume24hUsd', 'maxLeverage']);
 const INSTRUMENT = /^[a-z0-9][a-z0-9._-]*:.+$/;
 const TICKET_ID = /^[!-~]{1,160}$/;
+const POSITION_ID = /^[a-f\d]{8}-[a-f\d]{4}-[1-5][a-f\d]{3}-[89ab][a-f\d]{3}-[a-f\d]{12}$/i;
 const TOGETHER_LEAD_MS = 3000;
 
 function plain(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 function positive(value) { return typeof value === 'number' && Number.isFinite(value) && value > 0; }
 const review = (reason, reasonCode) => ({ eligible: false, reason, reasonCode });
 
-/** Returns null when the entry has no ticket; otherwise the parsed ticket or a reason it cannot run. */
-export function readTicket(body) {
-  if (typeof body !== 'string') return null;
-  body = body.replaceAll('\r\n', '\n');
+function fenceBlocks(body, name) {
   const blocks = [];
-  const fence = /^(```|~~~)[ \t]*flusso-orders[ \t]*\n([\s\S]*?)^\1[ \t]*$/gm;
+  const fence = new RegExp(`^(\`\`\`|~~~)[ \\t]*${name}[ \\t]*\\n([\\s\\S]*?)^\\1[ \\t]*$`, 'gm');
   for (let match = fence.exec(body); match; match = fence.exec(body)) blocks.push(match[2]);
-  if (!blocks.length) return null;
-  if (blocks.length > 1) return { error: 'This entry has more than one order ticket. Keep one ticket per entry.' };
+  return blocks;
+}
+
+function parseOrderTicket(raw) {
   let ticket;
-  try { ticket = JSON.parse(blocks[0]); } catch { return { error: 'The order ticket is not valid JSON.' }; }
+  try { ticket = JSON.parse(raw); } catch { return { error: 'The order ticket is not valid JSON.' }; }
   if (!plain(ticket) || Object.keys(ticket).some((key) => !TICKET_KEYS.has(key))) return { error: 'The order ticket has unsupported fields. Use id, together and orders.' };
   if (typeof ticket.id !== 'string' || !TICKET_ID.test(ticket.id)) return { error: 'The ticket id must be 1–160 printable characters without spaces.' };
   if (ticket.together !== undefined && typeof ticket.together !== 'boolean') return { error: 'together must be true or false.' };
@@ -44,7 +47,37 @@ export function readTicket(body) {
       if (Object.values(order.conditions).some((value) => !positive(value)) || order.conditions.maxSlippagePct > 100 || order.conditions.maxLeverage < 1) return { error: `${at} conditions must be positive numbers; slippage is at most 100%.` };
     }
   }
-  return { ticket };
+  return { kind: 'orders', ticket };
+}
+
+function parseCloseTicket(raw) {
+  let ticket;
+  try { ticket = JSON.parse(raw); } catch { return { error: 'The close ticket is not valid JSON.' }; }
+  if (!plain(ticket) || Object.keys(ticket).some((key) => !CLOSE_KEYS.has(key))) return { error: 'The close ticket has unsupported fields. Use id and positionIds.' };
+  if (typeof ticket.id !== 'string' || !TICKET_ID.test(ticket.id)) return { error: 'The ticket id must be 1–160 printable characters without spaces.' };
+  if (!Array.isArray(ticket.positionIds) || ticket.positionIds.length < 1 || ticket.positionIds.length > MAX_CLOSE_POSITIONS) {
+    return { error: `A close ticket needs 1–${MAX_CLOSE_POSITIONS} owned position IDs.` };
+  }
+  const seen = new Set();
+  for (const [index, positionId] of ticket.positionIds.entries()) {
+    if (typeof positionId !== 'string' || !POSITION_ID.test(positionId)) return { error: `Position ${index + 1} must be a canonical owned position UUID.` };
+    const key = positionId.toLowerCase();
+    if (seen.has(key)) return { error: 'Close tickets cannot list the same position twice.' };
+    seen.add(key);
+  }
+  return { kind: 'close', ticket: { id: ticket.id, positionIds: ticket.positionIds.map((id) => id.toLowerCase()) } };
+}
+
+/** Returns null when the entry has no ticket; otherwise the parsed ticket or a reason it cannot run. */
+export function readTicket(body) {
+  if (typeof body !== 'string') return null;
+  body = body.replaceAll('\r\n', '\n');
+  const orderBlocks = fenceBlocks(body, TICKET_FENCE);
+  const closeBlocks = fenceBlocks(body, CLOSE_FENCE);
+  if (!orderBlocks.length && !closeBlocks.length) return null;
+  if (orderBlocks.length && closeBlocks.length) return { error: 'This entry has both an order ticket and a close ticket. Keep one action per entry.' };
+  if (orderBlocks.length > 1 || closeBlocks.length > 1) return { error: 'This entry has more than one action ticket. Keep one ticket per entry.' };
+  return orderBlocks.length ? parseOrderTicket(orderBlocks[0]) : parseCloseTicket(closeBlocks[0]);
 }
 
 // These are permission ceilings, not a local valuation of any contract. Allocate
@@ -77,18 +110,32 @@ export function applyRisk(orders, risk = DEFAULT_RISK) {
   });
 }
 
+function ticketFreshness({ entry, settings, now }) {
+  if (entry.status !== 'watching') return review('Set the entry to watching to place its ticket.', 'inactive_ticket');
+  const maximumAge = settings.maxSignalAgeSeconds ?? 900;
+  const written = Date.parse(entry.updatedAtUtc ?? entry.createdAtUtc);
+  if (!Number.isFinite(written) || written > now + 60000 || now - written > maximumAge * 1000) {
+    return review('This ticket is older than your signal age limit, so it was not placed.', 'stale_ticket');
+  }
+  return null;
+}
+
 /** Notes select data only. Flusso still checks ownership, plan, risk and venue terms. */
 export function buildOrderRequest({ entry, settings, now = Date.now() }) {
   const parsed = readTicket(entry?.body);
   if (!parsed) return null;
   if (parsed.error) return review(parsed.error, 'malformed_ticket');
-  if (entry.status !== 'watching') return review('Set the entry to watching to place its ticket.', 'inactive_ticket');
-  const maximumAge = settings.maxSignalAgeSeconds ?? 900;
-  const written = Date.parse(entry.updatedAtUtc ?? entry.createdAtUtc);
-  if (!Number.isFinite(written) || written > now + 60000 || now - written > maximumAge * 1000) return review('This ticket is older than your signal age limit, so it was not placed.', 'stale_ticket');
+  const stale = ticketFreshness({ entry, settings, now });
+  if (stale) return stale;
+  if (parsed.kind === 'close') {
+    const signalIdentity = createHash('sha256').update(JSON.stringify({ schemaVersion: 'flusso.listener_close.v1', id: parsed.ticket.id })).digest('hex');
+    return { eligible: true, kind: 'close', ticketId: parsed.ticket.id, positionIds: parsed.ticket.positionIds, signalIdentity };
+  }
   const { ticket } = parsed;
   const risk = settings.risk ?? DEFAULT_RISK;
-  if (!positive(risk.maxOrderUsd) || !positive(risk.maxTicketUsd) || !positive(risk.maxLeverage) || risk.maxLeverage < 1) return review('Choose explicit maximum order, ticket notional and leverage limits before execution.', 'missing_risk_limits');
+  if (!positive(risk.maxOrderUsd) || !positive(risk.maxTicketUsd) || !positive(risk.maxLeverage) || risk.maxLeverage < 1) {
+    return review('Choose explicit maximum order, ticket notional and leverage limits before execution.', 'missing_risk_limits');
+  }
   if (perOrderCap(ticket.orders, risk) < 0.01) return review('The ticket ceiling cannot allocate at least one cent to each order.', 'ticket_ceiling_too_small');
   const orders = applyRisk(ticket.orders, risk);
   if ((ticket.together ?? settings.risk?.together ?? true) && orders.length > 1) {
@@ -98,14 +145,14 @@ export function buildOrderRequest({ entry, settings, now = Date.now() }) {
   // The explicit immutable ticket id is shared by edits and local/cloud copies.
   // Quantity, price, conditions and refreshed clocks cannot create another dispatch.
   const signalIdentity = createHash('sha256').update(JSON.stringify({ schemaVersion: 'flusso.listener_ticket.v1', id: ticket.id })).digest('hex');
-  return { eligible: true, ticketId: ticket.id ?? null, orders, signalIdentity };
+  return { eligible: true, kind: 'orders', ticketId: ticket.id ?? null, orders, signalIdentity };
 }
 
 // The listener notes each decision on the ticket's own Journal entry, so the
 // author (you or your agent) can see what happened without opening the app.
 export const RESULT_HEADING = '## Listener result';
 const RESULT_TITLE = { submitted: 'Placed', partial: 'Partly placed', blocked: 'Refused', review: 'Not placed' };
-const LINE_STATUS = { submitted: 'sent', blocked: 'refused', unknown: 'unconfirmed', not_sent: 'not sent' };
+const LINE_STATUS = { submitted: 'sent', closed: 'closed', blocked: 'refused', unknown: 'unconfirmed', not_sent: 'not sent' };
 const BODY_LIMIT = 20000;
 
 /** Replaces any earlier listener result at the end of the body with this one. */
@@ -117,7 +164,12 @@ export function withResult(body, { status, reason = null, lines = [], atUtc }) {
   const head = [RESULT_HEADING, '', `**${RESULT_TITLE[status] ?? 'Result'}** · ${when}`];
   if (reason) head.push('', String(reason).replace(/\s+/g, ' ').trim().slice(0, 500));
   const foot = ['', 'Noted by Flusso Journal. Sent is not filled.'];
-  const rows = lines.map(line => `- ${line.side} ${line.instrumentId} ${line.quantity} @ ${line.limitPrice}: ${LINE_STATUS[line.status] ?? line.status}${line.message ? ` (${String(line.message).replace(/\s+/g, ' ').trim().slice(0, 200)})` : ''}`);
+  const rows = lines.map((line) => {
+    if (line.positionId) {
+      return `- close ${line.positionId}: ${LINE_STATUS[line.status] ?? line.status}${line.message ? ` (${String(line.message).replace(/\s+/g, ' ').trim().slice(0, 200)})` : ''}`;
+    }
+    return `- ${line.side} ${line.instrumentId} ${line.quantity} @ ${line.limitPrice}: ${LINE_STATUS[line.status] ?? line.status}${line.message ? ` (${String(line.message).replace(/\s+/g, ' ').trim().slice(0, 200)})` : ''}`;
+  });
   const compose = list => `${base}${base ? '\n\n' : ''}${[...head, ...(list.length ? ['', ...list] : []), ...foot].join('\n')}\n`;
   let result = compose(rows);
   for (let keep = rows.length - 1; result.length > BODY_LIMIT && keep >= 0; keep -= 1) result = compose([...rows.slice(0, keep), `- ${rows.length - keep} more orders, see Activity`]);

@@ -105,16 +105,45 @@ test('concurrent or repeated install requests perform shutdown and installer lau
   assert.equal(updater.calls.filter(([call]) => call === 'install').length, 1);
 });
 
-test('preview and development builds never contact update servers or expose an installable update', async () => {
-  for (const options of [{ packaged: false, preview: false }, { packaged: true, preview: true }]) {
-    const { updater, updates } = fixture(options);
-    assert.equal(updates.status().state, 'unsupported');
-    await assert.rejects(updates.check()); await assert.rejects(updates.download()); await assert.rejects(updates.install());
-    for (const [event, value] of [['checking-for-update'], ['update-available', { version: '0.2.0' }], ['download-progress', { percent: 50 }], ['update-downloaded', { version: '0.2.0' }], ['update-not-available'], ['error', new Error('synthetic error')]]) {
-      updater.emit(event, value); assert.equal(updates.status().state, 'unsupported', `${JSON.stringify(options)} ${event}`);
-    }
-    assert.deepEqual(updater.calls, []);
+test('development builds never contact update servers or expose an installable update', async () => {
+  const { updater, updates } = fixture({ packaged: false, preview: false });
+  assert.equal(updates.status().state, 'unsupported');
+  await assert.rejects(updates.check()); await assert.rejects(updates.download()); await assert.rejects(updates.install());
+  for (const [event, value] of [['checking-for-update'], ['update-available', { version: '0.2.0' }], ['download-progress', { percent: 50 }], ['update-downloaded', { version: '0.2.0' }], ['update-not-available'], ['error', new Error('synthetic error')]]) {
+    updater.emit(event, value); assert.equal(updates.status().state, 'unsupported', event);
   }
+  assert.deepEqual(updater.calls, []);
+});
+
+test('packaged preview builds check the prerelease channel and surface a corner update prompt', async () => {
+  const { updater, updates } = fixture({ packaged: true, preview: true });
+  assert.equal(updates.status().state, 'idle');
+  assert.equal(updater.allowPrerelease, true);
+  await updates.check();
+  updater.emit('update-available', { version: '0.2.0-preview.6' });
+  assert.equal(updates.status().state, 'available');
+  assert.match(updates.status().message, /preview/i);
+  await updates.download();
+  updater.emit('update-downloaded', { version: '0.2.0-preview.6' });
+  assert.equal(updates.status().state, 'downloaded');
+});
+
+test('auto-check schedules a quiet startup and periodic lookup without forcing a download', async () => {
+  const timeouts = [];
+  const intervals = [];
+  const { updater, updates } = fixture({
+    packaged: true,
+    preview: true,
+    setTimeoutFn: (fn, ms) => { timeouts.push(ms); fn(); return timeouts.length; },
+    clearTimeoutFn: () => {},
+    setIntervalFn: (fn, ms) => { intervals.push(ms); return intervals.length; },
+    clearIntervalFn: () => {},
+  });
+  updates.startAutoCheck();
+  assert.deepEqual(timeouts, [12_000]);
+  assert.deepEqual(intervals, [4 * 60 * 60 * 1000]);
+  assert.deepEqual(updater.calls, [['check']]);
+  updates.stopAutoCheck();
 });
 
 test('check and download failures show bounded errors without leaking upstream URLs or permitting installation', async () => {

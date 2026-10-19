@@ -13,6 +13,7 @@ on:
         type: boolean
         default: false
   push:
+    branches: [main]
     tags: ['v*']
 
 permissions:
@@ -52,17 +53,27 @@ jobs:
           import { readFileSync, appendFileSync } from 'node:fs';
           import { createPrivateKey } from 'node:crypto';
           const p = JSON.parse(readFileSync('package.json'));
-          const channel = process.env.REQUESTED_CHANNEL || (p.version.includes('-') ? 'preview' : 'production');
+          const onMain = process.env.GITHUB_REF === 'refs/heads/main';
+          const onTag = process.env.GITHUB_REF_TYPE === 'tag';
+          // Every main commit gets an immutable preview build so installed apps can
+          // receive an in-app Update prompt without redownloading from GitHub by hand.
+          let version = p.version;
+          if (onMain && !onTag) {
+            const base = (p.version.match(/^(\d+\.\d+\.\d+)/) || [])[1];
+            if (!base) throw new Error('package.json version must start with major.minor.patch.');
+            version = `${base}-preview.${process.env.GITHUB_RUN_NUMBER}`;
+          }
+          const channel = process.env.REQUESTED_CHANNEL || (version.includes('-') ? 'preview' : 'production');
           if (!['preview', 'production'].includes(channel)) throw new Error('Invalid release channel.');
           if (!process.env.UPDATE_KEY || createPrivateKey(process.env.UPDATE_KEY).asymmetricKeyType !== 'ed25519') throw new Error('An Ed25519 signed-manifest key is required for desktop CI.');
-          if (process.env.GITHUB_REF_TYPE === 'tag' && process.env.GITHUB_REF_NAME !== `v${p.version}`) throw new Error('Release tag must match package.json exactly.');
-          if (channel === 'preview' && !p.version.includes('-')) throw new Error('Preview releases require a prerelease version.');
+          if (onTag && process.env.GITHUB_REF_NAME !== `v${p.version}`) throw new Error('Release tag must match package.json exactly.');
+          if (channel === 'preview' && !version.includes('-')) throw new Error('Preview releases require a prerelease version.');
           if (channel === 'production') {
-            if ([p.version, p.devDependencies['electron-builder'], p.dependencies['electron-updater']].some(v => v.includes('-'))) throw new Error('Production requires stable app, builder and updater versions.');
+            if ([version, p.devDependencies['electron-builder'], p.dependencies['electron-updater']].some(v => v.includes('-'))) throw new Error('Production requires stable app, builder and updater versions.');
             for (const name of ['MAC_CERT', 'MAC_PASSWORD', 'WIN_CERT', 'WIN_PASSWORD', 'APPLE_KEY', 'APPLE_KEY_ID', 'APPLE_ISSUER']) if (!process.env[name]) throw new Error(`Missing production signing prerequisite: ${name}`);
           }
-          const publish = process.env.GITHUB_REF_TYPE === 'tag' || process.env.REQUESTED_PUBLISH === 'true';
-          appendFileSync(process.env.GITHUB_OUTPUT, `channel=${channel}\nversion=${p.version}\npublish=${publish}\n`);
+          const publish = onTag || onMain || process.env.REQUESTED_PUBLISH === 'true';
+          appendFileSync(process.env.GITHUB_OUTPUT, `channel=${channel}\nversion=${version}\npublish=${publish}\n`);
           NODE
 
   build:
@@ -92,6 +103,10 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libsecret-1-0 libfuse2t64 libnss3 libgbm1 xvfb dbus-x11 gnome-keyring
       - run: npm ci
+      - name: Apply release version
+        env:
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+        run: node --input-type=module -e "import { readFileSync, writeFileSync } from 'node:fs'; const p = JSON.parse(readFileSync('package.json','utf8')); p.version = process.env.RELEASE_VERSION; writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n'); console.log(p.version);"
       - run: npm run check
       - name: Prepare the pinned CPU inference runtime
         run: npm run desktop:prepare -- ${{ matrix.platform }}-${{ matrix.arch }}
@@ -271,7 +286,7 @@ jobs:
             exit 1
           fi
           if [ "$RELEASE_CHANNEL" = preview ]; then
-            gh release create "$tag" release-assets/* --target "$GITHUB_SHA" --prerelease --latest=false --title "Flusso Journal ${RELEASE_VERSION} — preview" --notes 'Preview build. Installers are not yet signed by Apple or Microsoft. Automatic production updates are disabled. Review docs/desktop-releases.md before installation.'
+            gh release create "$tag" release-assets/* --target "$GITHUB_SHA" --prerelease --latest=false --title "Flusso Journal ${RELEASE_VERSION} — preview" --notes 'Preview build. Installers are not yet signed by Apple or Microsoft. Packaged preview apps check this channel and show an in-app Update prompt when a newer signed preview manifest is published. Review docs/desktop-releases.md before installation.'
           else
             gh release create "$tag" release-assets/* --target "$GITHUB_SHA" --latest --title "Flusso Journal ${RELEASE_VERSION}" --generate-notes
           fi

@@ -82,7 +82,8 @@ export async function runListenerReplay() {
     const original = store.createEntry(note({ body: ticket('synthetic-once') }));
     await tick();
     assert.equal(submissions.length, 1); assert.equal(classifications.length, 0);
-    assert.deepEqual(submissions[0].orders.map(order => order.conditions), Array(2).fill({ maxSlippagePct: 1, maxNotionalUsd: 20, maxLeverage: 2 }));
+    // Local maxLeverage is a ceiling gate only; it is not injected unless the ticket requests it.
+    assert.deepEqual(submissions[0].orders.map(order => order.conditions), Array(2).fill({ maxSlippagePct: 1, maxNotionalUsd: 20 }));
     assert.equal(submissions[0].orders[0].placeAtUtc, submissions[0].orders[1].placeAtUtc);
     const decided = store.entry(original.id);
     assert.equal(decided.status, 'reviewed'); assert.match(decided.body, /## Listener result/);

@@ -17,7 +17,7 @@ The standalone app includes its runtime. You do not install Node or Ollama.
 The full Flusso dashboard remains at [flusso.stream](https://flusso.stream).
 Choose the account control at the bottom left to connect, disconnect, open account settings, or check the app version and updates. Cloud access is optional.
 
-Version **0.2.0-preview.5** remains an unsigned preview. Review the release's platform requirements and signing status. Preview automatic updates are disabled; signed production updates have a check, download, and restart flow that requires your clicks. Do not disable OS signature protections. See [desktop release details](docs/desktop-releases.md).
+Version **0.2.0-preview.6** remains an unsigned preview. Review the release's platform requirements and signing status. Packaged preview builds check GitHub for newer signed preview manifests on launch and every few hours; when one is available, a corner **Update** prompt lets you download and restart—no manual redownload. Production builds use the same flow on the stable channel. Do not disable OS signature protections. See [desktop release details](docs/desktop-releases.md).
 
 Use an unlocked OS credential store: macOS Keychain, Windows Credential Manager,
 or Linux Secret Service (GNOME Keyring or KWallet). On Ubuntu 24.04, use the DEB

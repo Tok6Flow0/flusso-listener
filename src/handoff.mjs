@@ -26,7 +26,7 @@ export function describeEntryHandoff({ entry, settings, checkpoint = null, activ
   const currentActivity = activity?.version === entry.version ? activity : null;
   const context = { inScope: mismatch === null, scopeMismatch: mismatch, entryStatus: entry.status, listenerEnabled: settings.enabled, checkpointState: currentCheckpoint?.state ?? null };
   const result = (code, reason) => ({ schemaVersion: 'flusso.listener_handoff.v1', kind, code, reason, context });
-  const currentAttempts = attempts.filter(row => row.entryId === entry.id && row.origin === entry.origin && row.version === entry.version && ['orders', 'legacy'].includes(row.kind));
+  const currentAttempts = attempts.filter(row => row.entryId === entry.id && row.origin === entry.origin && row.version === entry.version && ['orders', 'close', 'legacy'].includes(row.kind));
   // Delivery evidence outlives admission freshness, selection, and local opt-out.
   // Prefer uncertainty if inconsistent retained rows ever share the same revision.
   const attempt = currentAttempts.find(row => ['pending', 'unknown'].includes(row.status))
@@ -46,7 +46,7 @@ export function describeEntryHandoff({ entry, settings, checkpoint = null, activ
     notebook: 'This entry is outside the selected notebooks.',
     section: 'This entry does not contain the selected Markdown heading.',
   }[mismatch]);
-  const research = 'No explicit flusso-orders ticket is present. Research and model classifications do not authorize submission.';
+  const research = 'No explicit flusso-orders or flusso-close ticket is present. Research and model classifications do not authorize submission.';
   if (entry.status !== 'watching') return result(entry.status, `This entry is ${entry.status}; only watching entries are considered.${kind === 'research' ? ` ${research}` : ''}`);
   if (currentCheckpoint?.state === 'baseline') return result('baselined', `This existing revision was baselined and will be skipped.${kind === 'research' ? ` ${research}` : ''}`);
   if (!settings.enabled) return result('listener_off', 'The Listener is off; no entry is checked or submitted.');

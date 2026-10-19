@@ -5,8 +5,17 @@ import { entryInScope as inScope, ticketSetupGap } from './handoff.mjs';
 
 const MAX_READBACK_CHECKS = 10;
 
-export function summarize(receipt, count) {
+export function summarize(receipt, count, kind = 'orders') {
   const placed = receipt.lines?.filter(line => line.status === 'submitted').length ?? 0;
+  if (kind === 'close') {
+    const noun = count === 1 ? 'position' : 'positions';
+    switch (receipt.status) {
+      case 'submitted': return `${count} ${noun} close${count === 1 ? '' : 's'} accepted by Flusso. Accepted is not settled until the venue fills.`;
+      case 'partial': return `${placed} of ${count} closes accepted. Check remaining positions in Flusso.`;
+      case 'blocked': return receipt.message || receipt.lines?.find(line => line.status === 'blocked')?.message || 'Flusso refused the closes.';
+      default: return receipt.message || 'Close result unconfirmed. Check positions in Flusso; this ticket will not be resent.';
+    }
+  }
   const noun = count === 1 ? 'order' : 'orders';
   switch (receipt.status) {
     case 'submitted': return `${count} ${noun} sent to Flusso. Sent is not filled.`;
@@ -59,7 +68,8 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
   async function settle(attempt, receipt) {
     store.put('attempt', attempt.id, { ...attempt, status: receipt.status, receipt });
     const activity = store.all('activity').find(row => row.attemptId === attempt.id);
-    const reason = summarize(receipt, attempt.orders.length);
+    const count = attempt.kind === 'close' ? (attempt.positionIds?.length ?? 0) : (attempt.orders?.length ?? 0);
+    const reason = summarize(receipt, count, attempt.kind === 'close' ? 'close' : 'orders');
     if (activity) store.put('activity', activity.id, { ...activity, status: receipt.status, reason });
     if (receipt.status === 'unknown' || !attempt.origin) return;
     const noted = await noteResult(store.entry(attempt.entryId, attempt.origin), { status: receipt.status, reason, lines: receipt.lines ?? [] });
@@ -70,6 +80,10 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
   async function reconcileUnknown() {
     for (const attempt of store.all('attempt').filter(row => ['pending', 'unknown'].includes(row.status))) {
       if (activeAbort.signal.aborted) return false;
+      if (attempt.kind === 'close') {
+        state.lastError = 'A position close is still unconfirmed. Check positions in Flusso, then mark it resolved in Activity. It will never be resent.';
+        return false;
+      }
       if (attempt.kind !== 'orders') { state.lastError = 'An earlier listener submission is unconfirmed. Check it in Flusso, then mark it resolved in Activity. It will never be resent.'; return false; }
       if ((attempt.retries ?? 0) >= MAX_READBACK_CHECKS) { state.lastError = 'An order result is still unconfirmed. Check it in Flusso, then mark it resolved in Activity.'; return false; }
       const connection = await cloud.status();
@@ -109,7 +123,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
     if (setupGap) return wait(setupGap);
     // A flood of tickets, from a mistake or a hostile note, stops at the owner's daily cap.
     const since = clock() - 86400000;
-    const recent = store.all('attempt').filter(row => row.kind === 'orders' && Date.parse(row.atUtc) > since).length;
+    const recent = store.all('attempt').filter(row => ['orders', 'close'].includes(row.kind) && Date.parse(row.atUtc) > since).length;
     if (recent >= (settings.maxTicketsPerDay ?? 24)) return refuse(`Daily limit reached: ${recent} tickets in the last 24 hours.`);
     if (!reconciled || (state.cloudComplete === false && entry.origin === 'cloud')) { store.put('activity', activity.id, { ...activity, status: 'waiting', reason: 'Waiting for a previous result or a complete cloud read. It will be tried again.' }); return 'retry'; }
     if (!settings.enabled || settings.version !== settingsVersion || activeAbort.signal.aborted) return pauseBeforeClaim();
@@ -120,17 +134,29 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
     if (!connection.connected || !connection.scopes.includes('mcp:write')) return wait('Connect Flusso with write access.');
     if (activeAbort.signal.aborted || store.settings().version !== settingsVersion) return pauseBeforeClaim();
     const reference = request.ticketId ? `ticket ${request.ticketId}` : `Journal entry ${entry.id}`;
+    const canDispatch = async () => {
+      const current = store.settings(), currentConnection = await cloud.status();
+      return !activeAbort.signal.aborted && current.enabled && current.executionEnabled
+        && current.version === settingsVersion && current.accountId === settings.accountId
+        && currentConnection.connected && currentConnection.clientId === connection.clientId
+        && (currentConnection.connectionId ?? null) === (connection.connectionId ?? null);
+    };
+    if (request.kind === 'close') {
+      const attempt = { id: idempotencyKey, kind: 'close', signalIdentity: request.signalIdentity, idempotencyKey, accountId: settings.accountId, clientId: connection.clientId, connectionId: connection.connectionId ?? null, positionIds: structuredClone(request.positionIds), orders: [], reference, ticketId: request.ticketId, entryId: entry.id, origin: entry.origin, title: entry.title, version: entry.version, status: 'pending', retries: 0, atUtc: activity.atUtc };
+      if (!store.claimAttempt(attempt)) return refuse('This ticket was already placed. Editing or copying the entry does not place it again.');
+      store.put('activity', activity.id, { ...activity, attemptId: attempt.id, status: 'sending', reason: `Closing ${attempt.positionIds.length} position${attempt.positionIds.length === 1 ? '' : 's'} through Flusso…` });
+      let receipt;
+      try { receipt = await cloud.closePositions(attempt, { canDispatch }); }
+      catch { receipt = { status: 'unknown', lines: [], message: 'Flusso did not confirm the close. Check positions in Flusso; this ticket will not be resent.' }; }
+      await settle(attempt, receipt);
+      if (receipt.status === 'unknown') { store.put('attempt', attempt.id, { ...store.get('attempt', attempt.id), retries: 1 }); state.lastError = 'A close result is unconfirmed. New tickets wait until it resolves.'; return 'stop'; }
+      return 'continue';
+    }
     const attempt = { id: idempotencyKey, kind: 'orders', signalIdentity: request.signalIdentity, idempotencyKey, accountId: settings.accountId, clientId: connection.clientId, connectionId: connection.connectionId ?? null, orders: structuredClone(request.orders), reference, ticketId: request.ticketId, entryId: entry.id, origin: entry.origin, title: entry.title, version: entry.version, status: 'pending', retries: 0, atUtc: activity.atUtc };
     if (!store.claimAttempt(attempt)) return refuse('This ticket was already placed. Editing or copying the entry does not place it again.');
     store.put('activity', activity.id, { ...activity, attemptId: attempt.id, status: 'sending', reason: `Sending ${attempt.orders.length} order${attempt.orders.length === 1 ? '' : 's'} to Flusso…` });
     let receipt;
-    try { receipt = await cloud.submitOrders(attempt, { canDispatch: async () => {
-      const current = store.settings(), currentConnection = await cloud.status();
-      return !activeAbort.signal.aborted && current.enabled && current.executionEnabled
-        && current.version === settingsVersion && current.accountId === attempt.accountId
-        && currentConnection.connected && currentConnection.clientId === attempt.clientId
-        && (currentConnection.connectionId ?? null) === attempt.connectionId;
-    } }); }
+    try { receipt = await cloud.submitOrders(attempt, { canDispatch }); }
     catch { receipt = { status: 'unknown', lines: [], message: 'Flusso did not confirm the result. The listener will check canonical orders without resending this ticket.' }; }
     await settle(attempt, receipt);
     if (receipt.status === 'unknown') { store.put('attempt', attempt.id, { ...store.get('attempt', attempt.id), retries: 1 }); state.lastError = 'An order result is unconfirmed. New tickets wait until it resolves.'; return 'stop'; }
@@ -165,7 +191,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
         if (ticket) {
           const request = buildRequest({ entry, settings: store.settings(), now: clock() });
           // Checkpoint before any dispatch. An interrupted dispatch is recovered by its durable attempt.
-          store.put('activity', activity.id, { ...activity, decision: 'ticket', status: 'observed', reason: 'Order ticket found.' });
+          store.put('activity', activity.id, { ...activity, decision: 'ticket', status: 'observed', reason: 'Action ticket found.' });
           store.put('checkpoint', key, { version: entry.version, state: 'observed', atUtc });
           const outcome = await placeTicket({ entry, request, activity: { ...activity, decision: 'ticket' }, settingsVersion, reconciled });
           if (outcome === 'retry' || outcome === 'retry-stop') store.delete('checkpoint', key); // No attempt was claimed: read it again next check.

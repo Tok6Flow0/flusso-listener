@@ -38,12 +38,15 @@ and [builder v27 migration notes](https://www.electron.build/docs/migration/v27-
 
 Preview installers are not Apple-notarized or Microsoft-signed. The operating
 system may warn or refuse installation under an administrator's policy. Do not
-disable Gatekeeper, SmartScreen, or signature verification. Preview builds have
-automatic production updates disabled and appear only as GitHub prereleases;
-they do not create `latest` update manifests or replace a stable release.
-The preview release workflow still requires cryptographically signed update
-metadata. A signed manifest authenticates that metadata; it does not make an
-unsigned installer notarized or prove that all runtime paths have been tested.
+disable Gatekeeper, SmartScreen, or signature verification. Preview builds
+publish GitHub prereleases with architecture-specific `preview-*` update
+manifests. Packaged preview apps check that channel on launch and on a quiet
+cadence, then show an in-app Update prompt (download, then restart) when a
+newer signed manifest is available. They do not create `latest` production
+manifests or replace a stable release. The preview release workflow still
+requires cryptographically signed update metadata. A signed manifest
+authenticates that metadata; it does not make an unsigned installer notarized
+or prove that all runtime paths have been tested.
 
 ## Build locally
 
@@ -72,11 +75,13 @@ hashes. The artwork has not been redrawn.
 
 ## Release workflow
 
-Use **Actions → Desktop release → Run workflow** to build downloadable CI
-artifacts. `publish` defaults to false. Select preview and enable publishing to
-publish a complete GitHub prerelease, or push a matching `v<package-version>`
-tag after review. All six builds must succeed before publication. An existing
-release is immutable; the workflow refuses to overwrite its assets.
+Every push to `main` builds and publishes a unique preview release
+(`<major.minor.patch>-preview.<run-number>`) so installed Journals can pick it
+up through the in-app Update prompt. Use **Actions → Desktop release → Run
+workflow** for a manual build; `publish` defaults to false unless you enable it.
+Push a matching `v<package-version>` tag for a deliberate versioned release.
+All six builds must succeed before publication. An existing release is
+immutable; the workflow refuses to overwrite its assets.
 
 Every release run requires the repository secret
 `ELECTRON_BUILDER_UPDATE_SIGN_KEY`: an Ed25519 private key in PEM PKCS8 format.
