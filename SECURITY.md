@@ -69,3 +69,11 @@ installation and downgrades. An update stops the listener and disables execution
 before restart. Preview builds disable automatic production updates. Distribution
 signing/notarization and prerelease tooling limits are documented in
 [desktop-releases.md](docs/desktop-releases.md).
+
+
+## Contributor and release access
+
+Development access, Aaron-owned governance, secret checks and required external
+GitHub controls are documented in [security-onboarding.md](docs/security-onboarding.md).
+The desktop update private key is release authority, never a developer or test
+credential. Its public verification material is intentionally distributed.

@@ -1,0 +1,61 @@
+name: Security
+
+on:
+  pull_request:
+  push:
+    branches: [main, release/next]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  governance:
+    name: Governance ownership
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require Aaron for governance changes
+        env:
+          CHANGE_ACTOR: ${{ github.event.pull_request.user.login || github.actor }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, subprocess
+          head = subprocess.check_output(['git', 'rev-parse', '--verify', '--end-of-options', os.environ['HEAD_SHA'] + '^{commit}'], text=True).strip()
+          base = os.environ.get('BASE_SHA', '')
+          if base and set(base) != {'0'}:
+              base = subprocess.check_output(['git', 'rev-parse', '--verify', '--end-of-options', base + '^{commit}'], text=True).strip()
+              names = subprocess.check_output(['git', 'diff', '--name-only', '-z', base, head], text=True).split('\0')
+          else:
+              names = subprocess.check_output(['git', 'ls-tree', '-r', '--name-only', '-z', head], text=True).split('\0')
+          protected = [name for name in names if pathlib.PurePosixPath(name).name.lower() == 'agents.md'
+                       or name.startswith(('.github/', '.githooks/', 'scripts/security/'))
+                       or name in ('.gitleaks.toml', '.gitleaksignore')]
+          if protected and os.environ['CHANGE_ACTOR'] != 'Tok6Flow0':
+              raise SystemExit('Governance changes must originate from Aaron or his authorized agent using Tok6Flow0. Ask Aaron to make the change.')
+          print('Governance ownership check passed.')
+          PY
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Scan tracked source
+        run: bash scripts/security/gitleaks.sh tree
+      - name: Scan every proposed commit
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash scripts/security/gitleaks.sh range "$BASE_SHA" "$HEAD_SHA"

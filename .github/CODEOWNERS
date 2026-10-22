@@ -1,0 +1,14 @@
+# Governance and security controls require Aaron's review.
+# Enable required code-owner review in the protected branch rules.
+/AGENTS.md @Tok6Flow0
+**/AGENTS.md @Tok6Flow0
+/.github/CODEOWNERS @Tok6Flow0
+/.github/workflows/ @Tok6Flow0
+/.githooks/ @Tok6Flow0
+/.gitleaks* @Tok6Flow0
+/.pre-commit-config.* @Tok6Flow0
+/scripts/security/ @Tok6Flow0
+/SECURITY.md @Tok6Flow0
+/docs/security-onboarding.md @Tok6Flow0
+/.gitignore @Tok6Flow0
+/electron-builder.cjs @Tok6Flow0
