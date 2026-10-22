@@ -41,11 +41,17 @@ credentials out of ordinary test and pull-request jobs. Production deployment an
 signing require Aaron's reviewed source and separately protected credentials;
 repository instructions and packaging exclusions do not replace platform IAM.
 
-The current desktop workflow signs and publishes previews on main pushes. Its
-repository-level update-signing secret is available to trusted repository
-workflows. Before widening write access, Aaron must coordinate moving signing
-authority into a protected release environment (with required owner approval and
-branch/tag restrictions), remove the repository-level copy, and bind both the
-plan and build jobs to that environment. All-platform release behavior must be
-verified during that coordinated change. This onboarding patch does not change
-the key, trusted public update keys or release behavior.
+The desktop workflow signs and publishes previews from main. Both its plan and
+build jobs use the `release-signing` environment, which requires Aaron's approval,
+disallows admin bypass, and permits only `main` and `v*` tags. An active GitHub tag
+ruleset restricts creation, update and deletion of `v*` tags to repository admins.
+Ordinary development branches cannot obtain the update-signing key. The
+repository-level key was removed after an encrypted owner-only migration and a
+protected job verified the same public-key identity as the existing packaged app.
+Installed update trust was preserved; no signing key was rotated.
+
+Keep these platform controls in place when editing the workflow or changing
+repository visibility. Required main checks are `Secret scan` and `Governance
+ownership`, with code-owner review and stale-approval dismissal. Aaron remains
+the only code owner; legitimate feature and security work follows reviewed PRs.
+Main and tag releases retain their previous version rules and platform matrix.
