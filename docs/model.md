@@ -25,7 +25,12 @@ Ollama at `127.0.0.1:11434`; it retains the model for five idle minutes. Neither
 runtime exposes tools, HTTP clients, shell commands, or credentials to the model.
 Classification can be wrong. It only flags notes for review in Activity; it
 never creates, approves or places an order. Orders come only from explicit
-`flusso-orders` tickets that code validates against your limits.
+`flusso-orders` tickets that code validates against your limits; position closes
+use explicit `flusso-close` tickets with exact owned position IDs. Both paths
+publish validation and receipt events without waiting for model classification.
+The Listener's live transcript also shows model review in progress, followed by
+the final structured decision and short explanation. The model runs with thinking
+disabled; internal reasoning is not requested or recorded.
 
 [Ollama's FAQ](https://docs.ollama.com/faq) documents loopback defaults, memory
 behavior and local-only mode. Keep `OLLAMA_HOST=127.0.0.1:11434` and configure

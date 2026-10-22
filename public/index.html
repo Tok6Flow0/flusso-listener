@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Flusso Journal</title>
+  <title>Flusso Listener</title>
   <link rel="icon" href="/flusso-mark.png"><link rel="stylesheet" href="/tokens.css"><link rel="stylesheet" href="/styles.css">
   <script src="/app.mjs" type="module"></script>
 </head>
@@ -11,8 +11,8 @@
   <aside class="sidebar">
     <a class="brand" href="/"><img src="/flusso-mark.png" alt="" width="28" height="28"><span>flusso</span></a>
     <nav aria-label="Sections">
-      <button type="button" class="nav-button active" data-view="journal" aria-current="page"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 3h9a2 2 0 0 1 2 2v12H6a2 2 0 0 1-2-2V4a1 1 0 0 1 1-1Z"/><path d="M4 15a2 2 0 0 1 2-2h10"/><path d="M8 7h5"/></svg><span>Journal</span></button>
-      <button type="button" class="nav-button" data-view="listener"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 10h2.5l2-5 3 10 2-5H17"/></svg><span>Listener</span><span class="nav-dot" id="listener-dot"></span><span class="sr-only" id="listener-dot-label">Off</span></button>
+      <button type="button" class="nav-button active" data-view="listener" aria-current="page"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 10h2.5l2-5 3 10 2-5H17"/></svg><span>Listener</span><span class="nav-dot" id="listener-dot"></span><span class="sr-only" id="listener-dot-label">Off</span></button>
+      <button type="button" class="nav-button" data-view="journal"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 3h9a2 2 0 0 1 2 2v12H6a2 2 0 0 1-2-2V4a1 1 0 0 1 1-1Z"/><path d="M4 15a2 2 0 0 1 2-2h10"/><path d="M8 7h5"/></svg><span>Journal</span></button>
       <button type="button" class="nav-button" data-view="activity"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 5h12M4 10h12M4 15h7"/></svg><span>Activity</span><span class="nav-count" id="activity-count" hidden></span></button>
     </nav>
     <div class="sidebar-bottom">
@@ -45,7 +45,7 @@
       <button id="setup-model" type="button">Set up</button>
     </section>
 
-    <section id="view-journal" class="view">
+    <section id="view-journal" class="view" hidden>
       <header class="view-head">
         <h1>Journal</h1>
         <div class="head-actions">
@@ -60,7 +60,7 @@
         <form id="entry-form">
           <div class="field-grid"><label>Notebook<select id="entry-notebook" required></select></label><label>Status<select id="entry-status"><option value="watching">Watching</option><option value="reviewed">Reviewed</option><option value="closed">Closed</option></select></label></div>
           <label>Title<input id="entry-title" maxlength="200" required></label>
-          <label><span class="label-row">Text <button id="insert-ticket" type="button" class="link-button">Add order ticket</button></span><textarea id="entry-body" rows="10" maxlength="20000" placeholder="Markdown"></textarea></label>
+          <div class="entry-body-field"><div class="label-row"><label for="entry-body">Text</label><div class="ticket-tools"><button id="insert-ticket" type="button" class="link-button">Add order ticket</button><button id="insert-close-ticket" type="button" class="link-button">Add close ticket</button></div></div><textarea id="entry-body" rows="10" maxlength="20000" placeholder="Markdown"></textarea></div>
           <details><summary>Structured signal</summary><label class="sr-only" for="entry-signal">Signal JSON</label><textarea id="entry-signal" class="mono" rows="7" placeholder="product.journal_signal.v1"></textarea></details>
           <div class="form-actions"><span class="hint">Saved on this computer.</span><button type="submit" class="primary">Save</button></div>
         </form>
@@ -74,13 +74,28 @@
       </div>
     </section>
 
-    <section id="view-listener" class="view" hidden>
+    <section id="view-listener" class="view">
       <header class="view-head">
         <h1>Listener</h1>
         <label class="switch switch-lg"><input id="enabled" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span id="enabled-label">Off</span></label>
       </header>
       <p class="status-line" id="last-check">Not checked yet</p>
       <div class="connect-hint" id="connect-hint" hidden><span>Connect Flusso for the cloud Journal and auto-trade.</span><button id="connect" type="button" class="primary">Connect</button></div>
+      <div class="listener-toolbar">
+        <div class="watch-summary" id="watch-summary"></div>
+        <div class="listener-actions"><button id="check-now" type="button">Check now</button><button id="configure-listener" type="button" class="primary" aria-expanded="false" aria-controls="listener-configuration">Configure Listener</button></div>
+      </div>
+      <section class="process-panel" aria-labelledby="process-heading">
+        <div class="process-head"><h2 id="process-heading">Live activity</h2><span id="process-state" class="process-state" role="status">Waiting</span></div>
+        <p id="process-message" class="process-message"></p>
+        <ol id="process-events" class="process-events" aria-label="Processing updates"></ol>
+      </section>
+      <section class="decisions-panel" aria-labelledby="decisions-heading">
+        <div class="process-head"><h2 id="decisions-heading">Latest decisions</h2><button id="all-activity" type="button" class="link-button">View all activity</button></div>
+        <div id="latest-decisions" class="latest-decisions"></div>
+      </section>
+      <section id="listener-configuration" class="listener-configuration" aria-labelledby="configuration-heading" hidden>
+      <div class="configuration-head"><h2 id="configuration-heading">Listener settings</h2><button id="close-configuration" type="button" class="ghost">Close settings</button></div>
       <form id="settings-form" class="settings">
         <section class="card">
           <h2>Watch</h2>
@@ -95,7 +110,7 @@
           <fieldset class="picks"><legend>Notebooks <span class="hint">· none selected means all</span></legend><div id="watch-notebooks" class="chips"></div></fieldset>
           <details><summary>Model instructions</summary>
             <label>Only notes under this heading<input id="section" maxlength="200" placeholder="Optional"></label>
-            <label>What the model should flag<textarea id="instructions" rows="3" maxlength="1000" placeholder="Optional"></textarea></label>
+            <label>What the model should do<textarea id="instructions" rows="3" maxlength="1000" placeholder="Optional"></textarea></label>
           </details>
         </section>
         <section class="card">
@@ -121,8 +136,9 @@
           <button id="setup-model-panel" type="button" hidden>Set up</button>
           <div class="code-scroll" id="model-manual-command"><code>ollama pull qwen3:1.7b</code></div>
         </section>
-        <div class="form-actions"><button id="check-now" type="button">Check now</button><button id="save-settings" type="submit" class="primary">Saved</button></div>
+        <div class="form-actions"><button id="save-settings" type="submit" class="primary">Saved</button></div>
       </form>
+      </section>
     </section>
 
     <section id="view-activity" class="view" hidden>

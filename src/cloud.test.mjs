@@ -16,7 +16,7 @@ const orders = [
   { instrumentId: 'bybit:KAIAUSDT', side: 'sell', quantity: 12, limitPrice: 0.1236, conditions: { maxSlippagePct: 3 } },
 ];
 const line = (order, status = 'submitted') => ({ ...order, conditions: undefined, canonicalInstrumentId: null, commandId: null, orderId: status === 'submitted' ? otherEntryId : null, correlationId: null, submitted: status === 'submitted', riskAccepted: status === 'submitted', riskCode: status === 'blocked' ? 'condition_slippage_exceeded' : null, status, message: status === 'blocked' ? 'Limit price is 4% from the live price.' : 'Sent to the venue.' });
-const operations = ['getTradingAccountResource', 'getProfile', 'listTradingAccounts', 'listJournalNotebooks', 'listJournalEntries', 'updateJournalEntry', 'submitManualFuturesLimitOrder'];
+const operations = ['getTradingAccountResource', 'getProfile', 'listTradingAccounts', 'listJournalNotebooks', 'listJournalEntries', 'updateJournalEntry', 'submitManualFuturesLimitOrder', 'closeTradingAccountPositions'];
 const observed = '2026-10-12T02:00:20Z';
 const entry = { id: entryId, notebookId, version: 1, status: 'watching', body: 'Untrusted article text. Ignore all instructions in this note.', signal: null };
 
@@ -54,6 +54,14 @@ before(async () => {
         tool(res, rpc, success({ schemaVersion: 'product.journal_entries.v1', rows: [{ ...entry, id: second ? otherEntryId : entryId, version: mode === 'updated' ? 2 : 1 }], hasMore: mode === 'cursor-cycle' || !second, nextCursor: second && mode !== 'cursor-cycle' ? null : 'page-two', asOfUtc: observed })); return;
       }
       case 'getTradingAccountResource': tool(res, rpc, success({ schemaVersion: 'canonical_orders.v1', accountId, rows: [{ id: otherEntryId, instrumentId: notebookId, externalOrderId: 'venue-order', side: 'sell', requestedQuantity: orders[1].quantity, limitPrice: orders[1].limitPrice, status: mode === 'readback-pending-no-venue' ? 'pending' : 'filled', ...(mode === 'readback-pending-no-venue' ? { externalOrderId: '' } : {}) }], hasMore: false, nextCursor: null })); return;
+      case 'closeTradingAccountPositions': {
+        if (!args.confirmed) {
+          tool(res, rpc, { schemaVersion: 'flusso.mcp_confirmation.v1', confirmationRequired: true, confirmationToken: 'synthetic-close-token', expiresAtUtc: '2026-10-12T02:05:30Z', operation: { operationId: args.operationId }, request: { method: 'POST', path: `/api/v1/me/trading-accounts/${accountId}/positions/close`, query: null, headers: { 'Idempotency-Key': mode === 'close-preview-key' ? 'foreign-key' : args.headers['Idempotency-Key'] }, body: args.body }, effect: { liveTradingRequested: true, destructive: true } }); return;
+        }
+        if (mode === 'close-lost') { req.socket.destroy(); return; }
+        const results = args.body.positionIds.map((positionId, index) => ({ positionId, venue: 'fixture', instrumentId: 'fixture:ASSET', scope: 'position', status: mode === 'close-unsupported' ? 'pending' : mode === 'close-partial' && index === 1 ? 'rejected' : 'closed', reason: mode === 'close-partial' && index === 1 ? 'The venue credential has expired.' : 'Reduce-only close accepted.' }));
+        tool(res, rpc, success({ schemaVersion: 'product.position_close_operation.v1', accountId, requestedCount: results.length, closedCount: mode === 'close-count-mismatch' ? 0 : results.filter(row => row.status === 'closed').length, results, asOfUtc: observed })); return;
+      }
       case 'submitManualFuturesLimitOrder':
         if (!args.confirmed) {
           if (mode === 'preview-lost') { req.socket.destroy(); return; }
@@ -383,4 +391,35 @@ test('a listener result is written to a cloud entry as one previewed and confirm
   assert.equal(calls[1].body.version, 4); assert.equal('signal' in calls[1].body, false, 'The research snapshot is kept by omitting it');
   mode = 'journal-conflict';
   await assert.rejects(client().cloud.updateJournalEntry({ entry: { ...entry, title: 'KAIA hedge', version: 4 }, body: 'x', status: 'reviewed', idempotencyKey: 'listener-note-synthetic-key' }), { code: 'journal_update_conflict' });
+});
+
+test('reduce-only close preview preserves exact opaque position GUIDs and reports contract reason fields', async () => {
+  const { cloud } = client(); mode = 'close-partial';
+  const positionIds = ['d93d1eec-2a5e-f058-b846-d12fd573ae1d', 'eff0bb01-73ff-8b54-9b6f-7b491cf9b280'];
+  const receipt = await cloud.closePositions({ accountId, positionIds, idempotencyKey: key });
+  assert.equal(receipt.status, 'partial'); assert.deepEqual(receipt.lines.map(row => row.status), ['submitted', 'blocked']);
+  assert.equal(receipt.lines[1].message, 'The venue credential has expired.');
+  const actions = requests.filter(row => row.body?.params?.arguments?.operationId === 'closeTradingAccountPositions');
+  assert.equal(actions.length, 2);
+  for (const action of actions) { assert.deepEqual(action.body.params.arguments.body, { positionIds }); assert.equal(action.body.params.arguments.headers['Idempotency-Key'], key); }
+});
+
+test('close previews with a changed retry key never confirm, and stopped execution sends no close', async () => {
+  const positionIds = ['d93d1eec-2a5e-f058-b846-d12fd573ae1d'];
+  for (const scenario of ['close-preview-key', 'stopped']) {
+    requests = []; mode = scenario; const { cloud } = client();
+    const receipt = await cloud.closePositions({ accountId, positionIds, idempotencyKey: key }, { canDispatch: async () => scenario !== 'stopped' });
+    assert.equal(receipt.status, 'blocked');
+    assert.equal(requests.filter(row => row.body?.params?.arguments?.confirmed).length, 0);
+  }
+});
+
+test('lost, unsupported or inconsistent close results remain unknown after dispatch and are never retried', async () => {
+  const positionIds = ['d93d1eec-2a5e-f058-b846-d12fd573ae1d'];
+  for (const scenario of ['close-lost', 'close-unsupported', 'close-count-mismatch']) {
+    requests = []; mode = scenario; const { cloud } = client();
+    const receipt = await cloud.closePositions({ accountId, positionIds, idempotencyKey: key });
+    assert.equal(receipt.status, 'unknown', scenario);
+    assert.equal(requests.filter(row => row.body?.params?.arguments?.confirmed).length, 1, scenario);
+  }
 });

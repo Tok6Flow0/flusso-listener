@@ -384,3 +384,63 @@ test('auto-trade only acts on picked notebooks and stops at the daily ticket cap
     assert.equal(calls, 1); assert.match(w.store.all('activity').map(row => row.reason).join(' '), /Daily limit reached: 1 ticket/);
   } finally { listener.stop(); await w.close(); }
 });
+
+test('public progress is visible during model work and retains its published decision without internal reasoning', async () => {
+  const w = await workspace(), started = deferred(), finish = deferred();
+  const listener = createListener({ store: w.store, cloud: fakeCloud(), classify: async () => { started.resolve(); return finish.promise; }, clock: () => now });
+  try {
+    enable(w.store); listener.start(); const entry = w.store.createEntry(note(w.store));
+    const tick = listener.tick(); await started.promise;
+    const during = listener.status();
+    assert.equal(during.busy, true); assert.equal(during.processing.stage, 'model'); assert.equal(during.processing.entryId, entry.id);
+    assert.equal(during.processing.running, true); assert.equal(w.store.all('activity')[0].status, 'processing');
+    assert.deepEqual(during.events.slice(-3).map(row => row.stage), ['queued', 'read', 'model']);
+    during.events.length = 0; assert.ok(listener.status().events.length > 0, 'Status snapshots cannot mutate runtime progress.');
+    finish.resolve({ decision: 'review', reason: 'An explicit action ticket is missing.' }); await tick;
+    const after = listener.status();
+    assert.equal(after.processing.stage, 'idle'); assert.equal(after.processing.running, false);
+    assert.equal(after.lastModelOutput.reason, 'An explicit action ticket is missing.');
+    assert.ok(after.events.some(row => row.stage === 'decision' && row.message === after.lastModelOutput.reason));
+    assert.ok(after.events.some(row => row.stage === 'result' && row.message.includes('flusso-close')));
+    assert.equal(after.events.some(row => 'thinking' in row || 'reasoning' in row), false);
+    for (let i = 0; i < 30; i++) await listener.tick();
+    assert.equal(listener.status().events.length, 100, 'Runtime transcript stays bounded.');
+  } finally { finish.resolve({ decision: 'ignore', reason: 'Cleanup.' }); await listener.stop(); await w.close(); }
+});
+
+test('an explicit close ticket reaches the existing reduce-only path once with retained public receipts', async () => {
+  const w = await workspace(), calls = [];
+  const positionIds = ['d93d1eec-2a5e-f058-b846-d12fd573ae1d', 'eff0bb01-73ff-8b54-9b6f-7b491cf9b280'];
+  const body = '```flusso-close\n' + JSON.stringify({ id: 'close-exact-owned-positions', positionIds }) + '\n```';
+  const listener = createListener({ store: w.store, cloud: fakeCloud({ closePositions: async (attempt, { canDispatch }) => {
+    assert.equal(await canDispatch(), true); calls.push(attempt);
+    return { status: 'submitted', lines: positionIds.map(positionId => ({ positionId, status: 'submitted', message: 'Reduce-only close accepted.' })) };
+  }, submitOrders: async () => { throw new Error('Close must not use opening orders.'); } }), classify: noModel, clock: () => now });
+  try {
+    enable(w.store); listener.start(); const entry = w.store.createEntry(note(w.store, { body })); await listener.tick();
+    assert.equal(calls.length, 1); assert.deepEqual(calls[0].positionIds, positionIds); assert.equal(calls[0].kind, 'close');
+    assert.equal(w.store.entry(entry.id).status, 'reviewed'); assert.match(w.store.entry(entry.id).body, /close d93d1eec.*: sent/);
+    w.store.createEntry(note(w.store, { body })); await listener.tick(); assert.equal(calls.length, 1);
+    assert.ok(listener.status().events.some(row => row.stage === 'submit'));
+    assert.ok(listener.status().events.some(row => row.stage === 'result' && row.status === 'submitted'));
+  } finally { await listener.stop(); await w.close(); }
+});
+
+test('an unknown close holds new instructions across restart without resending until the retained claim is resolved', async () => {
+  const w = await workspace(); let closes = 0, orders = 0;
+  const body = '```flusso-close\n' + JSON.stringify({ id: 'close-uncertain-original', positionIds: ['d93d1eec-2a5e-f058-b846-d12fd573ae1d'] }) + '\n```';
+  const cloud = fakeCloud({ closePositions: async () => { closes++; return { status: 'unknown', lines: [], message: 'Synthetic lost close receipt.' }; }, submitOrders: async ({ orders: lines }) => { orders++; return sent(lines); } });
+  let listener = createListener({ store: w.store, cloud, classify: noModel, clock: () => now });
+  try {
+    enable(w.store); listener.start(); w.store.createEntry(note(w.store, { body })); await listener.tick();
+    const attempt = w.store.all('attempt')[0]; assert.equal(attempt.kind, 'close'); assert.equal(attempt.status, 'unknown');
+    w.store.createEntry(note(w.store, { body: ticket({ id: 'opening-after-unknown-close' }) }));
+    await listener.stop(); listener = createListener({ store: w.store, cloud, classify: noModel, clock: () => now }); listener.start(); await listener.tick();
+    assert.equal(closes, 1); assert.equal(orders, 0); assert.match(listener.status().lastError, /position close.*unconfirmed/);
+    assert.ok(w.store.all('activity').some(row => row.status === 'waiting'));
+    // Simulate the owner's explicit resolution after canonical reconciliation.
+    w.store.put('attempt', attempt.id, { ...w.store.get('attempt', attempt.id), status: 'resolved' });
+    await listener.tick(); assert.equal(closes, 1); assert.equal(orders, 1);
+    w.store.createEntry(note(w.store, { body })); await listener.tick(); assert.equal(closes, 1, 'Resolution never releases the original durable close identity.');
+  } finally { await listener.stop(); await w.close(); }
+});

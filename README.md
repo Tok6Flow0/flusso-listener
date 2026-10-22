@@ -130,6 +130,12 @@ deterministic validation and do not need a model. Cloud synchronization scans
 all pages, bounded at 5,000 entries, so edits to older notes are found. An
 incomplete scan is displayed and does not authorize cloud execution.
 
+The Listener opens with a text activity view: Journal reads, queue size, ticket
+validation, model review, submission and receipts appear as the check progresses.
+The model's published decision and short explanation appear when ready. The model
+runs with thinking disabled. The transcript reports processing stages and output;
+execution receipts remain saved in Activity and on the entry.
+
 The private status response also explains each entry's hand-off state, including
 research without an explicit ticket, reviewed entries, baselined revisions,
 selection filters, malformed or stale tickets, and waiting setup. These are local
@@ -164,7 +170,7 @@ this listener included, counts toward your plan's daily allowance of order legs
 count, and cancels and closes are never limited. If an allowance or plan check
 refuses a ticket, Activity shows why and nothing was placed.
 
-Execution requires an explicit `flusso-orders` Markdown code fence in a new
+Order instructions use an explicit `flusso-orders` Markdown code fence in a new
 in-scope entry with status `watching`. Its JSON contains `id`, optional
 `together`, and an `orders` array. Give every intended submission a unique stable
 ticket `id` and retain it across edits and local/cloud copies. Each element uses
@@ -174,6 +180,24 @@ contract units, positive `limitPrice`, and optional supported `conditions`.
 Verify instrument terms and steps before sizing; equal contract counts on two
 venues are not equal exposure. Plain prose and a structured signal attachment do
 not become orders. Reviewed hourly research with `signal: null` cannot execute.
+
+To close existing positions, use one `flusso-close` fence instead. Its JSON
+contains a unique stable ticket `id` and `positionIds`, an array of 1–25 exact
+canonical position IDs read from your owned Flusso account. For example, replace
+the placeholder before creating a new `watching` entry:
+
+````markdown
+```flusso-close
+{"id":"my-original-close-ticket","positionIds":["COPY_OWNED_CANONICAL_POSITION_ID"]}
+```
+````
+
+The Listener calls the existing `closeTradingAccountPositions` operation.
+Execution resolves the position's venue, side and size, preserves hedge groups,
+and uses its reduce-only close path. An ordinary opposing order can open new
+exposure and is not a substitute for a close ticket. Keep one action ticket per
+entry. A close still requires the selected account, notebooks, write connection,
+Auto-trade and a fresh watching revision; it does not allocate opening notional.
 
 The listener calls the existing `submitManualFuturesLimitOrder` tool with
 `product.manual_order_request.v3`. Supported instruments are the server's
@@ -208,7 +232,7 @@ separate `submitted`, `blocked`, `unknown` or `not_sent` results for every eleme
 one submitted leg with another refused or unresolved leaves residual exposure.
 Submitted is not filled. Unknown or pending outcomes pause new execution, with
 no automatic order POST retry. Check canonical orders, fills and positions in
-Flusso before resolving an attempt; preserve its original request and retry key,
+Flusso before resolving an order or close attempt; preserve its original request and retry key,
 never edit an uncertain request or create a replacement ticket to retry it.
 Turning auto-trade off does not cancel existing orders or close positions.
 

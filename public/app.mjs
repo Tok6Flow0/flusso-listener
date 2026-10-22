@@ -1,6 +1,6 @@
 import { formatCount, formatPrice, formatQuantity, formatPercentLabel, formatMoney, formatPercent } from './format.mjs';
 import { renderMarkdown } from './markdown.mjs';
-import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, activityStatus, listenerResult, RESULT_FILTERS, matchesResultFilter } from './desktop-ui.mjs';
+import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, activityStatus, listenerResult, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions } from './desktop-ui.mjs';
 
 const $ = id => document.getElementById(id);
 let csrf, snapshot, selected = null, editing = null, entryRetryKey = crypto.randomUUID();
@@ -8,11 +8,13 @@ const desktop = window.flussoDesktop;
 let desktopStatus = null, connectionBusy = false, connectionOperation = null, connectionGeneration = 0, profileConnectionKey = null, profileGeneration = 0, dismissedUpdate = null;
 let accounts = [], accountsKey = null, formDirty = false, themeMode = document.documentElement.dataset.themeMode || 'system';
 const nativeTasks = new Set();
+const renderKeys = new Map();
+let pollBusy = false, lastPolledAt = 0;
 const TICKET_EXAMPLE = { id: 'kaia-2026-10-12T14', together: true, orders: [
   { instrumentId: 'gate:KAIA_USDT', side: 'buy', quantity: 120, limitPrice: 0.1234, conditions: { maxSlippagePct: 3 } },
   { instrumentId: 'bybit:KAIAUSDT', side: 'sell', quantity: 12, limitPrice: 0.1236, conditions: { maxSlippagePct: 3 } },
 ] };
-const TICKET_FENCE = /^(```|~~~)[ \t]*flusso-orders[ \t]*\n[\s\S]*?^\1[ \t]*$/gm;
+const TICKET_FENCE = /^(```|~~~)[ \t]*flusso-(?:orders|close)[ \t]*\n[\s\S]*?^\1[ \t]*$/gm;
 
 function element(tag, content, className) { const node = document.createElement(tag); if (content != null) node.textContent = content; if (className) node.className = className; return node; }
 function pill(text, tone) { return element('span', text, `pill${tone ? ' ' + tone : ''}`); }
@@ -23,6 +25,8 @@ async function api(path, body, headers = {}) {
 }
 async function action(button, work) { if (button?.disabled) return; if (button) button.disabled = true; try { await work(); } catch (error) { notify(error.message); } finally { if (button) button.disabled = false; } }
 function when(value) { const date = new Date(value); return Number.isFinite(date.getTime()) ? date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'; }
+function timeOf(value) { const date = new Date(value); return Number.isFinite(date.getTime()) ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'; }
+function changed(key, value) { const next = JSON.stringify(value); if (renderKeys.get(key) === next) return false; renderKeys.set(key, next); return true; }
 
 /* ------------------------------------------------------------ appearance */
 function applyTheme(mode = themeMode) {
@@ -79,6 +83,7 @@ function renderAccountChoice() {
   $('account').replaceChildren(new Option(snapshot?.cloud.connected ? (accounts.length ? 'Choose an account' : 'No accounts found') : 'Connect Flusso first', ''), ...options);
   $('account').value = accounts.some(row => row.id === current) ? current : '';
   $('account').disabled = !accounts.length;
+  if (snapshot) renderWatchSummary();
 }
 
 /* --------------------------------------------------------------- desktop */
@@ -140,6 +145,7 @@ function switchView(view) {
   document.querySelectorAll('.view').forEach(node => { node.hidden = node.id !== `view-${view}`; });
   document.querySelectorAll('[data-view]').forEach(button => { button.classList.toggle('active', button.dataset.view === view); if (button.dataset.view === view) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current'); });
   if (view === 'listener') loadAccounts();
+  if (view === 'journal' && !selected && snapshot?.entries.length) { selected = snapshot.entries[0]; renderEntries(); renderDetail(); }
 }
 document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => switchView(button.dataset.view)));
 
@@ -154,7 +160,9 @@ async function load({ forms = false } = {}) {
   const selectedFilter = $('journal-filter').value;
   $('journal-filter').replaceChildren(new Option('All notebooks', ''), ...snapshot.notebooks.map(row => new Option(row.origin === 'cloud' ? `${row.name} · cloud` : row.name, `${row.origin}:${row.id}`)));
   $('journal-filter').value = selectedFilter;
-  renderEntries(); renderActivity();
+  if (changed('entries', snapshot.entries)) renderEntries();
+  if (changed('activity', [snapshot.activity, snapshot.attempts])) renderActivity();
+  renderProcess(); renderDecisions();
   if (forms || !formDirty) fillSettings();
 }
 function renderStatus() {
@@ -172,6 +180,64 @@ function renderStatus() {
   $('last-check').classList.toggle('warn', Boolean(settings.enabled && listener.lastError));
   const pending = snapshot.attempts.filter(row => ['pending', 'unknown'].includes(row.status)).length;
   $('activity-count').hidden = !pending; $('activity-count').textContent = formatCount(pending);
+  $('check-now').disabled = !settings.enabled || Boolean(listener.busy);
+  $('check-now').textContent = listener.busy ? 'Checking…' : 'Check now';
+  renderWatchSummary();
+}
+
+function renderWatchSummary() {
+  const { settings, notebooks } = snapshot;
+  const names = notebooks.filter(row => settings.notebookIds.includes(row.id)).map(row => row.name);
+  const account = accounts.find(row => row.id === settings.accountId);
+  $('watch-summary').replaceChildren(element('span', names.length ? `Watching ${names.join(', ')}` : 'Watching all notebooks'), element('span', settings.executionEnabled ? 'Auto-trade on' : 'Auto-trade off'), element('span', account ? account.displayName || account.publicId : settings.accountId ? 'Account selected' : 'No trading account'));
+}
+
+function configureListener(open) {
+  $('listener-configuration').hidden = !open;
+  $('configure-listener').setAttribute('aria-expanded', String(open));
+  if (open) { $('listener-configuration').scrollIntoView({ behavior: 'smooth', block: 'start' }); $('close-configuration').focus({ preventScroll: true }); }
+  else $('configure-listener').focus();
+}
+$('configure-listener').addEventListener('click', () => configureListener($('listener-configuration').hidden));
+$('close-configuration').addEventListener('click', () => configureListener(false));
+$('all-activity').addEventListener('click', () => switchView('activity'));
+
+function sourceButton(row, label = row.title || 'Open Journal entry') {
+  const entry = snapshot.entries.find(item => item.id === row.entryId && (!row.origin || row.origin === item.origin));
+  if (!entry) return element('span', label);
+  const button = element('button', label, 'source-link'); button.type = 'button';
+  button.addEventListener('click', () => { selected = entry; switchView('journal'); renderEntries(); renderDetail(); $('entry-detail').scrollIntoView({ block: 'nearest' }); });
+  return button;
+}
+
+function renderProcess() {
+  const state = processingPresentation(snapshot.listener, snapshot.settings.enabled);
+  $('process-state').textContent = state.label; $('process-state').className = `process-state ${state.tone}${state.busy ? ' busy' : ''}`;
+  $('process-message').textContent = state.message;
+  const events = (snapshot.listener.events ?? []).slice(-30);
+  if (!changed('process-events', events)) return;
+  const list = $('process-events'), atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+  list.replaceChildren(...events.map(row => {
+    const item = element('li', null, `process-event${row.stage === 'error' ? ' warn' : ''}`), time = element('time', timeOf(row.atUtc)); time.dateTime = row.atUtc;
+    const body = element('div', null, 'event-body');
+    if (row.title) body.append(sourceButton(row));
+    if (row.message) body.append(element('p', row.message));
+    item.append(time, element('span', processStage(row.stage), 'event-stage'), body); return item;
+  }));
+  list.hidden = !events.length;
+  if (atBottom) list.scrollTop = list.scrollHeight;
+}
+
+function renderDecisions() {
+  const latest = latestDecisions(snapshot.activity, snapshot.listener.lastModelOutput);
+  if (!changed('decisions', latest)) return;
+  $('latest-decisions').replaceChildren(...latest.map(row => {
+    const item = element('article', null, 'decision-row'), source = element('div', null, 'decision-source'), status = activityStatus(row);
+    const time = element('time', when(row.atUtc)); time.dateTime = row.atUtc;
+    source.append(sourceButton(row), time);
+    item.append(source, pill(status.label, status.tone), element('p', row.reason || 'Processing this entry.')); return item;
+  }));
+  if (!latest.length) $('latest-decisions').append(element('p', 'Published model summaries and order results will appear here after a check.', 'empty'));
 }
 
 /* -------------------------------------------------------------- settings */
@@ -243,14 +309,25 @@ function renderEntries() {
 }
 function ordersTable(orders, withResults = false) {
   const wrap = element('div', null, 'table-scroll'), table = element('table'), thead = element('thead'), head = element('tr'), tbody = element('tbody');
-  const columns = withResults ? ['Instrument', 'Side', 'Qty', 'Limit', 'Result', ''] : ['Instrument', 'Side', 'Qty', 'Limit', 'Max slip', 'Max USD'];
+  const columns = withResults ? ['Instrument', 'Side', 'Qty', 'Limit', 'Result', 'Order ID', 'Details'] : ['Instrument', 'Side', 'Qty', 'Limit', 'Max slip', 'Max USD'];
   columns.forEach((label, index) => head.append(element('th', label, index >= 2 && index <= 3 || (!withResults && index >= 4) ? 'num' : '')));
   thead.append(head); table.append(thead);
   for (const order of orders) {
     const tr = element('tr');
     tr.append(element('td', order.instrumentId, 'mono'), element('td', order.side), element('td', formatQuantity(order.quantity), 'num'), element('td', formatPrice(order.limitPrice), 'num'));
-    if (withResults) { const status = element('td'); status.append(pill(({ submitted: 'sent', blocked: 'refused', unknown: 'unconfirmed', not_sent: 'not sent' })[order.status] ?? order.status, order.status === 'submitted' ? 'pos' : order.status === 'blocked' ? 'neg' : 'warn')); tr.append(status, element('td', order.message || '', 'wrap')); }
+    if (withResults) { const status = element('td'), result = activityStatus(order); status.append(pill(result.label, result.tone)); tr.append(status, element('td', order.orderId || '—', 'mono'), element('td', order.message || '', 'wrap')); }
     else tr.append(element('td', order.conditions?.maxSlippagePct != null ? formatPercent(order.conditions.maxSlippagePct) : '—', 'num'), element('td', order.conditions?.maxNotionalUsd != null ? formatMoney(order.conditions.maxNotionalUsd) : '—', 'num'));
+    tbody.append(tr);
+  }
+  table.append(tbody); wrap.append(table); return wrap;
+}
+function positionsTable(positions, withResults = false) {
+  const wrap = element('div', null, 'table-scroll'), table = element('table'), thead = element('thead'), head = element('tr'), tbody = element('tbody');
+  for (const label of withResults ? ['Position', 'Result', 'Details'] : ['Position to close']) head.append(element('th', label));
+  thead.append(head); table.append(thead);
+  for (const row of positions) {
+    const position = typeof row === 'string' ? { positionId: row } : row, tr = element('tr'); tr.append(element('td', position.positionId, 'mono'));
+    if (withResults) { const status = element('td'), result = activityStatus(position); status.append(pill(result.label, result.tone)); tr.append(status, element('td', position.message || '', 'wrap')); }
     tbody.append(tr);
   }
   table.append(tbody); wrap.append(table); return wrap;
@@ -264,9 +341,14 @@ function renderDetail() {
   meta.append(pill(row.origin), pill(`v${formatCount(row.version)}`), pill(when(row.updatedAtUtc)));
   const prose = element('div', null, 'note-body'); renderMarkdown(prose, (row.body || '').replace(TICKET_FENCE, '').trim() || ' ');
   detail.append(meta, prose);
+  if (row.handoff) {
+    const section = element('section', null, 'detail-section handoff-section');
+    section.append(element('h3', 'Listener status'), element('p', row.handoff.reason, 'hint'));
+    detail.append(section);
+  }
   if (row.ticket) {
     const section = element('section', null, 'detail-section'), head = element('div', null, 'card-head');
-    head.append(element('h3', 'Order ticket'), row.ticket.ticket?.id ? element('code', row.ticket.ticket.id) : element('span'));
+    head.append(element('h3', row.ticket.kind === 'close' ? 'Close ticket' : 'Order ticket'), row.ticket.ticket?.id ? element('code', row.ticket.ticket.id) : element('span'));
     section.append(head);
     const outcome = listenerResult(row);
     if (outcome) {
@@ -275,7 +357,7 @@ function renderDetail() {
       section.append(line);
     }
     if (row.ticket.error) section.append(element('p', row.ticket.error, 'hint'));
-    else section.append(ordersTable(row.ticket.ticket.orders));
+    else section.append(row.ticket.kind === 'close' ? positionsTable(row.ticket.ticket.positionIds) : ordersTable(row.ticket.ticket.orders));
     detail.append(section);
   }
   if (row.signal) {
@@ -299,11 +381,14 @@ function showEditor(row = null) {
   $('entry-title').value = row?.title ?? ''; $('entry-body').value = row?.body ?? ''; $('entry-status').value = row?.status ?? 'watching'; $('entry-signal').value = row?.signal ? JSON.stringify(row.signal, null, 2) : '';
   $('editor').scrollIntoView({ behavior: 'smooth', block: 'start' }); $('entry-title').focus();
 }
-$('insert-ticket').addEventListener('click', () => {
-  const body = $('entry-body'), block = '```flusso-orders\n' + JSON.stringify({ ...TICKET_EXAMPLE, id: `ticket-${new Date().toISOString().slice(0, 16).replace(/[-:]/g, '')}` }, null, 2) + '\n```\n';
+function insertTicket(close = false) {
+  const id = `ticket-${new Date().toISOString().slice(0, 16).replace(/[-:]/g, '')}`;
+  const body = $('entry-body'), block = '```' + (close ? 'flusso-close' : 'flusso-orders') + '\n' + JSON.stringify(close ? { id, positionIds: [] } : { ...TICKET_EXAMPLE, id }, null, 2) + '\n```\n';
   if (TICKET_FENCE.test(body.value)) { TICKET_FENCE.lastIndex = 0; notify('This entry already has an order ticket.'); return; }
   TICKET_FENCE.lastIndex = 0; body.value = `${body.value.trimEnd()}${body.value.trim() ? '\n\n' : ''}${block}`; $('entry-status').value = 'watching'; body.focus();
-});
+}
+$('insert-ticket').addEventListener('click', () => insertTicket());
+$('insert-close-ticket').addEventListener('click', () => insertTicket(true));
 $('result-filter').replaceChildren(...RESULT_FILTERS.map(option => new Option(option.label, option.value)));
 $('journal-filter').addEventListener('change', renderEntries);
 $('result-filter').addEventListener('change', renderEntries);
@@ -339,10 +424,12 @@ function renderActivity() {
   $('activity-list').replaceChildren(...snapshot.activity.map(row => {
     const card = element('article', null, 'activity-card'), head = element('div', null, 'activity-head'), status = activityStatus(row), attempt = row.attemptId ? attempts.get(row.attemptId) : null;
     const time = element('time', when(row.atUtc)); time.dateTime = row.atUtc;
-    head.append(element('h2', row.title), pill(status.label, status.tone), time);
+    const title = element('h2'); title.append(sourceButton(row));
+    head.append(title, pill(status.label, status.tone), time);
     card.append(head, element('p', row.reason));
-    if (attempt?.receipt?.lines?.length) card.append(ordersTable(attempt.receipt.lines, true));
-    else if (attempt) card.append(ordersTable(attempt.orders));
+    if (attempt) card.append(element('p', `Request ${attempt.id}`, 'hint mono'));
+    if (attempt?.receipt?.lines?.length) card.append(attempt.kind === 'close' ? positionsTable(attempt.receipt.lines, true) : ordersTable(attempt.receipt.lines, true));
+    else if (attempt) card.append(attempt.kind === 'close' ? positionsTable(attempt.positionIds ?? []) : ordersTable(attempt.orders));
     if (attempt && ['pending', 'unknown'].includes(attempt.status)) {
       const actions = element('div', null, 'form-actions'), resolve = element('button', 'I checked Flusso. Mark resolved'); resolve.type = 'button';
       resolve.addEventListener('click', () => action(resolve, async () => { await api(`/api/attempts/${encodeURIComponent(attempt.id)}/resolve`, {}); await load(); notify('Marked resolved. New tickets can be placed.', true); }));
@@ -359,7 +446,12 @@ async function initialize() {
   if (fragment) { try { csrf = (await api('/api/bootstrap', {}, { Authorization: `Bearer ${fragment}` })).csrf; } catch { csrf = (await api('/api/session')).csrf; } }
   else csrf = (await api('/api/session')).csrf;
   await load({ forms: true });
-  setInterval(() => { if (!document.hidden) load().catch(error => notify(error.message)); }, 10000);
+  setInterval(async () => {
+    const interval = !$('view-listener').hidden || snapshot?.listener.busy ? 1500 : 10000;
+    if (document.hidden || pollBusy || Date.now() - lastPolledAt < interval) return;
+    pollBusy = true; lastPolledAt = Date.now();
+    try { await load(); } catch (error) { notify(error.message); } finally { pollBusy = false; }
+  }, 1500);
 }
 renderThemes();
 initialize().catch(error => notify(error.message));

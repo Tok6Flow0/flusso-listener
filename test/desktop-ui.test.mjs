@@ -45,10 +45,45 @@ test('appearance mirrors the website palettes and resolves System from the OS', 
 
 test('activity labels say what happened to a ticket in plain words', async () => {
   const { activityStatus, entryStatus } = await import('../public/desktop-ui.mjs');
-  assert.deepEqual(activityStatus({ status: 'submitted' }), { label: 'sent', tone: 'pos' });
+  assert.deepEqual(activityStatus({ status: 'submitted' }), { label: 'submitted', tone: 'pos' });
   assert.deepEqual(activityStatus({ status: 'blocked' }), { label: 'refused', tone: 'neg' });
   assert.deepEqual(activityStatus({ status: 'observed', decision: 'candidate' }), { label: 'flagged', tone: 'info' });
   assert.equal(activityStatus({ status: 'answered' }).label, 'answered');
   assert.equal(entryStatus({ ticket: null }), null);
   assert.equal(entryStatus({ ticket: { error: 'Bad JSON' } }).tone, 'warn');
+  assert.equal(entryStatus({ ticket: { kind: 'close' } }).label, 'close ticket');
+});
+
+test('displayed submission and uncertain results never imply an order was filled', async () => {
+  const { listenerResult, matchesResultFilter } = await import('../public/desktop-ui.mjs');
+  for (const status of ['submitted', 'partial', 'pending', 'unknown']) {
+    const entry = { ticket: { ticket: {} }, listener: { status } };
+    assert.doesNotMatch(listenerResult(entry).label, /placed|filled|complete/);
+    assert.equal(matchesResultFilter(entry, status === 'submitted' || status === 'partial' ? 'placed' : 'open'), true);
+  }
+  const note = { listener: { status: 'observed', decision: 'review' } };
+  assert.equal(listenerResult(note).label, 'review needed');
+  assert.equal(matchesResultFilter(note, 'tickets'), false);
+});
+
+test('public process state keeps active work, errors, and unknown stages distinct', async () => {
+  const { processingPresentation, processStage } = await import('../public/desktop-ui.mjs');
+  assert.equal(processingPresentation({ busy: true, processing: { stage: 'model', message: 'Reviewing the note.' } }, true).message, 'Reviewing the note.');
+  assert.equal(processingPresentation({ busy: true, processing: { stage: 'model' } }, true).label, 'Model review');
+  assert.equal(processingPresentation({ busy: false, lastError: 'Account is unavailable.' }, true).tone, 'warn');
+  assert.equal(processingPresentation({}, false).label, 'Listener off');
+  assert.equal(processingPresentation({}, true).label, 'Ready');
+  assert.equal(processStage('unrecognized'), 'Activity');
+});
+
+test('a published decision appears once when model start and completion timestamps differ', async () => {
+  const { latestDecisions } = await import('../public/desktop-ui.mjs');
+  const row = { entryId: 'note-a', origin: 'local', version: 1, decision: 'review', reason: 'An exact quantity is needed.', status: 'observed', atUtc: '2026-10-22T17:20:00Z' };
+  const output = { entryId: row.entryId, origin: row.origin, decision: row.decision, reason: row.reason, atUtc: '2026-10-22T17:21:00Z' };
+  assert.deepEqual(latestDecisions([row], output), [row]);
+  const otherEntry = { ...row, entryId: 'note-b' }, otherOrigin = { ...row, origin: 'cloud' }, otherRevision = { ...row, version: 2 };
+  assert.deepEqual(latestDecisions([otherRevision, otherEntry, otherOrigin, row], { ...output, version: 2 }), [otherRevision, otherEntry, otherOrigin, row]);
+  const newRevisionOutput = { ...output, version: 3 };
+  assert.deepEqual(latestDecisions([otherRevision, row], newRevisionOutput), [{ ...newRevisionOutput, status: 'observed' }, otherRevision, row]);
+  assert.equal(latestDecisions([otherEntry, otherOrigin], output).length, 3);
 });

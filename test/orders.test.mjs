@@ -113,3 +113,16 @@ test('a listener result replaces the previous one and keeps the ticket readable'
   const bounded = withResult('x'.repeat(5000), { status: 'submitted', lines: many, atUtc: '2026-10-12T10:05:00Z' });
   assert.ok(bounded.length <= 20000); assert.match(bounded, /more orders, see Activity/);
 });
+
+test('reduce-only close tickets preserve canonical opaque GUIDs and reject ambiguous or duplicate actions', () => {
+  const positionIds = ['d93d1eec-2a5e-f058-b846-d12fd573ae1d', 'eff0bb01-73ff-8b54-9b6f-7b491cf9b280'];
+  const close = value => '```flusso-close\n' + JSON.stringify({ id: 'close-owned-positions', positionIds, ...value }) + '\n```';
+  const request = buildOrderRequest({ entry: entry(close({ positionIds: positionIds.map(id => id.toUpperCase()) })), settings, now });
+  assert.equal(request.eligible, true); assert.equal(request.kind, 'close'); assert.deepEqual(request.positionIds, positionIds);
+  assert.equal('orders' in request, false, 'Close sizing and side remain execution-owned.');
+  assert.equal(buildOrderRequest({ entry: entry(close()), settings: { ...settings, risk: {} }, now }).eligible, true, 'Reduce-only closes need no opening notional allocation.');
+  assert.match(readTicket(close({ positionIds: [positionIds[0], positionIds[0].toUpperCase()] })).error, /same position twice/);
+  assert.match(readTicket(close({ positionIds: ['malformed'] })).error, /canonical owned position UUID/);
+  assert.match(readTicket(close() + '\n' + ticket()).error, /both an order ticket and a close ticket/);
+  assert.equal(buildOrderRequest({ entry: entry(close(), { status: 'reviewed' }), settings, now }).eligible, false);
+});

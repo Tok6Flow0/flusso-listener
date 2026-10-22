@@ -53,11 +53,11 @@ export function resolveTheme(mode, prefersDark = false) {
 
 export function entryStatus(entry) {
   if (!entry?.ticket) return null;
-  return entry.ticket.error ? { label: 'ticket error', tone: 'warn' } : { label: 'order ticket', tone: 'info' };
+  return entry.ticket.error ? { label: 'ticket error', tone: 'warn' } : { label: entry.ticket.kind === 'close' ? 'close ticket' : 'order ticket', tone: 'info' };
 }
 
-const RESULT = { submitted: ['sent', 'pos'], partial: ['partly sent', 'warn'], blocked: ['refused', 'neg'], unknown: ['unconfirmed', 'warn'], pending: ['sending', 'info'], sending: ['sending', 'info'], review: ['not placed', 'neg'], waiting: ['waiting', 'warn'] };
-const DECISION = { candidate: ['flagged', 'info'], review: ['review', ''], ignore: ['ignored', ''], ticket: ['ticket', 'info'] };
+const RESULT = { submitted: ['submitted', 'pos'], partial: ['partly submitted', 'warn'], blocked: ['refused', 'neg'], unknown: ['unconfirmed', 'warn'], pending: ['submitting', 'info'], sending: ['submitting', 'info'], processing: ['reviewing', 'info'], review: ['not submitted', 'warn'], waiting: ['waiting', 'warn'], resolved: ['owner resolved', ''] };
+const DECISION = { candidate: ['flagged', 'info'], review: ['review needed', 'warn'], ignore: ['no action', ''], ticket: ['ticket', 'info'] };
 export function activityStatus(row = {}) {
   const [label, tone] = RESULT[row.status] ?? (row.status === 'observed' ? DECISION[row.decision] : null) ?? [text(row.status) || 'noted', ''];
   return { label, tone };
@@ -65,23 +65,49 @@ export function activityStatus(row = {}) {
 
 // What the listener did with an entry's ticket, as one word and a filter group.
 const LISTENER_RESULT = {
-  submitted: ['placed', 'pos', 'placed'], partial: ['partly placed', 'warn', 'placed'],
-  blocked: ['refused', 'neg', 'refused'], review: ['not placed', 'neg', 'refused'],
-  waiting: ['waiting', 'warn', 'open'], sending: ['sending', 'info', 'open'], pending: ['sending', 'info', 'open'],
-  unknown: ['unconfirmed', 'warn', 'open'], observed: ['seen', '', 'open'],
+  submitted: ['submitted', 'pos', 'placed'], partial: ['partly submitted', 'warn', 'placed'],
+  blocked: ['refused', 'neg', 'refused'], review: ['not submitted', 'warn', 'refused'],
+  waiting: ['waiting', 'warn', 'open'], sending: ['submitting', 'info', 'open'], pending: ['submitting', 'info', 'open'], processing: ['reviewing', 'info', 'open'],
+  unknown: ['unconfirmed', 'warn', 'open'], observed: ['seen', '', 'open'], resolved: ['owner resolved', '', 'refused'],
 };
 export function listenerResult(entry) {
-  if (!entry?.ticket) return null;
+  if (!entry?.ticket && !entry?.listener) return null;
+  if (!entry.ticket && entry.listener?.status === 'observed') {
+    const result = activityStatus(entry.listener);
+    return { ...result, group: 'open' };
+  }
   const [label, tone, group] = LISTENER_RESULT[entry.listener?.status] ?? ['not actioned', '', 'open'];
   return { label, tone, group };
 }
 export const RESULT_FILTERS = Object.freeze([
   { value: '', label: 'All entries' }, { value: 'tickets', label: 'Order tickets' },
-  { value: 'placed', label: 'Placed' }, { value: 'refused', label: 'Refused or not placed' }, { value: 'open', label: 'Not actioned yet' },
+  { value: 'placed', label: 'Submitted' }, { value: 'refused', label: 'Refused or not submitted' }, { value: 'open', label: 'Awaiting a result' },
 ]);
 export function matchesResultFilter(entry, filter) {
   if (!filter) return true;
   const result = listenerResult(entry);
   if (!result) return false;
-  return filter === 'tickets' || result.group === filter;
+  return filter === 'tickets' ? Boolean(entry.ticket) : result.group === filter;
+}
+
+const STAGES = Object.freeze({ sync: 'Read Journal', reconcile: 'Check earlier orders', queued: 'Queued', read: 'Read entry', model: 'Model review', decision: 'Decision', validate: 'Check limits', waiting: 'Waiting', submit: 'Submit', result: 'Result', error: 'Needs attention', idle: 'Idle', paused: 'Paused' });
+export function processStage(stage) { return STAGES[stage] ?? 'Activity'; }
+
+export function processingPresentation(listener = {}, enabled = false) {
+  const current = listener.processing;
+  if (listener.busy) return { label: processStage(current?.stage), message: text(current?.message) || 'Checking Journal entries.', tone: current?.stage === 'error' ? 'warn' : 'info', busy: true };
+  if (!enabled) return { label: 'Listener off', message: 'Turn on the Listener to read new Journal entries.', tone: '', busy: false };
+  if (listener.lastError) return { label: 'Needs attention', message: text(listener.lastError), tone: 'warn', busy: false };
+  return { label: listener.lastCheckedAtUtc ? 'Check complete' : 'Ready', message: text(current?.message) || 'Waiting for the next check.', tone: '', busy: false };
+}
+
+export function latestDecisions(activity = [], output = null) {
+  const rows = [...activity];
+  // Activity clocks the model's start; its published output clocks completion.
+  // Keep every retained revision and suppress only its duplicate output summary.
+  const retained = output && rows.some(row => row.entryId === output.entryId && row.origin === output.origin
+    && row.decision === output.decision && row.reason === output.reason
+    && (output.version == null || row.version === output.version));
+  if (output && !retained) rows.unshift({ ...output, status: 'observed' });
+  return rows.slice(0, 5);
 }

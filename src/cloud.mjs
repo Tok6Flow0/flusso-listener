@@ -1,10 +1,10 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import { ID as UUID } from './schema.mjs';
 
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const MAX_PAGES = 50;
 const PROFILE_CACHE_MS = 120000;
-const UUID = /^[a-f\d]{8}-[a-f\d]{4}-[1-5][a-f\d]{3}-[89ab][a-f\d]{3}-[a-f\d]{12}$/i;
 const KEY = /^[!-~]{8,160}$/;
 const SCOPES = ['mcp:read', 'mcp:write', 'offline_access'];
 const ORDER_TIMEOUT_MS = 120000;
@@ -452,6 +452,7 @@ export function createCloudClient({ origin = 'https://flusso.stream', vault, fet
     if (preview.schemaVersion !== 'flusso.mcp_confirmation.v1' || preview.confirmationRequired !== true || typeof preview.confirmationToken !== 'string'
       || preview.operation?.operationId !== args.operationId || preview.request?.method !== 'POST'
       || preview.request?.path !== `/api/v1/me/trading-accounts/${accountId}/positions/close`
+      || preview.request?.query !== null || preview.request?.headers?.['Idempotency-Key'] !== idempotencyKey
       || !isDeepStrictEqual(preview.request?.body, args.body) || preview.effect?.liveTradingRequested !== true
       || preview.effect?.destructive !== true || Date.parse(preview.expiresAtUtc) <= clock()
       || !Number.isFinite(Date.parse(preview.expiresAtUtc))) {
@@ -475,15 +476,17 @@ export function createCloudClient({ origin = 'https://flusso.stream', vault, fet
     if (object(receipt) && receipt.schemaVersion === 'product.position_close_operation.v1' && equalId(receipt.accountId, accountId)
       && Array.isArray(receipt.results) && receipt.results.length === positionIds.length
       && Number.isSafeInteger(receipt.requestedCount) && receipt.requestedCount === positionIds.length
-      && Number.isSafeInteger(receipt.closedCount)) {
+      && Number.isSafeInteger(receipt.closedCount) && receipt.closedCount >= 0 && receipt.closedCount <= positionIds.length) {
       const lines = receipt.results.map((row, index) => {
         const positionId = positionIds[index];
-        if (!object(row) || String(row.positionId).toLowerCase() !== positionId.toLowerCase()) return null;
-        if (row.status === 'closed') return { positionId, status: 'submitted', message: short(row.message) || 'Reduce-only close accepted.' };
-        return { positionId, status: 'blocked', message: short(row.message) || short(row.status) || 'Close refused.' };
+        if (!object(row) || String(row.positionId).toLowerCase() !== positionId.toLowerCase()
+          || !['closed', 'rejected', 'not_found'].includes(row.status)) return null;
+        if (row.status === 'closed') return { positionId, status: 'submitted', message: short(row.reason) || 'Reduce-only close accepted.' };
+        return { positionId, status: 'blocked', message: short(row.reason) || short(row.status) || 'Close refused.' };
       });
       if (lines.every(Boolean)) {
         const closed = lines.filter((line) => line.status === 'submitted').length;
+        if (closed !== receipt.closedCount) return { status: 'unknown', lines: [], message: 'Flusso returned inconsistent close counts. Check positions in Flusso; this ticket will not be resent.' };
         const status = closed === lines.length ? 'submitted' : closed === 0 ? 'blocked' : 'partial';
         return { status, lines, message: status === 'blocked' ? (lines.find((line) => line.status === 'blocked')?.message || 'Flusso refused the closes.') : null };
       }

@@ -27,7 +27,19 @@ export function summarize(receipt, count, kind = 'orders') {
 
 export function createListener({ store, cloud, buildRequest = buildOrderRequest, classify = classifyEntry, clock = Date.now }) {
   let timer = null, busy = false, activeAbort = null, activeTick = null, stopped = false, scheduleGeneration = 0;
-  const state = { running: false, busy: false, lastCheckedAtUtc: null, lastError: null, cloudComplete: null, cloudReason: null };
+  const state = { running: false, busy: false, lastCheckedAtUtc: null, lastError: null, cloudComplete: null, cloudReason: null,
+    processing: null, events: [], lastModelOutput: null };
+  let eventSequence = 0;
+  // Public progress reports code stages and the model's final structured answer.
+  // The model runs with thinking disabled; no hidden reasoning is requested or stored.
+  function publish(stage, message, entry = null, details = {}) {
+    const atUtc = new Date(clock()).toISOString();
+    const event = { id: `${atUtc}:${++eventSequence}`, atUtc, stage, message,
+      ...(entry ? { entryId: entry.id, title: entry.title, origin: entry.origin } : {}), ...details };
+    state.events.push(event); if (state.events.length > 100) state.events.shift();
+    state.processing = { running: state.busy, startedAtUtc: state.processing?.startedAtUtc ?? atUtc,
+      updatedAtUtc: atUtc, ...event };
+  }
   const keyOf = entry => `${entry.origin}:${entry.id}`;
   // Old notes become a baseline, but an unactioned ticket from the action window is
   // still decided, even if it arrived while the app was closed or disconnected.
@@ -70,6 +82,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
     const activity = store.all('activity').find(row => row.attemptId === attempt.id);
     const count = attempt.kind === 'close' ? (attempt.positionIds?.length ?? 0) : (attempt.orders?.length ?? 0);
     const reason = summarize(receipt, count, attempt.kind === 'close' ? 'close' : 'orders');
+    publish('result', reason, { id: attempt.entryId, title: attempt.title, origin: attempt.origin }, { status: receipt.status });
     if (activity) store.put('activity', activity.id, { ...activity, status: receipt.status, reason });
     if (receipt.status === 'unknown' || !attempt.origin) return;
     const noted = await noteResult(store.entry(attempt.entryId, attempt.origin), { status: receipt.status, reason, lines: receipt.lines ?? [] });
@@ -79,6 +92,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
   // could admit a previously unsent line, including while auto-trade is off.
   async function reconcileUnknown() {
     for (const attempt of store.all('attempt').filter(row => ['pending', 'unknown'].includes(row.status))) {
+      publish('reconcile', 'Checking a retained unconfirmed result. This ticket will not be resent.', { id: attempt.entryId, title: attempt.title, origin: attempt.origin });
       if (activeAbort.signal.aborted) return false;
       if (attempt.kind === 'close') {
         state.lastError = 'A position close is still unconfirmed. Check positions in Flusso, then mark it resolved in Activity. It will never be resent.';
@@ -105,10 +119,10 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
   }
   async function placeTicket({ entry, request, activity, settingsVersion, reconciled }) {
     const settings = store.settings();
-    const hold = reason => { store.put('activity', activity.id, { ...activity, status: 'review', reason }); return 'continue'; };
+    const hold = reason => { store.put('activity', activity.id, { ...activity, status: 'review', reason }); publish('result', reason, entry, { status: 'review' }); return 'continue'; };
     // A setup gap is not a decision about the ticket: it stays unactioned and is
     // decided once the gap closes, as long as it is still inside the action window.
-    const wait = reason => { store.put('activity', activity.id, { ...activity, status: 'waiting', reason: `${reason} The ticket will be decided once this is fixed.` }); return 'retry'; };
+    const wait = reason => { store.put('activity', activity.id, { ...activity, status: 'waiting', reason: `${reason} The ticket will be decided once this is fixed.` }); publish('waiting', reason, entry, { status: 'waiting' }); return 'retry'; };
     const pauseBeforeClaim = () => {
       wait('Listener settings changed before dispatch. No order was sent.');
       return 'retry-stop';
@@ -125,7 +139,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
     const since = clock() - 86400000;
     const recent = store.all('attempt').filter(row => ['orders', 'close'].includes(row.kind) && Date.parse(row.atUtc) > since).length;
     if (recent >= (settings.maxTicketsPerDay ?? 24)) return refuse(`Daily limit reached: ${recent} tickets in the last 24 hours.`);
-    if (!reconciled || (state.cloudComplete === false && entry.origin === 'cloud')) { store.put('activity', activity.id, { ...activity, status: 'waiting', reason: 'Waiting for a previous result or a complete cloud read. It will be tried again.' }); return 'retry'; }
+    if (!reconciled || (state.cloudComplete === false && entry.origin === 'cloud')) return wait('Waiting for a previous result or a complete cloud read.');
     if (!settings.enabled || settings.version !== settingsVersion || activeAbort.signal.aborted) return pauseBeforeClaim();
     const idempotencyKey = 'listener-' + createHash('sha256').update(`${settings.listenerId}:${settings.accountId}:${request.signalIdentity}`).digest('hex');
     let connection;
@@ -136,10 +150,12 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
     const reference = request.ticketId ? `ticket ${request.ticketId}` : `Journal entry ${entry.id}`;
     const canDispatch = async () => {
       const current = store.settings(), currentConnection = await cloud.status();
-      return !activeAbort.signal.aborted && current.enabled && current.executionEnabled
+      const allowed = !activeAbort.signal.aborted && current.enabled && current.executionEnabled
         && current.version === settingsVersion && current.accountId === settings.accountId
         && currentConnection.connected && currentConnection.clientId === connection.clientId
         && (currentConnection.connectionId ?? null) === (connection.connectionId ?? null);
+      if (allowed) publish('submit', 'Confirming the validated instruction through Flusso. Waiting for its receipt.', entry);
+      return allowed;
     };
     if (request.kind === 'close') {
       const attempt = { id: idempotencyKey, kind: 'close', signalIdentity: request.signalIdentity, idempotencyKey, accountId: settings.accountId, clientId: connection.clientId, connectionId: connection.connectionId ?? null, positionIds: structuredClone(request.positionIds), orders: [], reference, ticketId: request.ticketId, entryId: entry.id, origin: entry.origin, title: entry.title, version: entry.version, status: 'pending', retries: 0, atUtc: activity.atUtc };
@@ -164,31 +180,42 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
   }
   async function runTick() {
     busy = true; state.busy = true; activeAbort = new AbortController();
+    state.processing = null;
+    publish('read', 'Starting a Listener check.');
     try {
       const settings = store.settings(); state.lastError = null;
       if (settings.source !== 'local') {
+        publish('sync', 'Reading the selected cloud Journal notebooks.');
         const snapshot = await cloud.readJournal({ notebookIds: settings.notebookIds });
         if (activeAbort.signal.aborted || !store.settings().enabled || store.settings().version !== settings.version) return;
         store.importCloud(snapshot);
         state.cloudComplete = snapshot.complete; state.cloudReason = snapshot.reason ?? null;
+        publish('sync', snapshot.complete ? `Read ${snapshot.entries.length} cloud entries; coverage is complete.` : (snapshot.reason || 'Cloud coverage is incomplete; cloud execution waits.'));
         // First connection/import is a baseline, not an instruction to trade old notes.
         if (!store.get('sync', 'baseline')) { checkpointExisting(); store.put('sync', 'baseline', { atUtc: new Date(clock()).toISOString() }); }
       }
+      publish('reconcile', 'Checking retained submission receipts before new execution.');
       const reconciled = await reconcileUnknown();
       // Explicit tickets use the owner's hard filters and risk limits. Freeform
       // classification instructions apply to research, not ready order tickets.
       const entries = store.entries().filter(entry => inScope(entry, settings))
         .map(entry => ({ entry, ticket: readTicket(entry.body) !== null }))
         .sort((left, right) => Number(right.ticket) - Number(left.ticket));
+      const queued = entries.filter(({ entry }) => entry.status === 'watching' && store.get('checkpoint', keyOf(entry))?.version !== entry.version);
+      const total = queued.length; let index = 0;
+      publish('queued', `${entries.length} selected entries; ${total} new watching revision${total === 1 ? '' : 's'} to process.`, null, { index, total });
       for (const { entry, ticket } of entries) {
         if (!store.settings().enabled || activeAbort.signal.aborted) break;
         const key = keyOf(entry), checkpoint = store.get('checkpoint', key);
         if (checkpoint?.version === entry.version) continue;
         if (entry.status !== 'watching') { store.put('checkpoint', key, { version: entry.version, state: 'inactive' }); continue; }
+        index += 1;
+        publish('read', ticket ? 'Reading the explicit action ticket.' : 'Reading the note for a published model decision.', entry, { index, total });
         const settingsVersion = settings.version;
         const atUtc = new Date(clock()).toISOString();
         const activity = { id: createHash('sha256').update(`${key}:${entry.version}`).digest('hex'), entryId: entry.id, title: entry.title, origin: entry.origin, version: entry.version, atUtc };
         if (ticket) {
+          publish('validate', 'Validating ticket format, freshness and local limits. Explicit tickets use the execution path directly.', entry, { index, total });
           const request = buildRequest({ entry, settings: store.settings(), now: clock() });
           // Checkpoint before any dispatch. An interrupted dispatch is recovered by its durable attempt.
           store.put('activity', activity.id, { ...activity, decision: 'ticket', status: 'observed', reason: 'Action ticket found.' });
@@ -199,21 +226,35 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
           continue;
         }
         let decision;
+        store.put('activity', activity.id, { ...activity, status: 'processing', reason: 'The local model is reading this note.' });
+        publish('model', 'The local model is reading the note and preparing its published decision.', entry, { index, total });
         try { decision = await classify({ entry, instructions: settings.instructions, signal: activeAbort.signal }); }
         catch (error) {
-          if (activeAbort.signal.aborted) break;
+          if (activeAbort.signal.aborted) { store.put('activity', activity.id, { ...activity, status: 'waiting', reason: 'Model review paused before a decision. This note will be checked again.' }); break; }
           // Left unchecked so it is read again once the model is available.
           state.lastError = error?.message?.includes('local model') || error?.message?.includes('classification') ? error.message : 'The local model could not read a note.';
+          store.put('activity', activity.id, { ...activity, status: 'waiting', reason: state.lastError });
+          publish('error', state.lastError, entry, { index, total });
           continue;
         }
         const latestSettings = store.settings();
-        if (activeAbort.signal.aborted || latestSettings.version !== settingsVersion || !latestSettings.enabled || !inScope(entry, latestSettings)) break;
+        if (activeAbort.signal.aborted || latestSettings.version !== settingsVersion || !latestSettings.enabled || !inScope(entry, latestSettings)) {
+          store.put('activity', activity.id, { ...activity, status: 'waiting', reason: 'Listener settings changed before the model decision was accepted. This note will be checked again if selected.' });
+          break;
+        }
         store.put('activity', activity.id, { ...activity, decision: decision.decision, reason: decision.reason, status: 'observed' });
+        state.lastModelOutput = { entryId: entry.id, title: entry.title, origin: entry.origin, decision: decision.decision, reason: decision.reason, atUtc: new Date(clock()).toISOString() };
+        publish('decision', decision.reason || `Model decision: ${decision.decision}.`, entry, { decision: decision.decision, index, total });
+        publish('result', 'This note has no explicit action ticket. Add a flusso-orders ticket with exact order fields, or flusso-close with owned position IDs, and set it to watching to submit an instruction.', entry, { status: 'observed', index, total });
         store.put('checkpoint', key, { version: entry.version, state: 'observed', atUtc });
       }
       state.lastCheckedAtUtc = new Date(clock()).toISOString();
-    } catch { if (!activeAbort.signal.aborted) state.lastError = 'The listener could not finish its check. No new orders were sent.'; }
-    finally { busy = false; state.busy = false; activeAbort = null; }
+    } catch { if (!activeAbort.signal.aborted) { state.lastError = 'The listener could not finish its check. Inspect retained receipts for any instruction already dispatched.'; publish('error', state.lastError); } }
+    finally {
+      busy = false; state.busy = false;
+      publish(activeAbort.signal.aborted ? 'paused' : 'idle', activeAbort.signal.aborted ? 'Check paused after a settings change or shutdown. Retained attempts keep their original delivery state.' : (state.lastError || 'Check complete. Waiting for the next scheduled check.'));
+      activeAbort = null;
+    }
   }
   function schedule() {
     const generation = ++scheduleGeneration;
@@ -227,7 +268,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
     }, store.settings().intervalSeconds * 1000);
   }
   return {
-    status: () => ({ ...state }), tick,
+    status: () => structuredClone(state), tick,
     start() { stopped = false; checkpointExisting(); schedule(); },
     refresh({ baseline = false } = {}) { if (stopped) return; activeAbort?.abort(); if (baseline) checkpointExisting(); schedule(); },
     stop() {

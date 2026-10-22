@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { DEFAULT_RISK } from './schema.mjs';
+import { DEFAULT_RISK, ID } from './schema.mjs';
 
 // An order ticket is a fenced ```flusso-orders block; a close ticket is
 // ```flusso-close. Orders reuse submitManualFuturesLimitOrder. Closes reuse
@@ -14,7 +14,6 @@ const ORDER_KEYS = new Set(['instrumentId', 'side', 'quantity', 'limitPrice', 'c
 const CONDITION_KEYS = new Set(['maxSlippagePct', 'maxNotionalUsd', 'minVolume24hUsd', 'maxLeverage']);
 const INSTRUMENT = /^[a-z0-9][a-z0-9._-]*:.+$/;
 const TICKET_ID = /^[!-~]{1,160}$/;
-const POSITION_ID = /^[a-f\d]{8}-[a-f\d]{4}-[1-5][a-f\d]{3}-[89ab][a-f\d]{3}-[a-f\d]{12}$/i;
 const TOGETHER_LEAD_MS = 3000;
 
 function plain(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
@@ -60,7 +59,9 @@ function parseCloseTicket(raw) {
   }
   const seen = new Set();
   for (const [index, positionId] of ticket.positionIds.entries()) {
-    if (typeof positionId !== 'string' || !POSITION_ID.test(positionId)) return { error: `Position ${index + 1} must be a canonical owned position UUID.` };
+    // Canonical position IDs are opaque GUIDs, including deterministic IDs whose
+    // version/variant nibbles need not describe a randomly generated RFC UUID.
+    if (typeof positionId !== 'string' || !ID.test(positionId)) return { error: `Position ${index + 1} must be a canonical owned position UUID.` };
     const key = positionId.toLowerCase();
     if (seen.has(key)) return { error: 'Close tickets cannot list the same position twice.' };
     seen.add(key);

@@ -153,3 +153,23 @@ test('manual sync never imports an old account snapshot after reconnect or disco
     } finally { finish.resolve(); await w.close(); }
   }
 });
+
+test('unconfirmed close attempts stay visible and owner-resolvable with their original positions and durable claim', async () => {
+  const w = await appFixture();
+  try {
+    await w.unlock();
+    const attempt = { id: 'listener-close-unknown-key', kind: 'close', status: 'unknown', signalIdentity: 'close-original-claim', idempotencyKey: 'listener-close-unknown-key', positionIds: ['d93d1eec-2a5e-f058-b846-d12fd573ae1d'], orders: [], atUtc: '2026-10-01T00:00:00Z' };
+    w.store.claimAttempt(attempt);
+    w.store.put('activity', 'close-unknown-row', { id: 'close-unknown-row', attemptId: attempt.id, status: 'unknown', title: 'Close waiting for reconciliation', atUtc: attempt.atUtc });
+    for (let i = 0; i < 105; i++) w.store.put('activity', `newer-${i}`, { id: `newer-${i}`, title: 'Newer completed action', status: 'submitted', atUtc: new Date(now).toISOString() });
+    const status = await fetch(w.app.origin + '/api/status', { headers: { Cookie: w.cookie() } }).then(row => row.json());
+    assert.equal(status.attempts[0].kind, 'close'); assert.deepEqual(status.attempts[0].positionIds, attempt.positionIds);
+    assert.equal(status.activity[0].attemptId, attempt.id, 'Unconfirmed closes cannot disappear behind newer rows.');
+    assert.equal((await w.post(`/api/attempts/${attempt.id}/resolve`, {})).status, 200);
+    const retained = w.store.get('attempt', attempt.id);
+    assert.equal(retained.status, 'resolved'); assert.deepEqual(retained.positionIds, attempt.positionIds); assert.equal(retained.idempotencyKey, attempt.idempotencyKey);
+    assert.equal(w.store.get('activity', 'close-unknown-row').status, 'resolved');
+    assert.equal(w.store.claimAttempt({ ...attempt, id: 'replacement' }), false);
+    assert.equal((await w.post(`/api/attempts/${attempt.id}/resolve`, {})).status, 404);
+  } finally { await w.close(); }
+});
