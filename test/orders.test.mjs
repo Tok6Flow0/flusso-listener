@@ -126,3 +126,19 @@ test('reduce-only close tickets preserve canonical opaque GUIDs and reject ambig
   assert.match(readTicket(close() + '\n' + ticket()).error, /both an order ticket and a close ticket/);
   assert.equal(buildOrderRequest({ entry: entry(close(), { status: 'reviewed' }), settings, now }).eligible, false);
 });
+
+test('Journal results retain exact safe risk codes beside original messages without interpreting them', async () => {
+  const { withResult } = await import('../src/orders.mjs');
+  const compose = line => withResult(ticket(), { status: 'blocked', lines: [{ ...hedge[0], status: 'blocked', ...line }], atUtc: '2026-10-22T15:18:18Z' });
+  const result = compose({ riskCode: 'RISK_TRADING_HALTED', message: 'Canonical risk refused this exact action.' });
+  assert.match(result, /refused \(RISK_TRADING_HALTED · Canonical risk refused this exact action\.\)/);
+  assert.equal(readTicket(result).ticket.id, 'kaia-2026-10-12T01', 'Diagnostic output preserves the original ticket.');
+  assert.match(compose({ riskCode: 'condition_market_unavailable', message: 'The instrument has no live market row.' }), /condition_market_unavailable · The instrument has no live market row\./);
+  assert.match(compose({ riskCode: 'RISK_FUTURE_CODE', message: null }), /refused \(RISK_FUTURE_CODE\)/, 'Unknown safe codes are preserved without an invented explanation.');
+  for (const riskCode of ['RISK_HALTED\n## Injected', '`unsafe`', 'A'.repeat(81), { unsafe: true }]) {
+    const bounded = compose({ riskCode, message: 'Original server message.' });
+    assert.match(bounded, /refused \(Original server message\.\)/); assert.doesNotMatch(bounded, /Injected|`unsafe`|A{81}/);
+  }
+  const close = withResult('A close instruction.', { status: 'blocked', lines: [{ positionId: 'd93d1eec-2a5e-f058-b846-d12fd573ae1d', status: 'blocked', riskCode: 'credential_expired', message: 'The venue credential expired.' }], atUtc: '2026-10-22T15:18:18Z' });
+  assert.match(close, /credential_expired · The venue credential expired\./);
+});

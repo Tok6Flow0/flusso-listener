@@ -129,7 +129,7 @@ test('a refused ticket is noted as not placed, and write-back can be turned off'
   try {
     enable(w.store); listener.start();
     const refused = w.store.createEntry(note(w.store, { body: ticket({ id: 'venue-refuses' }) })); await listener.tick();
-    assert.match(w.store.entry(refused.id).body, /\*\*Refused\*\*/); assert.match(w.store.entry(refused.id).body, /refused \(Fixture refusal\.\)/);
+    assert.match(w.store.entry(refused.id).body, /\*\*Refused\*\*/); assert.match(w.store.entry(refused.id).body, /refused \(fixture · Fixture refusal\.\)/);
     enable(w.store, { writeBack: false });
     const quiet = w.store.createEntry(note(w.store, { body: ticket({ id: 'not-noted' }) })); await listener.tick();
     assert.equal(w.store.entry(quiet.id).status, 'watching'); assert.doesNotMatch(w.store.entry(quiet.id).body, /Listener result/);

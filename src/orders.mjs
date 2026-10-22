@@ -166,10 +166,15 @@ export function withResult(body, { status, reason = null, lines = [], atUtc }) {
   if (reason) head.push('', String(reason).replace(/\s+/g, ' ').trim().slice(0, 500));
   const foot = ['', 'Noted by Flusso Journal. Sent is not filled.'];
   const rows = lines.map((line) => {
+    // Keep the server's diagnostic identity beside its original message. A code
+    // is an opaque identifier, never a local interpretation of a risk decision.
+    const code = typeof line.riskCode === 'string' && /^[A-Za-z0-9_.:-]{1,80}$/.test(line.riskCode.trim()) ? line.riskCode.trim() : null;
+    const details = [code, line.message ? String(line.message).replace(/\s+/g, ' ').trim().slice(0, 200) : null].filter(Boolean).join(' · ');
+    const suffix = details ? ` (${details})` : '';
     if (line.positionId) {
-      return `- close ${line.positionId}: ${LINE_STATUS[line.status] ?? line.status}${line.message ? ` (${String(line.message).replace(/\s+/g, ' ').trim().slice(0, 200)})` : ''}`;
+      return `- close ${line.positionId}: ${LINE_STATUS[line.status] ?? line.status}${suffix}`;
     }
-    return `- ${line.side} ${line.instrumentId} ${line.quantity} @ ${line.limitPrice}: ${LINE_STATUS[line.status] ?? line.status}${line.message ? ` (${String(line.message).replace(/\s+/g, ' ').trim().slice(0, 200)})` : ''}`;
+    return `- ${line.side} ${line.instrumentId} ${line.quantity} @ ${line.limitPrice}: ${LINE_STATUS[line.status] ?? line.status}${suffix}`;
   });
   const compose = list => `${base}${base ? '\n\n' : ''}${[...head, ...(list.length ? ['', ...list] : []), ...foot].join('\n')}\n`;
   let result = compose(rows);

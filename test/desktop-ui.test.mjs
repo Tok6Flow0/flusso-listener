@@ -87,3 +87,16 @@ test('a published decision appears once when model start and completion timestam
   assert.deepEqual(latestDecisions([otherRevision, row], newRevisionOutput), [{ ...newRevisionOutput, status: 'observed' }, otherRevision, row]);
   assert.equal(latestDecisions([otherEntry, otherOrigin], output).length, 3);
 });
+
+test('receipt details preserve explicit order and close refusal codes without inventing an explanation', async () => {
+  const { receiptDetails } = await import('../public/desktop-ui.mjs');
+  for (const identity of [{ instrumentId: 'kraken:BTCUSD' }, { positionId: 'owned-position' }]) {
+    assert.deepEqual(receiptDetails({ ...identity, message: 'Order was not submitted.', riskCode: ' RISK_TRADING_HALTED ' }), { message: 'Order was not submitted.', riskCode: 'RISK_TRADING_HALTED' });
+  }
+  assert.deepEqual(receiptDetails({ riskCode: 'RISK_TRADING_HALTED' }), { message: '', riskCode: 'RISK_TRADING_HALTED' });
+  for (const riskCode of [null, { secret: 'not a code' }, '<script>run()</script>', 'RISK\nHALTED', 'A'.repeat(81)]) {
+    assert.deepEqual(receiptDetails({ message: 'Original message.', riskCode }), { message: 'Original message.', riskCode: null });
+  }
+  assert.equal(receiptDetails({ riskCode: 'A'.repeat(80) }).riskCode.length, 80);
+  assert.deepEqual(receiptDetails({ message: { secret: 'not a message' }, detail: 'unknown data' }), { message: '', riskCode: null });
+});

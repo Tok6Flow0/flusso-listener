@@ -63,6 +63,11 @@ export function activityStatus(row = {}) {
   return { label, tone };
 }
 
+export function receiptDetails(line = {}) {
+  const code = text(line.riskCode);
+  return { message: text(line.message), riskCode: /^[A-Za-z0-9_.:-]{1,80}$/.test(code) ? code : null };
+}
+
 // What the listener did with an entry's ticket, as one word and a filter group.
 const LISTENER_RESULT = {
   submitted: ['submitted', 'pos', 'placed'], partial: ['partly submitted', 'warn', 'placed'],

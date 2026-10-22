@@ -1,6 +1,6 @@
 import { formatCount, formatPrice, formatQuantity, formatPercentLabel, formatMoney, formatPercent } from './format.mjs';
 import { renderMarkdown } from './markdown.mjs';
-import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, activityStatus, listenerResult, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions } from './desktop-ui.mjs';
+import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, activityStatus, listenerResult, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions, receiptDetails } from './desktop-ui.mjs';
 
 const $ = id => document.getElementById(id);
 let csrf, snapshot, selected = null, editing = null, entryRetryKey = crypto.randomUUID();
@@ -307,6 +307,12 @@ function renderEntries() {
   if (!rows.length) $('entry-list').append(element('p', 'Nothing here yet.', 'empty'));
   if (selected) { const current = snapshot.entries.find(row => row.id === selected.id && row.origin === selected.origin); if (current) { selected = current; renderDetail(); } }
 }
+function receiptDetailsCell(line) {
+  const cell = element('td', null, 'wrap'), details = receiptDetails(line);
+  cell.append(document.createTextNode(details.message));
+  if (details.riskCode) cell.append(document.createTextNode(details.message ? ' · ' : ''), element('code', details.riskCode));
+  return cell;
+}
 function ordersTable(orders, withResults = false) {
   const wrap = element('div', null, 'table-scroll'), table = element('table'), thead = element('thead'), head = element('tr'), tbody = element('tbody');
   const columns = withResults ? ['Instrument', 'Side', 'Qty', 'Limit', 'Result', 'Order ID', 'Details'] : ['Instrument', 'Side', 'Qty', 'Limit', 'Max slip', 'Max USD'];
@@ -315,7 +321,7 @@ function ordersTable(orders, withResults = false) {
   for (const order of orders) {
     const tr = element('tr');
     tr.append(element('td', order.instrumentId, 'mono'), element('td', order.side), element('td', formatQuantity(order.quantity), 'num'), element('td', formatPrice(order.limitPrice), 'num'));
-    if (withResults) { const status = element('td'), result = activityStatus(order); status.append(pill(result.label, result.tone)); tr.append(status, element('td', order.orderId || '—', 'mono'), element('td', order.message || '', 'wrap')); }
+    if (withResults) { const status = element('td'), result = activityStatus(order); status.append(pill(result.label, result.tone)); tr.append(status, element('td', order.orderId || '—', 'mono'), receiptDetailsCell(order)); }
     else tr.append(element('td', order.conditions?.maxSlippagePct != null ? formatPercent(order.conditions.maxSlippagePct) : '—', 'num'), element('td', order.conditions?.maxNotionalUsd != null ? formatMoney(order.conditions.maxNotionalUsd) : '—', 'num'));
     tbody.append(tr);
   }
@@ -327,7 +333,7 @@ function positionsTable(positions, withResults = false) {
   thead.append(head); table.append(thead);
   for (const row of positions) {
     const position = typeof row === 'string' ? { positionId: row } : row, tr = element('tr'); tr.append(element('td', position.positionId, 'mono'));
-    if (withResults) { const status = element('td'), result = activityStatus(position); status.append(pill(result.label, result.tone)); tr.append(status, element('td', position.message || '', 'wrap')); }
+    if (withResults) { const status = element('td'), result = activityStatus(position); status.append(pill(result.label, result.tone)); tr.append(status, receiptDetailsCell(position)); }
     tbody.append(tr);
   }
   table.append(tbody); wrap.append(table); return wrap;
