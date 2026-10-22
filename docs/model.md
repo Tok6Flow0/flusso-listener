@@ -14,8 +14,9 @@ The engine binds a random IPv4 loopback port with a per-process random API key.
 The key is supplied through a private temporary file and removed after startup;
 Journal content and credentials never enter process arguments or model logs.
 
-Scheduled inference runs for a new in-scope watching revision; Check now also
-re-reviews the newest selected watching/reviewed research note. Calls run one at a time in a bounded
+Each scheduled check and Check now re-review the newest selected watching/reviewed
+research note, including unchanged notes. Other new watching revisions retain their
+existing revision checks. Calls run one at a time in a bounded
 4,096-token context. Nonthinking JSON-schema output is validated again by the
 app. The model stays loaded until the desktop app exits. Total memory includes
 the runtime, context cache, Electron and the OS; recommend at least 8 GB of system

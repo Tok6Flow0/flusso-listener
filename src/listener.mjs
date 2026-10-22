@@ -118,9 +118,9 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
     }
     return true;
   }
-  function tick({ manual = false } = {}) {
+  function tick({ reviewLatest = false } = {}) {
     if (stopped || busy || !store.settings().enabled) return activeTick ?? Promise.resolve();
-    activeTick = runTick({ manual }).finally(() => { activeTick = null; });
+    activeTick = runTick({ reviewLatest }).finally(() => { activeTick = null; });
     return activeTick;
   }
   async function placeTicket({ entry, request, activity, settingsVersion, reconciled }) {
@@ -184,7 +184,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
     if (receipt.status === 'unknown') { store.put('attempt', attempt.id, { ...store.get('attempt', attempt.id), retries: 1 }); state.lastError = 'An order result is unconfirmed. New tickets wait until it resolves.'; return 'stop'; }
     return 'continue';
   }
-  async function runTick({ manual }) {
+  async function runTick({ reviewLatest }) {
     busy = true; state.busy = true; activeAbort = new AbortController();
     state.processing = null;
     publish('read', 'Starting a Listener check.');
@@ -207,14 +207,14 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
       const entries = store.entries().filter(entry => inScope(entry, settings))
         .map(entry => ({ entry, ticket: readTicket(entry.body) !== null }))
         .sort((left, right) => Number(right.ticket) - Number(left.ticket));
-      // Manual review revisits one existing research note; it never replays a
+      // Each requested research review revisits one existing note; it never replays a
       // checkpointed ticket or revisits a closed note.
-      const manualEntry = manual ? entries.filter(({ entry, ticket }) => !ticket && ['watching', 'reviewed'].includes(entry.status))
+      const researchEntry = reviewLatest ? entries.filter(({ entry, ticket }) => !ticket && ['watching', 'reviewed'].includes(entry.status))
         .sort((a, b) => (b.entry.updatedAtUtc ?? b.entry.createdAtUtc).localeCompare(a.entry.updatedAtUtc ?? a.entry.createdAtUtc))[0]?.entry : null;
-      const shouldReview = entry => entry.id === manualEntry?.id && entry.origin === manualEntry?.origin;
+      const shouldReview = entry => entry.id === researchEntry?.id && entry.origin === researchEntry?.origin;
       const queued = entries.filter(({ entry }) => shouldReview(entry) || (entry.status === 'watching' && store.get('checkpoint', keyOf(entry))?.version !== entry.version));
       const total = queued.length; let index = 0;
-      publish('queued', `${entries.length} selected entries; ${total} revision${total === 1 ? '' : 's'} to process${manualEntry ? "; includes manual research review" : ""}.`, null, { index, total });
+      publish('queued', `${entries.length} selected entries; ${total} revision${total === 1 ? '' : 's'} to process${researchEntry ? "; includes latest research review" : ""}.`, null, { index, total });
       for (const { entry, ticket } of entries) {
         if (!store.settings().enabled || activeAbort.signal.aborted) break;
         const key = keyOf(entry), checkpoint = store.get('checkpoint', key);
@@ -271,7 +271,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
         publish('result', 'This note has no explicit action ticket. Add a flusso-orders ticket with exact order fields, or flusso-close with owned position IDs, and set it to watching to submit an instruction.', entry, { status: 'observed', index, total });
         store.put('checkpoint', key, { version: entry.version, state: 'observed', atUtc });
       }
-      if (manual && !manualEntry) publish('waiting', 'No reviewed or watching research note matches the selected notebooks and section. No model was run.');
+      if (reviewLatest && !researchEntry) publish('waiting', 'No reviewed or watching research note matches the selected notebooks and section. No model was run.');
       state.lastCheckedAtUtc = new Date(clock()).toISOString();
     } catch { if (!activeAbort.signal.aborted) { state.lastError = 'The listener could not finish its check. Inspect retained receipts for any instruction already dispatched.'; publish('error', state.lastError); } }
     finally {
@@ -287,7 +287,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
     if (state.running) timer = setTimeout(async () => {
       if (stopped || generation !== scheduleGeneration) return;
       timer = null;
-      await tick();
+      await tick({ reviewLatest: true });
       if (!stopped && generation === scheduleGeneration) schedule();
     }, store.settings().intervalSeconds * 1000);
   }

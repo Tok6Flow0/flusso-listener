@@ -177,7 +177,7 @@ test('unconfirmed close attempts stay visible and owner-resolvable with their or
 
 test('authenticated status pushes real progress without waiting for a check to finish and releases subscribers', async () => {
   let publish, disconnected; const closed = new Promise(resolve => { disconnected = resolve; });
-  const w = await appFixture({}, { status: () => ({ sequence: 0 }), subscribe: callback => { publish = callback; return disconnected; }, tick: async options => { assert.deepEqual(options, { manual: true }); } });
+  const w = await appFixture({}, { status: () => ({ sequence: 0 }), subscribe: callback => { publish = callback; return disconnected; }, tick: async options => { assert.deepEqual(options, { reviewLatest: true }); } });
   let reader;
   try {
     assert.equal((await fetch(w.app.origin + '/api/status', { headers: { Accept: 'text/event-stream' } })).status, 401);

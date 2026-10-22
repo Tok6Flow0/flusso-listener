@@ -457,14 +457,14 @@ test('manual Check now re-reviews the newest selected research note, streams it,
     const research = w.store.createEntry(note(w.store, { title: 'Existing reviewed research', status: 'reviewed' }));
     listener.start(); await listener.tick(); assert.equal(reviews, 0);
     w.store.createEntry(note(w.store, { body: ticket({ id: 'stream-safety' }) })); await listener.tick(); assert.equal(sends, 1);
-    const tick = listener.tick({ manual: true }); assert.equal((await started.promise).id, research.id);
+    const tick = listener.tick({ reviewLatest: true }); assert.equal((await started.promise).id, research.id);
     assert.equal(listener.status().modelOutput.text, 'fresh model response');
     assert.equal(listener.status().modelOutput.status, 'streaming');
     assert.equal(listener.status().lastModelOutput, null, 'Partial text is not a decision.');
     assert.ok(updates.some(state => state.modelOutput?.text === 'fresh model response' && state.busy));
     finish.resolve({ decision: 'review', reason: 'This is the actual model decision.' }); await tick;
     assert.equal(listener.status().modelOutput.status, 'complete'); assert.equal(sends, 1);
-    await listener.tick(); assert.equal(reviews, 1, 'Scheduled checks still honor checkpoints.');
+    await listener.tick(); assert.equal(reviews, 1, 'Ordinary revision checks still honor checkpoints.');
     assert.equal(w.store.entry(research.id).status, 'reviewed');
     const count = updates.length; unsubscribe(); await listener.tick(); assert.equal(updates.length, count);
   } finally { finish.resolve({ decision: 'ignore', reason: 'Cleanup.' }); unsubscribe(); await listener.stop(); await w.close(); }
@@ -477,5 +477,26 @@ test('a failed streamed answer retains its partial text as failed and leaves the
     enable(w.store); listener.start(); const entry = w.store.createEntry(note(w.store)); await listener.tick();
     assert.equal(listener.status().modelOutput.status, 'failed'); assert.equal(listener.status().modelOutput.text, 'unfinished response');
     assert.equal(listener.status().lastModelOutput, null); assert.equal(w.store.get('checkpoint', `local:${entry.id}`), null);
+  } finally { await listener.stop(); await w.close(); }
+});
+
+
+test('every timer period calls the model for unchanged selected research without replaying a ticket', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const w = await workspace(); let reviews = 0, sends = 0;
+  const listener = createListener({ store: w.store, cloud: fakeCloud({ submitOrders: async attempt => { sends++; return sent(attempt.orders); } }),
+    classify: async ({ onOutput }) => { reviews++; onOutput(`period ${reviews}`); return { decision: 'review', reason: `period ${reviews}` }; }, clock: () => now });
+  try {
+    enable(w.store, { intervalSeconds: 15 });
+    const research = w.store.createEntry(note(w.store, { status: 'reviewed' }));
+    listener.start(); w.store.createEntry(note(w.store, { body: ticket({ id: 'periodic-safety' }) }));
+    await listener.tick(); assert.equal(sends, 1); assert.equal(reviews, 0);
+    for (let period = 1; period <= 3; period++) {
+      t.mock.timers.tick(14999); assert.equal(reviews, period - 1);
+      t.mock.timers.tick(1); await listener.tick();
+      assert.equal(reviews, period); assert.equal(listener.status().modelOutput.text, `period ${period}`);
+      assert.equal(listener.status().lastModelOutput.entryId, research.id);
+      assert.equal(sends, 1, 'Decided tickets remain checkpointed through every period.');
+    }
   } finally { await listener.stop(); await w.close(); }
 });

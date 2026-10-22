@@ -132,8 +132,8 @@ incomplete scan is displayed and does not authorize cloud execution.
 
 The Listener shows the local model's actual JSON response as it is generated.
 **Check now** also re-reviews the newest selected research note whose status is
-watching or reviewed, even if that revision was already checked. Scheduled checks
-still process new watching revisions once. Manual review does not replay decided
+watching or reviewed, even if that revision was already checked. Scheduled checks also re-review the newest selected research note each period,
+even when it has not changed. Other watching revisions retain their checkpoints. Manual review does not replay decided
 action tickets or reopen closed notes. If no research note matches the selection,
 no model response is invented.
 

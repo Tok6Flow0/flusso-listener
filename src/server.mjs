@@ -122,7 +122,7 @@ export async function startServer({ store, cloud, listener, port = 0, open = ope
         if (!THEMES.includes(input.theme)) throw new InputError('Choose an available appearance.');
         store.put('display', 'main', { theme: input.theme }); return reply(200, { theme: input.theme });
       }
-      if (url.pathname === '/api/check' && request.method === 'POST') { object(input, []); await listener.tick({ manual: true }); return reply(200, listener.status()); }
+      if (url.pathname === '/api/check' && request.method === 'POST') { object(input, []); await listener.tick({ reviewLatest: true }); return reply(200, listener.status()); }
       if (url.pathname === '/api/sync' && request.method === 'POST') {
         object(input, []);
         if (connectPending) throw new InputError('Complete the current browser connection before syncing the Journal.', 409);
