@@ -1,3 +1,5 @@
+import { configureArchitectureProvider } from './update-provider.mjs';
+
 const CHECK_MS = 4 * 60 * 60 * 1000;
 const STARTUP_CHECK_MS = 12_000;
 
@@ -14,6 +16,7 @@ export function createUpdates({
   clearTimeoutFn = clearTimeout,
 }) {
   let installing;
+  let providerReady;
   let timers = [];
   // Packaged preview and production builds both use signed update manifests.
   // Preview builds also accept GitHub prereleases on the preview channel.
@@ -33,6 +36,13 @@ export function createUpdates({
   updater.disableWebInstaller = true;
   updater.allowUnverifiedLinuxPackages = false;
   const supported = () => { if (!packaged) throw new Error(state.message); };
+  const prepareProvider = () => {
+    if (!providerReady) {
+      const ready = configureArchitectureProvider(updater);
+      if (ready) providerReady = ready.catch(error => { providerReady = undefined; throw error; });
+    }
+    return providerReady;
+  };
   updater.on('checking-for-update', () => publish({ state: 'checking', message: 'Checking for updates…' }));
   updater.on('update-available', info => {
     if (typeof info.version !== 'string' || info.version.length > 100 || info.version === version) {
@@ -63,7 +73,11 @@ export function createUpdates({
 
   async function checkQuietly() {
     if (!packaged || ['checking', 'downloading', 'downloaded'].includes(state.state)) return { ...state };
-    try { await updater.checkForUpdates(); } catch { /* keep last status; corner popup only on available/downloaded */ }
+    publish({ state: 'checking', message: 'Checking for updates…' });
+    try {
+      const ready = prepareProvider(); if (ready) await ready;
+      await updater.checkForUpdates();
+    } catch { publish({ state: 'error', message: 'Could not check for a signed update. Try again later.' }); }
     return { ...state };
   }
 
@@ -73,7 +87,10 @@ export function createUpdates({
       supported();
       if (['checking', 'downloading', 'downloaded'].includes(state.state)) return { ...state };
       publish({ state: 'checking', message: 'Checking for updates…' });
-      try { await updater.checkForUpdates(); }
+      try {
+        const ready = prepareProvider(); if (ready) await ready;
+        await updater.checkForUpdates();
+      }
       catch { publish({ state: 'error', message: 'Could not check for a signed update. Try again later.' }); }
       return { ...state };
     },

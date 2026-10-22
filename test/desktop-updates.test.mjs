@@ -107,7 +107,10 @@ test('concurrent or repeated install requests perform shutdown and installer lau
 
 test('development builds never contact update servers or expose an installable update', async () => {
   const { updater, updates } = fixture({ packaged: false, preview: false });
+  updater.configOnDisk = { get value() { assert.fail('Development builds must not prepare an update provider.'); } };
+  updater.setFeedURL = () => assert.fail('Development builds must not replace their provider.');
   assert.equal(updates.status().state, 'unsupported');
+  updates.startAutoCheck();
   await assert.rejects(updates.check()); await assert.rejects(updates.download()); await assert.rejects(updates.install());
   for (const [event, value] of [['checking-for-update'], ['update-available', { version: '0.2.0' }], ['download-progress', { percent: 50 }], ['update-downloaded', { version: '0.2.0' }], ['update-not-available'], ['error', new Error('synthetic error')]]) {
     updater.emit(event, value); assert.equal(updates.status().state, 'unsupported', event);
@@ -168,4 +171,41 @@ test('an absent, non-string, oversized or current offered version cannot enable 
     assert.equal(updates.status().state, 'error'); await assert.rejects(updates.download(), /available update/i);
     assert.deepEqual(updater.calls, [['check']]);
   }
+});
+
+test('provider configuration is lazy, shared by concurrent checks and retryable after a bounded failure', async () => {
+  const { updater, updates } = fixture();
+  const ready = deferred(); let reads = 0, configured = 0;
+  updater.configOnDisk = { get value() { reads++; return ready.promise; } };
+  updater.setFeedURL = config => { configured++; assert.equal(config.provider, 'custom'); };
+  assert.equal(reads, 0);
+  const first = updates.check();
+  assert.equal((await updates.check()).state, 'checking');
+  assert.deepEqual(updater.calls, []); assert.equal(reads, 1);
+  ready.resolve({ provider: 'github', channel: 'preview-arm64' });
+  await first;
+  updater.emit('update-not-available'); await updates.check();
+  assert.equal(reads, 1); assert.equal(configured, 1); assert.equal(updater.calls.length, 2);
+
+  const failed = fixture(); let attempts = 0;
+  failed.updater.configOnDisk = { get value() { return ++attempts === 1 ? Promise.reject(new Error('private URL/token')) : Promise.resolve({ provider: 'github', channel: 'preview-arm64' }); } };
+  failed.updater.setFeedURL = () => {};
+  assert.equal((await failed.updates.check()).state, 'error');
+  assert.doesNotMatch(failed.updates.status().message, /private|token/);
+  assert.deepEqual(failed.updater.calls, []);
+  await failed.updates.check();
+  assert.equal(attempts, 2); assert.deepEqual(failed.updater.calls, [['check']]);
+});
+
+test('a quiet startup configuration failure leaves a bounded error instead of a stuck checking status', async () => {
+  let startup;
+  const { updater, updates } = fixture({ setTimeoutFn: fn => { startup = fn; }, setIntervalFn: () => {}, clearTimeoutFn: () => {}, clearIntervalFn: () => {} });
+  updater.configOnDisk = { value: Promise.resolve().then(() => { throw new Error('private URL/token'); }) };
+  updater.setFeedURL = () => assert.fail('Failed configuration must not replace the provider.');
+  updates.startAutoCheck(); startup();
+  await new Promise(setImmediate);
+  assert.equal(updates.status().state, 'error');
+  assert.doesNotMatch(updates.status().message, /private|token/);
+  assert.deepEqual(updater.calls, []);
+  updates.stopAutoCheck();
 });
