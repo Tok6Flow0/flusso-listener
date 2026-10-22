@@ -4,10 +4,10 @@ import http from 'node:http';
 import { startServer } from '../src/server.mjs';
 import { workspace, fakeCloud, note, accountId, notebookId, now } from './helpers.mjs';
 
-async function appFixture(cloudOverrides = {}) {
+async function appFixture(cloudOverrides = {}, listenerOverrides = {}) {
   const w = await workspace();
   const cloud = fakeCloud(cloudOverrides);
-  const listener = { status: () => ({}), refresh: () => {}, tick: async () => {} };
+  const listener = { status: () => ({}), refresh: () => {}, tick: async () => {}, ...listenerOverrides };
   const app = await startServer({ store: w.store, cloud, listener, checkModel: async () => ({ installed: true }) });
   let csrf, cookie;
   const post = async (path, body, headers = {}) => fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie, 'x-flusso-csrf': csrf } : {}), ...headers }, body: JSON.stringify(body) });
@@ -172,4 +172,22 @@ test('unconfirmed close attempts stay visible and owner-resolvable with their or
     assert.equal(w.store.claimAttempt({ ...attempt, id: 'replacement' }), false);
     assert.equal((await w.post(`/api/attempts/${attempt.id}/resolve`, {})).status, 404);
   } finally { await w.close(); }
+});
+
+
+test('authenticated status pushes real progress without waiting for a check to finish and releases subscribers', async () => {
+  let publish, disconnected; const closed = new Promise(resolve => { disconnected = resolve; });
+  const w = await appFixture({}, { status: () => ({ sequence: 0 }), subscribe: callback => { publish = callback; return disconnected; }, tick: async options => { assert.deepEqual(options, { manual: true }); } });
+  let reader;
+  try {
+    assert.equal((await fetch(w.app.origin + '/api/status', { headers: { Accept: 'text/event-stream' } })).status, 401);
+    await w.unlock();
+    const response = await fetch(w.app.origin + '/api/status', { headers: { Cookie: w.cookie(), Accept: 'text/event-stream' } });
+    assert.equal(response.headers.get('content-type'), 'text/event-stream'); reader = response.body.getReader();
+    assert.match(new TextDecoder().decode((await reader.read()).value), /"sequence":0/);
+    publish({ sequence: 1, modelOutput: { text: 'real response chunk', status: 'streaming' } });
+    assert.match(new TextDecoder().decode((await reader.read()).value), /real response chunk/);
+    assert.equal((await w.post('/api/check', {})).status, 200);
+    await reader.cancel(); await closed;
+  } finally { await reader?.cancel().catch(() => {}); await w.close(); }
 });

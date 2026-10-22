@@ -444,3 +444,38 @@ test('an unknown close holds new instructions across restart without resending u
     w.store.createEntry(note(w.store, { body })); await listener.tick(); assert.equal(closes, 1, 'Resolution never releases the original durable close identity.');
   } finally { await listener.stop(); await w.close(); }
 });
+
+
+test('manual Check now re-reviews the newest selected research note, streams it, and never replays a decided ticket', async () => {
+  const w = await workspace(), started = deferred(), finish = deferred(); let reviews = 0, sends = 0;
+  const listener = createListener({ store: w.store, cloud: fakeCloud({ submitOrders: async attempt => { sends++; return sent(attempt.orders); } }),
+    classify: async ({ entry, onOutput }) => { reviews++; onOutput('fresh model response'); started.resolve(entry); return finish.promise; }, clock: () => now });
+  const updates = []; const unsubscribe = listener.subscribe(state => updates.push(state));
+  try {
+    enable(w.store);
+    w.store.createEntry(note(w.store, { title: 'Closed note stays closed', status: 'closed' }));
+    const research = w.store.createEntry(note(w.store, { title: 'Existing reviewed research', status: 'reviewed' }));
+    listener.start(); await listener.tick(); assert.equal(reviews, 0);
+    w.store.createEntry(note(w.store, { body: ticket({ id: 'stream-safety' }) })); await listener.tick(); assert.equal(sends, 1);
+    const tick = listener.tick({ manual: true }); assert.equal((await started.promise).id, research.id);
+    assert.equal(listener.status().modelOutput.text, 'fresh model response');
+    assert.equal(listener.status().modelOutput.status, 'streaming');
+    assert.equal(listener.status().lastModelOutput, null, 'Partial text is not a decision.');
+    assert.ok(updates.some(state => state.modelOutput?.text === 'fresh model response' && state.busy));
+    finish.resolve({ decision: 'review', reason: 'This is the actual model decision.' }); await tick;
+    assert.equal(listener.status().modelOutput.status, 'complete'); assert.equal(sends, 1);
+    await listener.tick(); assert.equal(reviews, 1, 'Scheduled checks still honor checkpoints.');
+    assert.equal(w.store.entry(research.id).status, 'reviewed');
+    const count = updates.length; unsubscribe(); await listener.tick(); assert.equal(updates.length, count);
+  } finally { finish.resolve({ decision: 'ignore', reason: 'Cleanup.' }); unsubscribe(); await listener.stop(); await w.close(); }
+});
+
+test('a failed streamed answer retains its partial text as failed and leaves the note retryable', async () => {
+  const w = await workspace();
+  const listener = createListener({ store: w.store, cloud: fakeCloud(), classify: async ({ onOutput }) => { onOutput('unfinished response'); throw new Error('The local model stopped.'); }, clock: () => now });
+  try {
+    enable(w.store); listener.start(); const entry = w.store.createEntry(note(w.store)); await listener.tick();
+    assert.equal(listener.status().modelOutput.status, 'failed'); assert.equal(listener.status().modelOutput.text, 'unfinished response');
+    assert.equal(listener.status().lastModelOutput, null); assert.equal(w.store.get('checkpoint', `local:${entry.id}`), null);
+  } finally { await listener.stop(); await w.close(); }
+});

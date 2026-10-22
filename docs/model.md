@@ -14,7 +14,8 @@ The engine binds a random IPv4 loopback port with a per-process random API key.
 The key is supplied through a private temporary file and removed after startup;
 Journal content and credentials never enter process arguments or model logs.
 
-Inference runs only for a new in-scope note revision, one at a time, in a bounded
+Scheduled inference runs for a new in-scope watching revision; Check now also
+re-reviews the newest selected watching/reviewed research note. Calls run one at a time in a bounded
 4,096-token context. Nonthinking JSON-schema output is validated again by the
 app. The model stays loaded until the desktop app exits. Total memory includes
 the runtime, context cache, Electron and the OS; recommend at least 8 GB of system
@@ -28,8 +29,10 @@ never creates, approves or places an order. Orders come only from explicit
 `flusso-orders` tickets that code validates against your limits; position closes
 use explicit `flusso-close` tickets with exact owned position IDs. Both paths
 publish validation and receipt events without waiting for model classification.
-The Listener's live transcript also shows model review in progress, followed by
-the final structured decision and short explanation. The model runs with thinking
+The Listener streams the engine's public JSON answer into Model output through
+the existing authenticated local status resource. Partial text cannot become an
+accepted decision until the engine's completion marker and schema checks pass.
+Operation-stage messages are kept separately in the collapsed Operations log. The model runs with thinking
 disabled; internal reasoning is not requested or recorded.
 
 [Ollama's FAQ](https://docs.ollama.com/faq) documents loopback defaults, memory

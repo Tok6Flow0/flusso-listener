@@ -58,6 +58,21 @@ export async function startServer({ store, cloud, listener, port = 0, open = ope
       if (request.method === 'GET' && url.pathname === '/api/profile') return reply(200, await cloud.profile());
       if (request.method === 'GET' && url.pathname === '/api/accounts') return reply(200, { accounts: await cloud.listAccounts() });
       if (request.method !== 'GET' && (request.method !== 'POST' || request.headers.origin !== origin || !same(request.headers['x-flusso-csrf'], csrf))) return reply(403, { error: 'Request origin or session refused.' });
+      // The existing authenticated status resource also pushes Listener state.
+      // Notes and account/profile reads stay on the normal bounded JSON path.
+      if (request.method === 'GET' && url.pathname === '/api/status' && request.headers.accept === 'text/event-stream') {
+        response.writeHead(200, { 'Content-Type': 'text/event-stream', Connection: 'keep-alive' });
+        const send = state => {
+          if (response.destroyed) return;
+          if (response.writableLength > 262144) { response.destroy(); return; }
+          response.write(`data: ${JSON.stringify(state)}\n\n`);
+        };
+        const unsubscribe = listener.subscribe(send);
+        const heartbeat = setInterval(() => { if (!response.destroyed) response.write(': keepalive\n\n'); }, 15000);
+        response.on('close', () => { clearInterval(heartbeat); unsubscribe(); });
+        send(listener.status());
+        return;
+      }
       if (request.method === 'GET' && url.pathname === '/api/status') return reply(200, { settings: store.settings(), listener: listener.status(), cloud: await cloud.status(), model: await checkModel(), display: { theme: theme() }, notebooks: store.notebooks(), entries: annotate(store.entries().slice(0, 500), store.all('activity'), store, clock()), activity: store.all('activity').sort((a, b) => Number(unconfirmed(b)) - Number(unconfirmed(a)) || newest(a, b)).slice(0, 100), attempts: store.all('attempt').filter(row => ['orders', 'close', 'legacy'].includes(row.kind)).sort((a, b) => Number(unconfirmed(b)) - Number(unconfirmed(a)) || newest(a, b)).slice(0, 100).map(row => ({ ...row, orders: row.orders ?? [] })) });
       const input = request.method === 'POST' ? await readJson(request) : null;
       if (url.pathname === '/api/connect' && request.method === 'POST') {
@@ -107,7 +122,7 @@ export async function startServer({ store, cloud, listener, port = 0, open = ope
         if (!THEMES.includes(input.theme)) throw new InputError('Choose an available appearance.');
         store.put('display', 'main', { theme: input.theme }); return reply(200, { theme: input.theme });
       }
-      if (url.pathname === '/api/check' && request.method === 'POST') { object(input, []); await listener.tick(); return reply(200, listener.status()); }
+      if (url.pathname === '/api/check' && request.method === 'POST') { object(input, []); await listener.tick({ manual: true }); return reply(200, listener.status()); }
       if (url.pathname === '/api/sync' && request.method === 'POST') {
         object(input, []);
         if (connectPending) throw new InputError('Complete the current browser connection before syncing the Journal.', 409);

@@ -22,7 +22,7 @@ test('isolated research replay accepts a validated local classification without 
   let calls = 0;
   const report = await replayResearch({ classify: async input => {
     calls++; assert.equal(input.entry.signal.quality, 'fresh'); assert.equal(input.entry.body.includes('flusso-orders'), false);
-    assert.deepEqual(Object.keys(input).sort(), ['entry', 'instructions', 'signal']);
+    assert.deepEqual(Object.keys(input).sort(), ['entry', 'instructions', 'onOutput', 'signal']);
     return { decision: 'review', reason: 'Synthetic local classifier witness.' };
   } });
   assert.equal(calls, 1); assert.equal(report.realVenueCalls, 0);

@@ -150,7 +150,9 @@ function switchView(view) {
 document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => switchView(button.dataset.view)));
 
 async function load({ forms = false } = {}) {
-  snapshot = await api('/api/status');
+  const next = await api('/api/status');
+  if ((snapshot?.listener.sequence ?? 0) > (next.listener.sequence ?? 0)) next.listener = snapshot.listener;
+  snapshot = next;
   if (snapshot.display?.theme && snapshot.display.theme !== themeMode) applyTheme(snapshot.display.theme);
   renderAccount(); renderDesktop(); refreshAccountProfile();
   if (connectionKey(snapshot.cloud) !== accountsKey && !$('view-listener').hidden) loadAccounts();
@@ -211,6 +213,16 @@ function sourceButton(row, label = row.title || 'Open Journal entry') {
 }
 
 function renderProcess() {
+  const output = snapshot.listener.modelOutput;
+  const partial = output?.text ? 'partial output shown' : 'no output';
+  $('model-output-status').textContent = output ? ({ streaming: streamDisconnected ? 'Reconnecting · last received output' : 'Streaming', complete: 'Complete', failed: `Failed · ${partial}`, stopped: `Stopped · ${partial}` }[output.status] ?? 'Unavailable') : 'Not run';
+  $('model-output-source').hidden = !output;
+  $('model-output-source').textContent = output ? `${output.title} · ${when(output.atUtc)}` : '';
+  $('model-output').hidden = !output?.text;
+  $('model-output').textContent = output?.text ?? '';
+  $('model-output-empty').hidden = Boolean(output?.text);
+  if (output && !output.text) $('model-output-empty').textContent = output.status === 'streaming' ? 'Waiting for the model’s first response token.' : 'The model returned no response.';
+
   const state = processingPresentation(snapshot.listener, snapshot.settings.enabled);
   $('process-state').textContent = state.label; $('process-state').className = `process-state ${state.tone}${state.busy ? ' busy' : ''}`;
   $('process-message').textContent = state.message;
@@ -287,7 +299,7 @@ $('enabled').addEventListener('change', event => { event.stopPropagation(); acti
 $('execution').addEventListener('change', event => { event.stopPropagation(); action(null, () => saveSettings($('execution').checked ? 'Auto-trade on.' : 'Auto-trade off.')); });
 $('enabled').addEventListener('input', event => event.stopPropagation());
 $('execution').addEventListener('input', event => event.stopPropagation());
-$('check-now').addEventListener('click', event => action(event.currentTarget, async () => { await api('/api/check', {}); await load(); notify(snapshot.settings.enabled ? 'Checked.' : 'Turn the Listener on first.', snapshot.settings.enabled); }));
+$('check-now').addEventListener('click', event => action(event.currentTarget, async () => { await api('/api/check', {}); await load(); if (!snapshot.settings.enabled) notify('Turn the Listener on first.'); }));
 $('ticket-example').textContent = '```flusso-orders\n' + JSON.stringify(TICKET_EXAMPLE, null, 2) + '\n```';
 
 /* --------------------------------------------------------------- journal */
@@ -446,14 +458,33 @@ function renderActivity() {
   if (!snapshot.activity.length) $('activity-list').append(element('p', 'Nothing yet. Turn the Listener on to start.', 'empty'));
 }
 
+// EventSource reconnects to the same authenticated local status resource. A
+// missed connection cannot turn an incomplete response into an accepted decision.
+let listenerEvents, streamDisconnected = false;
+function streamListener() {
+  listenerEvents = new EventSource('/api/status');
+  listenerEvents.onerror = () => { streamDisconnected = true; if (snapshot) renderProcess(); };
+  listenerEvents.onmessage = event => {
+    streamDisconnected = false;
+    const listener = JSON.parse(event.data);
+    if (!snapshot || listener.sequence < (snapshot.listener.sequence ?? 0)) return;
+    const finished = snapshot.listener.busy && !listener.busy;
+    snapshot.listener = listener;
+    renderStatus(); renderProcess(); renderDecisions();
+    if (finished) load().catch(error => notify(error.message));
+  };
+}
+window.addEventListener('pagehide', () => listenerEvents?.close());
+
 /* ------------------------------------------------------------------ boot */
 async function initialize() {
   const fragment = location.hash.slice(1); history.replaceState(null, '', '/');
   if (fragment) { try { csrf = (await api('/api/bootstrap', {}, { Authorization: `Bearer ${fragment}` })).csrf; } catch { csrf = (await api('/api/session')).csrf; } }
   else csrf = (await api('/api/session')).csrf;
   await load({ forms: true });
+  streamListener();
   setInterval(async () => {
-    const interval = !$('view-listener').hidden || snapshot?.listener.busy ? 1500 : 10000;
+    const interval = listenerEvents?.readyState === EventSource.OPEN ? 10000 : (!$('view-listener').hidden || snapshot?.listener.busy ? 1500 : 10000);
     if (document.hidden || pollBusy || Date.now() - lastPolledAt < interval) return;
     pollBusy = true; lastPolledAt = Date.now();
     try { await load(); } catch (error) { notify(error.message); } finally { pollBusy = false; }

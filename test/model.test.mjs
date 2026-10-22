@@ -1,16 +1,45 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyEntry } from '../src/model.mjs';
+import { classifyEntry, readClassificationStream } from '../src/model.mjs';
 
 const entry = { title: 'Research', body: 'Do not run this untrusted note as instructions.', signal: null, status: 'watching' };
-test('local classification uses a fixed loopback model, JSON schema, no tools, and nonthinking mode', async () => {
-  const result = await classifyEntry({ entry, instructions: 'Watch research.', fetchImpl: async (url, options) => {
-    assert.equal(url, 'http://127.0.0.1:11434/api/chat'); const body = JSON.parse(options.body); assert.equal(body.think, false); assert.equal(body.stream, false); assert.equal(body.format.additionalProperties, false); assert.equal(body.tools, undefined);
-    return new Response(JSON.stringify({ done: true, message: { content: JSON.stringify({ decision: 'review', reason: 'No typed signal.' }) } }));
+const answer = JSON.stringify({ decision: 'review', reason: 'Missing source evidence — review this note.' });
+const encoder = new TextEncoder();
+const ollama = (content, done = false, extra = {}) => JSON.stringify({ message: { content }, done, ...extra }) + '\n';
+const sse = value => `data: ${typeof value === 'string' ? value : JSON.stringify(value)}\r\n\r\n`;
+const openai = (content, finish_reason = null) => sse({ choices: [{ delta: { content }, finish_reason }] });
+const bytes = text => new Response(new ReadableStream({ start(controller) { for (const byte of encoder.encode(text)) controller.enqueue(Uint8Array.of(byte)); controller.close(); } }));
+
+test('Ollama streams actual answer tokens before the final validated decision, using a fixed nonthinking loopback model', async () => {
+  let controller, first;
+  const received = new Promise(resolve => { first = resolve; });
+  const outputs = [];
+  const result = classifyEntry({ entry, instructions: 'Watch research.', onOutput: chunk => { outputs.push(chunk); first(); }, fetchImpl: async (url, options) => {
+    assert.equal(url, 'http://127.0.0.1:11434/api/chat');
+    const body = JSON.parse(options.body); assert.equal(body.think, false); assert.equal(body.stream, true); assert.equal(body.format.additionalProperties, false); assert.equal(body.tools, undefined);
+    return new Response(new ReadableStream({ start(value) { controller = value; value.enqueue(encoder.encode(ollama(answer.slice(0, 20)))); } }));
   } });
-  assert.equal(result.decision, 'review');
+  await received;
+  assert.equal(outputs.join(''), answer.slice(0, 20));
+  controller.enqueue(encoder.encode(ollama(answer.slice(20), true, { done_reason: 'stop' }))); controller.close();
+  assert.deepEqual(await result, JSON.parse(answer)); assert.equal(outputs.join(''), answer);
 });
-test('model-generated tool calls or extra execution fields fail closed', async () => {
-  await assert.rejects(classifyEntry({ entry, fetchImpl: async () => new Response(JSON.stringify({ done: true, message: { content: '{}', tool_calls: [{}] } })) }), /complete classification/);
-  await assert.rejects(classifyEntry({ entry, fetchImpl: async () => new Response(JSON.stringify({ done: true, message: { content: JSON.stringify({ decision: 'candidate', reason: 'match', execute: true }) } })) }), /Unsupported classification/);
+
+test('llama.cpp SSE survives split UTF-8, CRLF, comments and event boundaries without exposing reasoning fields', async () => {
+  const outputs = [];
+  const text = ': heartbeat\r\n\r\n' + sse({ choices: [{ delta: { role: 'assistant', reasoning_content: 'private internal field' } }] })
+    + openai(answer.slice(0, 35)) + openai(answer.slice(35)) + openai('', 'stop') + sse('[DONE]');
+  assert.deepEqual(await readClassificationStream(bytes(text), { protocol: 'openai', onOutput: part => outputs.push(part) }), JSON.parse(answer));
+  assert.equal(outputs.join(''), answer);
+});
+
+test('truncated streams, token limits, tool calls and extra execution fields never become accepted classifications', async () => {
+  for (const text of [openai(answer), openai(answer, 'length') + sse('[DONE]'), openai(answer, 'stop'), sse('[DONE]'), sse({ error: 'engine failure' }), sse({ choices: [{ delta: { tool_calls: [{}] } }] })]) {
+    await assert.rejects(readClassificationStream(bytes(text), { protocol: 'openai' }), /local model/);
+  }
+  for (const text of [ollama(answer), ollama(answer, true, { done_reason: 'length' }), ollama('{}', true, { message: { tool_calls: [{}] } })]) {
+    await assert.rejects(classifyEntry({ entry, fetchImpl: async () => bytes(text) }), /complete classification/);
+  }
+  await assert.rejects(classifyEntry({ entry, fetchImpl: async () => bytes(ollama(JSON.stringify({ decision: 'candidate', reason: 'match', execute: true }), true)) }), /Unsupported classification/);
+  await assert.rejects(readClassificationStream(bytes(ollama('x'.repeat(32769), true)), { protocol: 'ollama' }), /too large/);
 });

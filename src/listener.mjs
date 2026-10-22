@@ -28,9 +28,14 @@ export function summarize(receipt, count, kind = 'orders') {
 export function createListener({ store, cloud, buildRequest = buildOrderRequest, classify = classifyEntry, clock = Date.now }) {
   let timer = null, busy = false, activeAbort = null, activeTick = null, stopped = false, scheduleGeneration = 0;
   const state = { running: false, busy: false, lastCheckedAtUtc: null, lastError: null, cloudComplete: null, cloudReason: null,
-    processing: null, events: [], lastModelOutput: null };
+    processing: null, events: [], lastModelOutput: null, modelOutput: null, sequence: 0 };
+  const subscribers = new Set();
+  function changed() {
+    state.sequence += 1;
+    for (const subscriber of subscribers) { try { subscriber(structuredClone(state)); } catch { /* A disconnected view cannot interrupt a check. */ } }
+  }
   let eventSequence = 0;
-  // Public progress reports code stages and the model's final structured answer.
+  // Operation events and the model's streamed public answer remain distinct.
   // The model runs with thinking disabled; no hidden reasoning is requested or stored.
   function publish(stage, message, entry = null, details = {}) {
     const atUtc = new Date(clock()).toISOString();
@@ -39,6 +44,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
     state.events.push(event); if (state.events.length > 100) state.events.shift();
     state.processing = { running: state.busy, startedAtUtc: state.processing?.startedAtUtc ?? atUtc,
       updatedAtUtc: atUtc, ...event };
+    changed();
   }
   const keyOf = entry => `${entry.origin}:${entry.id}`;
   // Old notes become a baseline, but an unactioned ticket from the action window is
@@ -112,9 +118,9 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
     }
     return true;
   }
-  function tick() {
+  function tick({ manual = false } = {}) {
     if (stopped || busy || !store.settings().enabled) return activeTick ?? Promise.resolve();
-    activeTick = runTick().finally(() => { activeTick = null; });
+    activeTick = runTick({ manual }).finally(() => { activeTick = null; });
     return activeTick;
   }
   async function placeTicket({ entry, request, activity, settingsVersion, reconciled }) {
@@ -178,7 +184,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
     if (receipt.status === 'unknown') { store.put('attempt', attempt.id, { ...store.get('attempt', attempt.id), retries: 1 }); state.lastError = 'An order result is unconfirmed. New tickets wait until it resolves.'; return 'stop'; }
     return 'continue';
   }
-  async function runTick() {
+  async function runTick({ manual }) {
     busy = true; state.busy = true; activeAbort = new AbortController();
     state.processing = null;
     publish('read', 'Starting a Listener check.');
@@ -201,14 +207,19 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
       const entries = store.entries().filter(entry => inScope(entry, settings))
         .map(entry => ({ entry, ticket: readTicket(entry.body) !== null }))
         .sort((left, right) => Number(right.ticket) - Number(left.ticket));
-      const queued = entries.filter(({ entry }) => entry.status === 'watching' && store.get('checkpoint', keyOf(entry))?.version !== entry.version);
+      // Manual review revisits one existing research note; it never replays a
+      // checkpointed ticket or revisits a closed note.
+      const manualEntry = manual ? entries.filter(({ entry, ticket }) => !ticket && ['watching', 'reviewed'].includes(entry.status))
+        .sort((a, b) => (b.entry.updatedAtUtc ?? b.entry.createdAtUtc).localeCompare(a.entry.updatedAtUtc ?? a.entry.createdAtUtc))[0]?.entry : null;
+      const shouldReview = entry => entry.id === manualEntry?.id && entry.origin === manualEntry?.origin;
+      const queued = entries.filter(({ entry }) => shouldReview(entry) || (entry.status === 'watching' && store.get('checkpoint', keyOf(entry))?.version !== entry.version));
       const total = queued.length; let index = 0;
-      publish('queued', `${entries.length} selected entries; ${total} new watching revision${total === 1 ? '' : 's'} to process.`, null, { index, total });
+      publish('queued', `${entries.length} selected entries; ${total} revision${total === 1 ? '' : 's'} to process${manualEntry ? "; includes manual research review" : ""}.`, null, { index, total });
       for (const { entry, ticket } of entries) {
         if (!store.settings().enabled || activeAbort.signal.aborted) break;
         const key = keyOf(entry), checkpoint = store.get('checkpoint', key);
-        if (checkpoint?.version === entry.version) continue;
-        if (entry.status !== 'watching') { store.put('checkpoint', key, { version: entry.version, state: 'inactive' }); continue; }
+        if (checkpoint?.version === entry.version && !shouldReview(entry)) continue;
+        if (entry.status !== 'watching' && !shouldReview(entry)) { store.put('checkpoint', key, { version: entry.version, state: 'inactive' }); continue; }
         index += 1;
         publish('read', ticket ? 'Reading the explicit action ticket.' : 'Reading the note for a published model decision.', entry, { index, total });
         const settingsVersion = settings.version;
@@ -228,8 +239,18 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
         let decision;
         store.put('activity', activity.id, { ...activity, status: 'processing', reason: 'The local model is reading this note.' });
         publish('model', 'The local model is reading the note and preparing its published decision.', entry, { index, total });
-        try { decision = await classify({ entry, instructions: settings.instructions, signal: activeAbort.signal }); }
+        state.modelOutput = { entryId: entry.id, title: entry.title, origin: entry.origin, atUtc, text: '', status: 'streaming' };
+        changed();
+        try {
+          decision = await classify({ entry, instructions: settings.instructions, signal: activeAbort.signal, onOutput: delta => {
+            if (activeAbort.signal.aborted) return;
+            state.modelOutput.text += delta;
+            if (Buffer.byteLength(state.modelOutput.text) > 32768) throw new Error('The local model response was too large.');
+            changed();
+          } });
+        }
         catch (error) {
+          state.modelOutput.status = activeAbort.signal.aborted ? 'stopped' : 'failed'; changed();
           if (activeAbort.signal.aborted) { store.put('activity', activity.id, { ...activity, status: 'waiting', reason: 'Model review paused before a decision. This note will be checked again.' }); break; }
           // Left unchecked so it is read again once the model is available.
           state.lastError = error?.message?.includes('local model') || error?.message?.includes('classification') ? error.message : 'The local model could not read a note.';
@@ -239,15 +260,18 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
         }
         const latestSettings = store.settings();
         if (activeAbort.signal.aborted || latestSettings.version !== settingsVersion || !latestSettings.enabled || !inScope(entry, latestSettings)) {
+          state.modelOutput.status = 'stopped'; changed();
           store.put('activity', activity.id, { ...activity, status: 'waiting', reason: 'Listener settings changed before the model decision was accepted. This note will be checked again if selected.' });
           break;
         }
         store.put('activity', activity.id, { ...activity, decision: decision.decision, reason: decision.reason, status: 'observed' });
+        state.modelOutput.status = 'complete';
         state.lastModelOutput = { entryId: entry.id, title: entry.title, origin: entry.origin, decision: decision.decision, reason: decision.reason, atUtc: new Date(clock()).toISOString() };
         publish('decision', decision.reason || `Model decision: ${decision.decision}.`, entry, { decision: decision.decision, index, total });
         publish('result', 'This note has no explicit action ticket. Add a flusso-orders ticket with exact order fields, or flusso-close with owned position IDs, and set it to watching to submit an instruction.', entry, { status: 'observed', index, total });
         store.put('checkpoint', key, { version: entry.version, state: 'observed', atUtc });
       }
+      if (manual && !manualEntry) publish('waiting', 'No reviewed or watching research note matches the selected notebooks and section. No model was run.');
       state.lastCheckedAtUtc = new Date(clock()).toISOString();
     } catch { if (!activeAbort.signal.aborted) { state.lastError = 'The listener could not finish its check. Inspect retained receipts for any instruction already dispatched.'; publish('error', state.lastError); } }
     finally {
@@ -269,6 +293,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
   }
   return {
     status: () => structuredClone(state), tick,
+    subscribe(callback) { subscribers.add(callback); return () => subscribers.delete(callback); },
     start() { stopped = false; checkpointExisting(); schedule(); },
     refresh({ baseline = false } = {}) { if (stopped) return; activeAbort?.abort(); if (baseline) checkpointExisting(); schedule(); },
     stop() {

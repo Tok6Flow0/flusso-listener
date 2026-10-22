@@ -130,11 +130,18 @@ deterministic validation and do not need a model. Cloud synchronization scans
 all pages, bounded at 5,000 entries, so edits to older notes are found. An
 incomplete scan is displayed and does not authorize cloud execution.
 
-The Listener opens with a text activity view: Journal reads, queue size, ticket
-validation, model review, submission and receipts appear as the check progresses.
-The model's published decision and short explanation appear when ready. The model
-runs with thinking disabled. The transcript reports processing stages and output;
-execution receipts remain saved in Activity and on the entry.
+The Listener shows the local model's actual JSON response as it is generated.
+**Check now** also re-reviews the newest selected research note whose status is
+watching or reviewed, even if that revision was already checked. Scheduled checks
+still process new watching revisions once. Manual review does not replay decided
+action tickets or reopen closed notes. If no research note matches the selection,
+no model response is invented.
+
+Model output is separate from the collapsible **Operations log**, which reports
+Journal reads, validation, submission and receipts. A partial response remains
+labelled streaming, stopped or failed until a complete response passes validation.
+The model runs with thinking disabled. Execution receipts remain saved in Activity
+and on the entry.
 
 The private status response also explains each entry's hand-off state, including
 research without an explicit ticket, reviewed entries, baselined revisions,

@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer } from 'node:net';
 import { spawn } from 'node:child_process';
-import { MODEL, classificationMessages, decisionSchema, parseClassification } from '../src/model.mjs';
+import { MODEL, classificationMessages, decisionSchema, readClassificationStream } from '../src/model.mjs';
 import { verifiedDownload, verifiedFile } from './download.mjs';
 
 const resources = JSON.parse(await readFile(new URL('./resources.json', import.meta.url)));
@@ -81,15 +81,11 @@ export function createDesktopModel({ directory, runtimeDirectory, existingModelP
   return {
     status: () => ({ ...state }), initialize: () => ensure(false), setup: () => ensure(true), stop,
     modelStatus: async () => ({ available: Boolean(endpoint), installed: state.state === 'ready', model: MODEL }),
-    async classify({ entry, instructions = '', signal }) {
+    async classify({ entry, instructions = '', signal, onOutput }) {
       if (!endpoint || state.state !== 'ready') throw new Error('Set up the desktop local model first. No execution was attempted.');
-      const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }, redirect: 'error', signal: AbortSignal.any([lifetime.signal, ...(signal ? [signal] : []), AbortSignal.timeout(90000)]), body: JSON.stringify({ model: 'qwen3-1.7b', stream: false, temperature: 0, max_tokens: 256, chat_template_kwargs: { enable_thinking: false }, response_format: { type: 'json_schema', json_schema: { name: 'classification', strict: true, schema: decisionSchema } }, messages: classificationMessages(entry, instructions) }) });
+      const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }, redirect: 'error', signal: AbortSignal.any([lifetime.signal, ...(signal ? [signal] : []), AbortSignal.timeout(90000)]), body: JSON.stringify({ model: 'qwen3-1.7b', stream: true, temperature: 0, max_tokens: 256, chat_template_kwargs: { enable_thinking: false }, response_format: { type: 'json_schema', json_schema: { name: 'classification', strict: true, schema: decisionSchema } }, messages: classificationMessages(entry, instructions) }) });
       if (!response.ok) throw new Error('The desktop local model is unavailable.');
-      let size = 0; const chunks = [];
-      for await (const chunk of response.body) { size += chunk.length; if (size > 32768) throw new Error('The local model response was too large.'); chunks.push(chunk); }
-      const result = JSON.parse(Buffer.concat(chunks).toString('utf8')), choice = result.choices?.[0];
-      if (choice?.finish_reason !== 'stop' || choice.message?.tool_calls?.length || typeof choice.message?.content !== 'string') throw new Error('The local model did not return a complete classification.');
-      return parseClassification(choice.message.content);
+      return readClassificationStream(response, { protocol: 'openai', onOutput });
     },
   };
 }

@@ -85,11 +85,17 @@
         <div class="watch-summary" id="watch-summary"></div>
         <div class="listener-actions"><button id="check-now" type="button">Check now</button><button id="configure-listener" type="button" class="primary" aria-expanded="false" aria-controls="listener-configuration">Configure Listener</button></div>
       </div>
-      <section class="process-panel" aria-labelledby="process-heading">
-        <div class="process-head"><h2 id="process-heading">Live activity</h2><span id="process-state" class="process-state" role="status">Waiting</span></div>
+      <section class="process-panel" aria-labelledby="model-output-heading">
+        <div class="process-head"><h2 id="model-output-heading">Model output</h2><span id="model-output-status" role="status">Not run</span></div>
+        <p id="model-output-source" class="process-message"></p>
+        <div id="model-output" class="event-body code-scroll mono" role="region" tabindex="0" aria-labelledby="model-output-heading model-output-source" hidden></div>
+        <p id="model-output-empty" class="process-message">Check now reviews the newest selected research note. Its actual response appears here as it is generated.</p>
+      </section>
+      <details class="process-panel">
+        <summary class="process-head">Operations log <span id="process-state" class="process-state">Waiting</span></summary>
         <p id="process-message" class="process-message"></p>
         <ol id="process-events" class="process-events" aria-label="Processing updates"></ol>
-      </section>
+      </details>
       <section class="decisions-panel" aria-labelledby="decisions-heading">
         <div class="process-head"><h2 id="decisions-heading">Latest decisions</h2><button id="all-activity" type="button" class="link-button">View all activity</button></div>
         <div id="latest-decisions" class="latest-decisions"></div>
