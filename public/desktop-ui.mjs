@@ -261,7 +261,9 @@ export function modelOutputPresentation(output, published = null, { disconnected
   const reading = !accepted && hasText ? streamedReason(output.text) : null;
   const draft = !reading ? null : output.status === 'streaming' ? reading.reason ?? '' : reading.reason || null;
   const draftLabel = draft === null ? null : output.status === 'streaming' ? 'Reason so far' : output.status === 'complete' ? 'Model reason' : 'Partial reason';
-  const note =output.status === 'streaming' ? (disconnected ? 'Reconnecting. Showing the last output received; nothing is accepted until the response completes.' : 'Format check pending. This is the model’s partial response, not a completed decision.')
+  const note = output.status === 'streaming' ? (disconnected
+    ? hasText ? 'Reconnecting. Showing the last output received; nothing is accepted until the response completes.' : 'Reconnecting. No model response has arrived yet.'
+    : hasText ? 'Format check pending. This is the model’s partial response, not a completed decision.' : null)
     : ['failed', 'stopped'].includes(output.status) ? (hasText ? 'Partial output shown. It was not accepted as a decision.' : 'No output was received. Nothing was accepted.')
       : output.status === 'complete' && !accepted ? 'The response completed, but no accepted local decision matches it.' : null;
   const empty = hasText ? null : output.status === 'streaming' ? 'Waiting for the model’s first response token.' : 'No model response was received.';

@@ -769,6 +769,8 @@ test('partial or unmatched model output is never presented as an accepted decisi
   assert.deepEqual([reconnecting.label, reconnecting.live], ['Reconnecting', false]);
   assert.equal(modelOutputPresentation({ ...output, status: 'streaming' }).live, true);
   assert.equal(modelOutputPresentation({ ...output, text: '', status: 'streaming' }).empty, 'Waiting for the model’s first response token.');
+  assert.equal(modelOutputPresentation({ ...output, text: '', status: 'streaming' }).note, null);
+  assert.equal(modelOutputPresentation({ ...output, text: '', status: 'streaming' }, null, { disconnected: true }).note, 'Reconnecting. No model response has arrived yet.');
   assert.equal(modelOutputPresentation({ ...output, status: 'unexpected' }).label, 'Unavailable');
 });
 
