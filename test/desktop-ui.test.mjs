@@ -67,6 +67,35 @@ test('historical and unrecorded result revisions are explicit without changing L
   assert.equal(listenerRevisionPresentation({ ...entry, listener: null }), null);
 });
 
+test('only the exact validated research result on the desk is redundant with its latest preview', async () => {
+  const { decisionShownInDesk, latestDecisions } = await import('../public/desktop-ui.mjs');
+  const source = { entryId: 'research', origin: 'local', version: 2, atUtc: '2026-10-23T10:00:00Z' };
+  const output = { ...source, status: 'complete', text: '{"decision":"review","reason":"Check the recorded source."}' };
+  const published = { ...source, atUtc: '2026-10-23T10:00:04Z', decision: 'review', reason: 'Check the recorded source.' };
+  const row = { ...source, id: 'research-v2', status: 'observed', decision: published.decision, reason: published.reason };
+  assert.equal(decisionShownInDesk(row, output, published), true);
+  assert.equal(decisionShownInDesk({ ...published, status: 'observed' }, output, published), true);
+  for (const change of [{ entryId: 'other' }, { origin: 'cloud' }, { version: 1 }, { version: undefined }, { decision: 'ignore' }, { decision: 'ticket' }, { reason: published.reason + ' ' }, { atUtc: '2026-10-23T09:00:00Z' }, { atUtc: published.atUtc }, ...['waiting', 'unknown', 'pending', 'submitted', 'partial'].map(status => ({ status }))]) assert.equal(decisionShownInDesk({ ...row, ...change }, output, published), false);
+  for (const change of [{ status: 'streaming' }, { status: 'stopped' }, { status: 'failed' }, { version: 1 }, { version: undefined }]) assert.equal(decisionShownInDesk(row, { ...output, ...change }, published), false);
+  assert.equal(decisionShownInDesk(row, output, { ...published, version: undefined }), false);
+  const earlier = { ...row, id: 'prior-run', atUtc: '2026-10-23T09:00:00Z' }, unknown = { ...row, id: 'unknown-result', status: 'unknown' }, ticket = { ...row, id: 'ticket-result', decision: 'ticket' };
+  const activity = [row, earlier, unknown, ticket], before = JSON.stringify(activity);
+  const preview = latestDecisions(activity, published, { limit: null }).filter(item => !decisionShownInDesk(item, output, published)).slice(0, 5);
+  assert.deepEqual(new Set(preview.map(item => item.id)), new Set([earlier.id, unknown.id, ticket.id]));
+  assert.equal(latestDecisions(activity, published, { limit: null }).length, 4, 'Full Activity still retains every source record.');
+  assert.equal(JSON.stringify(activity), before);
+});
+
+test('the existing entry Save and Cancel controls sit in its heading and the output retains an accessible region name', async () => {
+  const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  const formStart = html.indexOf('<form id="entry-form">'), form = html.slice(formStart, html.indexOf('</form>', formStart));
+  const heading = form.slice(0, form.indexOf('<label class="title-field">'));
+  assert.match(heading, /class="editor-head"/); assert.match(heading, /id="cancel-edit"/); assert.match(heading, /type="submit" class="primary">Save<\/button>/);
+  assert.equal((form.match(/id="cancel-edit"/g) ?? []).length, 1); assert.equal((form.match(/>Save<\/button>/g) ?? []).length, 1);
+  assert.match(html, /<h2 id="model-output-heading" class="sr-only"/); assert.match(html, /<h3 id="model-verdict-label"/);
+  assert.match(html, /aria-labelledby="model-output-heading"/); assert.doesNotMatch(html, /Accepted local decision/);
+});
+
 test('a saving clean entry cannot be replaced, closed or navigated away from', async () => {
   const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
   const boundaries = [['function showEditor(', '// Picking another entry'], ['function leaveEditor()', 'function closeEditor('], ['function closeEditor(', 'function insertTicket('], ['function switchView(', "\ndocument.querySelectorAll('[data-view]')"]];

@@ -66,12 +66,12 @@
         <article class="entry-detail" id="entry-detail" tabindex="-1" aria-label="Selected entry"><div class="empty-art"><img src="/flusso-mark.png" alt="" width="40" height="40"><p>Pick an entry or write a new one.</p></div></article>
         <section id="editor" class="editor" aria-labelledby="editor-title" hidden>
           <form id="entry-form">
-            <div class="editor-head"><h2 id="editor-title">New entry</h2></div>
+            <div class="editor-head"><h2 id="editor-title">New entry</h2><div class="form-actions"><button id="cancel-edit" type="button" class="ghost">Cancel</button><button type="submit" class="primary">Save</button></div></div>
             <label class="title-field">Title<input id="entry-title" maxlength="200" required placeholder="What is this note about?"></label>
             <div class="entry-body-field"><div class="label-row"><label for="entry-body">Notes</label><div class="ticket-tools"><button id="insert-ticket" type="button" class="chip-button">Add order ticket</button><button id="insert-close-ticket" type="button" class="chip-button">Add close ticket</button></div></div><textarea id="entry-body" rows="14" maxlength="20000" placeholder="Write in Markdown. Research notes never place orders; only an explicit ticket can."></textarea><details><summary>Ticket format</summary><div class="code-scroll" tabindex="0" role="region" aria-label="Order ticket format example"><pre id="editor-ticket-example"></pre></div><p class="hint">Format example, not current market data. This JSON alone is not an executable ticket. Use Add order ticket for an empty draft, then supply your own exact <code>orders</code>. For a close ticket, supply owned <code>positionIds</code>. Quantity is in venue contracts. An empty draft cannot run.</p></details></div>
             <div class="editor-fields"><label>Status<select id="entry-status"><option value="watching">Watching</option><option value="reviewed">Reviewed</option><option value="closed">Closed</option></select></label><label>Notebook<select id="entry-notebook" required></select></label></div>
             <details><summary>Structured signal</summary><label class="sr-only" for="entry-signal">Signal JSON</label><textarea id="entry-signal" class="mono" rows="7" placeholder="Paste a recorded signal object"></textarea></details>
-            <div class="form-actions"><span class="hint">Save to this computer.</span><button id="cancel-edit" type="button" class="ghost">Cancel</button><button type="submit" class="primary">Save</button></div>
+            <p class="hint">Save to this computer.</p>
           </form>
         </section>
       </div>
@@ -97,13 +97,13 @@
           </header>
           <div class="output-frame" id="output-frame" data-status="none">
             <div class="output-head">
-              <h2 id="model-output-heading" tabindex="-1">Model output</h2>
+              <h2 id="model-output-heading" class="sr-only" tabindex="-1">Model output</h2>
               <span id="model-output-status" class="output-status">Not run</span>
               <p id="model-completion" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
             </div>
             <div id="model-output-source" class="output-source" hidden></div>
             <div id="model-verdict" class="verdict" hidden>
-              <div class="verdict-head"><p id="model-verdict-kicker" class="verdict-kicker">Accepted local decision</p><span id="model-verdict-label" class="pill"></span></div>
+              <div class="verdict-head"><p id="model-verdict-kicker" class="verdict-kicker">Validated response</p><h3 id="model-verdict-label" class="verdict-label" tabindex="-1"></h3></div>
               <p id="model-verdict-reason" class="verdict-reason"></p>
               <button id="model-raw-toggle" type="button" class="link-button" aria-expanded="false" aria-controls="model-output">Show raw response</button>
             </div>

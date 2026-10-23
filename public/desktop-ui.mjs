@@ -276,6 +276,17 @@ export function latestDecisions(activity = [], output = null, { limit = 5 } = {}
   return limit === null ? rows : rows.slice(0, limit);
 }
 
+// Only the same validated research result is redundant with the response desk.
+// Activity records its start clock; a synthetic summary records completion.
+export function decisionShownInDesk(row, output, published) {
+  return Boolean(modelOutputPresentation(output, published).accepted && row.status === 'observed'
+    && ['candidate', 'review', 'ignore'].includes(row.decision)
+    && Number.isSafeInteger(output?.version) && output.version > 0 && output.version === published?.version
+    && row.entryId === published.entryId && row.origin === published.origin && row.version === published.version
+    && row.decision === published.decision && row.reason === published.reason
+    && (row.atUtc === output.atUtc || row.id == null && row.atUtc === published.atUtc));
+}
+
 // Activity IDs survive status/receipt updates. Published summaries have no ID;
 // their clock and outcome distinguish them from a later check of the same note.
 export function decisionRowKeys(rows) {

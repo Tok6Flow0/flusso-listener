@@ -214,7 +214,7 @@ tr:last-child td{border-bottom:0}
 .process-message{font-size:var(--fs-body);color:var(--c-ink-3);max-width:95ch;overflow-wrap:anywhere}
 
 .output-frame{display:grid;gap:12px;padding:20px 24px 24px;min-width:0}
-.output-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.output-head{display:contents}
 .output-head h2{font:var(--fw-regular) var(--fs-label)/1 var(--font-mono);text-transform:uppercase;letter-spacing:var(--ls-label);color:var(--c-ink-5)}
 .output-status{display:inline-flex;align-items:center;gap:7px;font-size:var(--fs-body-sm);font-weight:var(--fw-semibold);color:var(--c-ink-4)}
 .output-status::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--c-ink-7);flex:0 0 auto}
@@ -225,7 +225,9 @@ tr:last-child td{border-bottom:0}
 .output-source time,.decision-top time,.activity-head time{font-size:var(--fs-caption);color:var(--c-ink-5)}
 .verdict{display:grid;gap:10px;padding:16px 18px;border-radius:12px;background:var(--c-paper-raise);border:1px solid var(--c-line)}
 .verdict-kicker{font:var(--fw-regular) var(--fs-label)/1 var(--font-mono);text-transform:uppercase;letter-spacing:var(--ls-label);color:var(--c-ink-5)}
-.verdict-head{display:flex;align-items:center;gap:6px 10px;flex-wrap:wrap}
+.verdict-head{display:grid;gap:6px}
+.verdict-label{font:var(--fw-semibold) var(--fs-title)/var(--lh-snug) var(--font-sans);color:var(--c-ink)}
+.verdict-label.info{color:var(--c-info)}.verdict-label.warn{color:var(--c-warn-deep)}
 /* The model's published words read as prose, in the same serif as the notes it reviews. */
 .verdict-reason{min-width:0;max-width:68ch;font:var(--fw-medium) var(--fs-title-sm)/var(--lh-relaxed) var(--font-serif);color:var(--c-ink);overflow-wrap:anywhere;transition:color .3s}
 /* Until the run is validated and published, its reason reads as a draft: dashed and quieter. */
@@ -343,8 +345,9 @@ tr:last-child td{border-bottom:0}
 .ticket-result{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 10px}
 
 .editor{min-width:0;padding:28px 40px 0;animation:fade .2s ease}
-.editor-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px 20px;flex-wrap:wrap;margin-bottom:20px}
+.editor-head{position:sticky;top:16px;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:20px;padding:12px 0;background:var(--c-surface);border-bottom:1px solid var(--c-line)}
 .editor-head h2{font-size:var(--fs-title)}
+.editor-head .form-actions{flex-wrap:nowrap}
 .discard-dialog{width:min(440px,calc(100% - 32px));max-height:calc(100dvh - 32px);overflow:auto;padding:24px;border:1px solid var(--c-line-strong);border-radius:16px;background:var(--c-surface);color:var(--c-ink)}
 .discard-dialog::backdrop{background:rgba(var(--c-shadow-rgb),.45)}
 .discard-dialog p{margin-top:12px;color:var(--c-ink-3)}
@@ -356,7 +359,6 @@ tr:last-child td{border-bottom:0}
 .entry-body-field{display:grid;grid-template-columns:minmax(0,1fr);gap:8px;margin-bottom:8px}
 .entry-body-field textarea{min-height:300px;font-size:var(--fs-body-lg)}
 .editor details{margin:8px 0 0}
-.editor .form-actions{position:sticky;bottom:0;margin:16px -40px 0;padding:14px 40px;background:var(--c-surface);border-top:1px solid var(--c-line)}
 
 /* ------------------------------------------------------------- activity */
 .activity-list{display:grid;gap:12px;max-width:1080px}
@@ -435,7 +437,7 @@ tr:last-child td{border-bottom:0}
   .listener-configuration{position:sticky;top:20px;max-height:calc(100dvh - 40px);overflow-y:auto;overscroll-behavior:contain}
 }
 @media(min-width:1800px){main{max-width:1560px;padding-left:64px;padding-right:64px}.journal-layout{grid-template-columns:380px minmax(0,1fr)}.listener-body{grid-template-columns:minmax(0,1fr) minmax(340px,420px)}}
-@media(max-width:1100px){.journal-layout{grid-template-columns:260px minmax(0,1fr)}.entry-detail{padding:24px 26px 32px}.editor{padding:24px 26px 0}.editor .form-actions{margin:16px -26px 0;padding:14px 26px}}
+@media(max-width:1100px){.journal-layout{grid-template-columns:260px minmax(0,1fr)}.entry-detail{padding:24px 26px 32px}.editor{padding:24px 26px 0}}
 @media(max-width:1050px){.app-shell{grid-template-columns:190px minmax(0,1fr)}main{padding:24px 24px 40px}}
 @media(max-width:760px){
   .app-shell{display:block}
@@ -458,7 +460,7 @@ tr:last-child td{border-bottom:0}
   .entry-detail{padding:20px 18px 26px;scroll-margin-top:80px}
   .detail-title>h2{font-size:var(--fs-title-lg)}
   .editor{padding:20px 18px 0;scroll-margin-top:80px}
-  .editor .form-actions{position:static;margin:16px -18px 0;padding:12px 18px}
+  .editor-head{top:62px}
   .journal-layout:has(#editor:not([hidden])) .entry-pane{display:none}
   #view-journal:has(#editor:not([hidden])) .head-actions{display:none}
   .field-grid{grid-template-columns:minmax(0,1fr)}

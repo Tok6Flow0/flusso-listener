@@ -1,6 +1,6 @@
 import { formatCount, formatPrice, formatQuantity, formatPercentLabel, formatMoney, formatPercent } from './format.mjs';
 import { renderMarkdown } from './markdown.mjs';
-import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, entryCardPresentation, entryReadingCore, activityStatus, listenerResult, listenerRevisionPresentation, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions, decisionRowKeys, receiptDetails, modelOutputPresentation, completionAnnouncement, localDraftDirty, intervalLabel, settingsSwitchBody, ticketDraft } from './desktop-ui.mjs';
+import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, entryCardPresentation, entryReadingCore, activityStatus, listenerResult, listenerRevisionPresentation, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions, decisionShownInDesk, decisionRowKeys, receiptDetails, modelOutputPresentation, completionAnnouncement, localDraftDirty, intervalLabel, settingsSwitchBody, ticketDraft } from './desktop-ui.mjs';
 
 const $ = id => document.getElementById(id);
 let csrf, snapshot, selected = null, editing = null, entryRetryKey = crypto.randomUUID();
@@ -334,7 +334,7 @@ function renderProcess() {
   }
   // One block carries the reason from its first streamed words to the accepted
   // decision; only a validated, matching run earns the decision label.
-  const summary = view.verdict ? { state: 'accepted', kicker: 'Accepted local decision', label: view.verdict.label, tone: view.verdict.tone, reason: view.verdict.reason || 'The model gave no reason.' }
+  const summary = view.verdict ? { state: 'accepted', kicker: 'Validated response', label: view.verdict.label, tone: view.verdict.tone, reason: view.verdict.reason || 'The model gave no reason.' }
     : view.draft !== null ? { state: 'draft', kicker: view.draftLabel, label: view.live ? 'validation pending' : 'not accepted', tone: '', reason: view.draft } : null;
   const announcement = listener.busy ? null : completionAnnouncement(view, output, lastCompletionKey, listener.lastError);
   if (listener.busy || (!view.accepted && !['failed', 'stopped'].includes(view.status) && !listener.lastError)) {
@@ -355,7 +355,7 @@ function renderProcess() {
   if (summary) {
     $('model-verdict').dataset.state = summary.state;
     setText('model-verdict-kicker', summary.kicker);
-    setText('model-verdict-label', summary.label); $('model-verdict-label').className = `pill ${summary.tone}`;
+    setText('model-verdict-label', summary.label.charAt(0).toUpperCase() + summary.label.slice(1)); $('model-verdict-label').className = `verdict-label ${summary.tone}`;
     growText($('model-verdict-reason'), summary.reason);
     setText('model-raw-toggle', rawOpen ? 'Hide raw response' : 'Show raw response'); $('model-raw-toggle').setAttribute('aria-expanded', String(rawOpen));
   }
@@ -382,19 +382,22 @@ function renderProcess() {
 }
 
 function renderDecisions() {
-  const latest = latestDecisions(snapshot.activity, snapshot.listener.lastModelOutput);
   const output = snapshot.listener.modelOutput, published = snapshot.listener.lastModelOutput;
-  const current = modelOutputPresentation(output, published).verdict ? published : null;
-  const items = decisionItems(latest, row => ({ enabled: snapshot.settings.enabled, shownInDesk: Boolean(current && row.entryId === current.entryId && row.origin === current.origin && row.decision === current.decision && row.reason === current.reason) }));
+  const all = latestDecisions(snapshot.activity, published, { limit: null });
+  const latest = all.filter(row => !decisionShownInDesk(row, output, published)).slice(0, 5);
+  const panel = $('latest-decisions').closest('section'), hidden = all.length > 0 && !latest.length;
+  if (hidden && panel.contains(document.activeElement)) $('model-verdict-label').focus({ preventScroll: true });
+  panel.hidden = hidden;
+  const items = decisionItems(latest, row => ({ enabled: snapshot.settings.enabled }));
   if (!changed('decisions', items)) return;
   reconcileRows($('latest-decisions'), items.length ? items : [{ key: 'empty', value: null }], value => {
-    if (!value) return element('p', 'No decisions yet. Accepted local decisions and order results are listed here after a check.', 'empty');
-    const { row, enabled, shownInDesk } = value;
+    if (!value) return element('p', 'No decisions yet. Validated model responses and order results appear here after a check.', 'empty');
+    const { row, enabled } = value;
     const item = element('article', null, 'decision-row'), top = element('div', null, 'decision-top'), source = element('div', null, 'decision-source'), status = activityStatus(row);
     const time = element('time', when(row.atUtc, true)); time.dateTime = row.atUtc;
     top.append(pill(status.label, status.tone), time); source.append(sourceButton(row));
     item.append(top, source);
-    if (!shownInDesk) item.append(element('p', row.reason || 'Processing this entry.', 'decision-excerpt'));
+    item.append(element('p', row.reason || 'Processing this entry.', 'decision-excerpt'));
     if (row.status === 'waiting' && !enabled) item.append(element('p', 'Checks resume when you turn the Listener on.', 'hint'));
     return item;
   });
