@@ -162,7 +162,8 @@ export function latestDecisions(activity = [], output = null) {
   if (output && !retained) rows.unshift({ ...output, status: 'observed' });
   // A later paused or refused check must remain above an earlier published answer.
   const clock = row => { const value = Date.parse(row.atUtc); return Number.isFinite(value) ? value : -Infinity; };
-  return rows.sort((a, b) => clock(b) - clock(a)).slice(0, 5);
+  const unconfirmed = row => ['pending', 'unknown'].includes(row.status);
+  return rows.sort((a, b) => Number(unconfirmed(b)) - Number(unconfirmed(a)) || clock(b) - clock(a)).slice(0, 5);
 }
 
 // The API accepts a complete versioned settings body. A switch must carry only

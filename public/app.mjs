@@ -342,7 +342,7 @@ function fillSettings() {
   }));
   if (!snapshot.notebooks.length) $('watch-notebooks').append(element('span', 'No notebooks yet.', 'hint'));
   renderAccountChoice();
-  formDirty = false; setText('configure-label', 'Configure'); $('settings-draft-hint').hidden = true; $('save-settings').disabled = true; $('save-settings').textContent = 'Saved';
+  formDirty = false; $('execution-draft-warning').hidden = true; setText('configure-label', 'Configure'); $('settings-draft-hint').hidden = true; $('save-settings').disabled = true; $('save-settings').textContent = 'Saved';
 }
 function ensureOption(select, value, label) { if (![...select.options].some(option => option.value === String(value))) select.append(new Option(label, String(value))); }
 function amount(id) { const raw = $(id).value.trim(); if (!raw) return null; const value = Number(raw); if (!Number.isFinite(value) || value <= 0) throw new Error('Limits must be positive numbers, or left blank.'); return value; }
@@ -363,7 +363,8 @@ async function saveSettings(message, body = settingsBody(), { forms = true } = {
   catch (error) { await load().catch(() => {}); throw error; }
   // A successful write stays successful even if the follow-up read is offline.
   // Edits typed during that request remain a draft rather than being replaced.
-  try { await load({ forms: forms && edit === settingsEdit }); }
+  if (forms && edit === settingsEdit) fillSettings();
+  try { await load(); }
   catch { renderStatus(); renderProcess(); notify(`${message} Settings saved, but the view could not refresh. Refresh to check the latest activity.`); return; }
   notify(message, true);
 }
@@ -379,7 +380,7 @@ async function saveSwitch(id, field, message) {
   const savedMessage = formDirty ? `${message} Using saved settings; your edits are still unsaved.` : message;
   if (field === 'executionEnabled' && value && formDirty) {
     $(id).checked = snapshot.settings.executionEnabled;
-    notify('Save your changes before turning Auto-trade on. Switches use saved settings.'); return;
+    $('execution-draft-warning').hidden = false; $('notice').hidden = true; return;
   }
   $('enabled').disabled = $('execution').disabled = true;
   try { await saveSettings(savedMessage, settingsSwitchBody(snapshot.settings, field, value), { forms: false }); }

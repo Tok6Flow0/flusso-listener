@@ -174,3 +174,13 @@ test('immediate switches keep saved risk values and reject unrelated fields', as
   assert.throws(() => settingsSwitchBody(saved, 'risk', {}), /Invalid/);
   assert.throws(() => settingsSwitchBody(saved, 'enabled', 'false'), /Invalid/);
 });
+
+test('unconfirmed order results remain visible above five newer research decisions', async () => {
+  const { latestDecisions } = await import('../public/desktop-ui.mjs');
+  const old = { entryId: 'old-ticket', status: 'unknown', atUtc: '2026-10-22T15:00:00Z' };
+  const pending = { entryId: 'pending-ticket', status: 'pending', atUtc: '2026-10-22T15:01:00Z' };
+  const research = Array.from({ length: 7 }, (_, i) => ({ entryId: `note-${i}`, status: 'observed', atUtc: `2026-10-22T16:0${i}:00Z` }));
+  const result = latestDecisions([...research, old, pending]);
+  assert.equal(result.length, 5); assert.deepEqual(result.slice(0, 2), [pending, old]);
+  assert.deepEqual(result.slice(2).map(row => row.entryId), ['note-6', 'note-5', 'note-4']);
+});
