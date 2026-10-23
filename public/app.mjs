@@ -1,6 +1,6 @@
 import { formatCount, formatPrice, formatQuantity, formatPercentLabel, formatMoney, formatPercent } from './format.mjs';
 import { renderMarkdown } from './markdown.mjs';
-import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, entryCardPresentation, entryReadingCore, activityStatus, activityMetadata, listenerResult, listenerRevisionPresentation, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions, decisionShownInDesk, decisionRowKeys, receiptDetails, modelOutputPresentation, completedModelPresentation, modelCoverageLabel, completionAnnouncement, localDraftDirty, intervalLabel, settingsSwitchBody, ticketDraft } from './desktop-ui.mjs';
+import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, entryCardPresentation, entryReadingCore, activityStatus, activityReason, reviewFocusPresentation, activityMetadata, listenerResult, listenerRevisionPresentation, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions, decisionShownInDesk, decisionRowKeys, receiptDetails, modelOutputPresentation, completedModelPresentation, modelCoverageLabel, completionAnnouncement, localDraftDirty, intervalLabel, settingsSwitchBody, ticketDraft } from './desktop-ui.mjs';
 
 const $ = id => document.getElementById(id);
 let csrf, snapshot, selected = null, editing = null, entryRetryKey = crypto.randomUUID();
@@ -311,6 +311,10 @@ function growText(node, value) {
 }
 
 let lastCompletionKey = null, completionFrame = null;
+function renderReviewFocus(id, focus, prepared = false) {
+  const view = reviewFocusPresentation(focus, { prepared });
+  setText(`${id}-summary`, view.label); setText(`${id}-text`, view.text);
+}
 function positionResponseTools(accepted) {
   const tools = $('model-response-tools'), verdict = $('model-verdict');
   const positioned = accepted ? verdict.nextElementSibling === tools : tools.nextElementSibling === verdict;
@@ -335,7 +339,7 @@ function renderProcess() {
   $('output-frame').dataset.status = view.status;
   setText('model-output-heading', !settings.enabled && output ? 'Last model response' : 'Model output');
   setText('model-output-status', listener.modelRecovery?.checkId === output?.checkId && ['failed', 'stopped'].includes(view.status) ? 'Previous review unfinished' : earlier && output ? 'Earlier response' : !settings.enabled && view.status === 'complete' ? 'Last check complete' : view.label); $('model-output-status').className = `output-status ${!settings.enabled && view.status === 'complete' ? '' : view.tone}`;
-  $('model-output-status').hidden = !output && Boolean(completed) || settings.enabled && view.accepted && !earlier || view.live;
+  $('model-output-status').hidden = !output && Boolean(completed) || settings.enabled && view.accepted && !earlier || view.live || view.status === 'failed' && state.title === view.label && Boolean(listener.lastError);
   if (changed('model-output-source', output ? [output.entryId, output.origin, output.title, output.atUtc, snapshot.entries.some(row => row.id === output.entryId && row.origin === output.origin)] : null)) {
     const source = $('model-output-source');
     if (output) { const time = element('time', `Check started ${when(output.atUtc, true)}`); time.dateTime = output.atUtc; source.replaceChildren(element('span', 'Source note', 'hint'), sourceButton(output, output.title || 'Journal entry'), time); }
@@ -346,6 +350,8 @@ function renderProcess() {
   const draft = view.draft !== null;
   setText('model-input-coverage', output ? modelCoverageLabel(output.coverage, { received: Boolean(output.text) || view.accepted }) : '');
   $('model-input-coverage').hidden = !output || view.accepted;
+  $('model-input-focus').hidden = !output || view.accepted;
+  if (output) renderReviewFocus('model-input-focus', output.focus, !output.text && !view.accepted);
   const announcement = listener.busy || earlier && !listener.lastError ? null : completionAnnouncement(view, output, lastCompletionKey, listener.lastError);
   if (listener.busy || (!view.accepted && !['failed', 'stopped'].includes(view.status) && !listener.lastError)) {
     cancelAnimationFrame(completionFrame); setText('model-completion', '');
@@ -381,6 +387,7 @@ function renderProcess() {
     growText($('model-verdict-reason'), completed.reason);
     setText('model-verdict-context', completed.context);
     setText('model-verdict-coverage', modelCoverageLabel(completed.output.coverage, { received: true }));
+    renderReviewFocus('model-verdict-focus', completed.output.focus);
     const source = completed.output;
     const metadata = $('model-verdict-source');
     if (changed('model-verdict-source', [source.entryId, source.origin, source.title, snapshot.entries.some(row => row.id === source.entryId && row.origin === source.origin)])) {
@@ -422,7 +429,8 @@ function renderDecisions() {
   const output = snapshot.listener.modelOutput, published = snapshot.listener.lastModelOutput;
   const all = latestDecisions(snapshot.activity, published, { limit: null });
   const completed = Boolean(completedModelPresentation(snapshot.listener, snapshot.entries));
-  const latest = all.filter(row => !decisionShownInDesk(row, output, published, { completed })).slice(0, 5);
+  const failure = snapshot.listener.lastError && snapshot.listener.modelReview?.status === 'failed' ? { checkId: snapshot.listener.modelReview.id, reason: snapshot.listener.lastError } : null;
+  const latest = all.filter(row => !decisionShownInDesk(row, output, published, { completed, failure })).slice(0, 5);
   const panel = $('latest-decisions').closest('section'), hidden = all.length > 0 && !latest.length;
   if (hidden && panel.contains(document.activeElement)) $('model-verdict-label').focus();
   panel.hidden = hidden;
@@ -438,7 +446,7 @@ function renderDecisions() {
     const time = element('time', `${clockLabel} ${when(clock, true)}`); time.dateTime = clock;
     top.append(pill(status.label, status.tone), element('span', revision, 'hint mono'), time); source.append(sourceButton(row));
     item.append(top, source);
-    item.append(element('p', row.reason || 'Processing this entry.', 'decision-excerpt'));
+    item.append(element('p', activityReason(row), 'decision-excerpt'));
     if (row.status === 'waiting' && !enabled && !(historical && row.kind === 'research_check')) item.append(element('p', 'Checks resume when you turn the Listener on.', 'hint'));
     return item;
   });
@@ -594,6 +602,7 @@ function renderEntries() {
     const tags = element('span', null, 'tags');
     tags.append(element('span', row.status, `entry-state ${row.status}`));
     if (row.outcome) tags.append(pill(row.outcome.label, row.outcome.tone));
+    if (row.check) tags.append(pill(row.check.label, row.check.tone));
     if (row.origin === 'cloud') tags.append(pill('cloud'));
     button.append(element('strong', row.title), meta, tags);
     button.addEventListener('click', () => { const current = snapshot.entries.find(item => item.id === row.id && item.origin === row.origin); if (current) openEntry(current); }); return button;
@@ -656,7 +665,8 @@ function renderDetail() {
     const actions = element('div', null, 'detail-actions'), button = element('button', row.origin === 'local' ? 'Edit' : 'Copy to local'); button.type = 'button'; button.dataset.entryAction = 'edit';
     button.addEventListener('click', () => { const current = snapshot.entries.find(item => item.id === row.id && item.origin === row.origin); if (current) showEditor(current.origin === 'local' ? current : { ...current, id: null, version: null }); }); actions.append(button); head.append(heading, actions);
     const prose = element('div', null, 'note-body'); renderMarkdown(prose, (row.body || '').replace(TICKET_FENCE, '').trim() || ' ');
-    const live = element('div'); live.dataset.entryPart = 'live'; detail.replaceChildren(head, prose, live);
+    const live = element('div'); live.dataset.entryPart = 'live';
+    const check = element('div'); check.dataset.entryPart = 'check'; detail.replaceChildren(head, prose, live, check);
     if (row.signal) {
       const section = element('section', null, 'detail-section'), quality = row.signal.quality;
       section.append(element('h3', 'Structured signal'), element('p', `${quality ? quality[0].toUpperCase() + quality.slice(1) : 'Unavailable'} · ${row.signal.sourceOperationId} · ${row.signal.sourceAsOfUtc ? when(row.signal.sourceAsOfUtc) : 'no source time'}`, 'hint mono'), element('p', 'Recorded source quality; not a current venue reading.', 'hint'));
@@ -666,11 +676,21 @@ function renderDetail() {
       for (const leg of row.signal.legs) { const tr = element('tr'); [leg.asset.instrumentId, leg.side ?? '—', leg.direction ?? '—', formatQuantity(leg.quantity), leg.quantityUnit ? `${leg.quantityUnit} ${leg.quantityAsset ?? ''}` : '—', formatPrice(leg.referencePrice)].forEach((value, index) => tr.append(element('td', value, index === 3 || index === 5 ? 'num' : index === 0 ? 'mono' : ''))); tbody.append(tr); }
       table.append(tbody); wrap.append(table); section.append(wrap); detail.append(section);
     }
-    renderKeys.delete('entry-detail:kind'); renderKeys.delete('entry-detail:live');
+    renderKeys.delete('entry-detail:kind'); renderKeys.delete('entry-detail:live'); renderKeys.delete('entry-detail:check');
     if (editFocused) button.focus({ preventScroll: true });
   }
   const status = entryStatus(row);
   if (changed('entry-detail:kind', status)) { const slot = detail.querySelector('[data-entry-part="ticket-kind"]'); slot.hidden = !status; slot.replaceChildren(...(status ? [pill(status.label, status.tone)] : [])); }
+  if (changed('entry-detail:check', row.listenerCheck)) {
+    const slot = detail.querySelector('[data-entry-part="check"]'); slot.replaceChildren();
+    if (row.listenerCheck) {
+      const check = row.listenerCheck, status = activityStatus(check), section = element('aside', null, 'detail-section');
+      const at = element('time', `Recorded ${when(check.atUtc, true)} · v${formatCount(check.version)}`); at.dateTime = check.atUtc;
+      section.append(element('h3', 'Latest research check'), pill(status.label, status.tone), element('p', activityReason(check)), at);
+      const focus = reviewFocusPresentation(check.focus, { prepared: check.responseReceived !== true }), details = element('details');
+      details.append(element('summary', focus.label), element('p', focus.text, 'focus-copy')); section.append(details); slot.append(section);
+    }
+  }
   if (!changed('entry-detail:live', [row.handoff, row.listener, row.ticket])) return;
   const live = detail.querySelector('[data-entry-part="live"]'); live.replaceChildren();
   const revision = listenerRevisionPresentation(row);
@@ -680,8 +700,10 @@ function renderDetail() {
     const review = listenerResult(row);
     if (!row.ticket && row.listener?.status === 'observed' && review) {
       const line = element('p', null, 'handoff-review'), at = element('time', when(row.listener.atUtc)); at.dateTime = row.listener.atUtc ?? '';
-      line.append(pill(review.label, review.tone), element('span', row.listener.reason || 'No reason given.'), at); section.append(line);
+      line.append(pill(review.label, review.tone), element('span', activityReason(row.listener)), at); section.append(line);
       if (revision) section.append(element('p', revision.note, 'hint mono'));
+      const focus = reviewFocusPresentation(row.listener.focus), details = element('details');
+      details.append(element('summary', focus.label), element('p', focus.text, 'focus-copy')); section.append(details);
     }
     if (row.handoff) section.append(element('p', row.handoff.reason, 'hint'));
     live.append(section);
@@ -825,7 +847,11 @@ function renderActivity() {
     const summary = element('div', null, 'activity-status'); summary.append(pill(status.label, status.tone), element('span', revision, 'hint mono'));
     head.append(summary, time);
     const title = element('h2'); title.append(sourceButton(row));
-    card.append(head, title, element('p', row.reason, 'activity-reason'));
+    card.append(head, title, element('p', activityReason(row), 'activity-reason'));
+    if (row.kind === 'research_check' || ['candidate', 'review', 'ignore'].includes(row.decision) && row.status === 'observed') {
+      const focus = reviewFocusPresentation(row.focus, { prepared: row.status !== 'observed' && row.responseReceived !== true }), details = element('details');
+      details.append(element('summary', focus.label), element('p', focus.text, 'focus-copy')); card.append(details);
+    }
     if (attempt) {
       const receipt = element('section', null, 'receipt'), receiptHead = element('div', null, 'receipt-head'), settled = attempt.receipt?.lines?.length;
       receiptHead.append(element('h3', settled ? 'Receipt' : attempt.kind === 'close' ? 'Requested close' : 'Requested orders'), element('p', `Request ${attempt.id}`, 'hint mono'));

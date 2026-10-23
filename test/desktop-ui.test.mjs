@@ -104,9 +104,10 @@ test('the existing entry Save and Cancel controls sit in its heading and the out
 });
 
 test('a hidden verdict returns keyboard focus to visible process state and keyed source metadata survives token updates', async () => {
-  const { processingPresentation, modelOutputPresentation, completedModelPresentation, modelCoverageLabel, completionAnnouncement } = await import('../public/desktop-ui.mjs');
+  const { processingPresentation, modelOutputPresentation, completedModelPresentation, modelCoverageLabel, reviewFocusPresentation, completionAnnouncement } = await import('../public/desktop-ui.mjs');
   const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
-  const render = source.slice(source.indexOf('function renderProcess()'), source.indexOf('function renderDecisions()'));
+  const focusRender = source.slice(source.indexOf('function renderReviewFocus('), source.indexOf('function positionResponseTools('));
+  const render = focusRender + source.slice(source.indexOf('function renderProcess()'), source.indexOf('function renderDecisions()'));
   const document = { activeElement: { id: 'model-output' } }, nodes = new Map(), keys = new Map(); let sourceButtons = 0;
   const node = (id, textContent = '') => ({ id, textContent, dataset: {}, children: [], scrollHeight: 0, scrollTop: 0, clientHeight: 0,
     replaceChildren(...children) { this.children = children; },
@@ -117,7 +118,7 @@ test('a hidden verdict returns keyboard focus to visible process state and keyed
   const get = id => { if (!nodes.has(id)) nodes.set(id, node(id)); return nodes.get(id); };
   const context = {
     document, $: get, snapshot: { settings: { enabled: true }, entries: [], listener: { busy: true, modelOutput: null, events: [] } },
-    processingPresentation, modelOutputPresentation, completedModelPresentation, modelCoverageLabel, completionAnnouncement, streamDisconnected: false, rawOpen: false, lastCompletionKey: null, completionFrame: null,
+    processingPresentation, modelOutputPresentation, completedModelPresentation, modelCoverageLabel, reviewFocusPresentation, completionAnnouncement, streamDisconnected: false, rawOpen: false, lastCompletionKey: null, completionFrame: null,
     setText: (id, value) => { get(id).textContent = value; }, growText: (target, value) => { target.textContent = value; },
     changed: (key, value) => { const serialized = JSON.stringify(value); if (keys.get(key) === serialized) return false; keys.set(key, serialized); return true; },
     element: (tag, content) => node(tag, content), sourceButton: (_row, title) => node(`source-${++sourceButtons}`, title), when: value => value,
@@ -162,6 +163,14 @@ test('a hidden verdict returns keyboard focus to visible process state and keyed
   assert.equal(document.activeElement, acceptedSource); assert.equal(sourceButtons, 3, 'Only the separate new-stream metadata created a source button.');
   assert.equal(get('model-verdict-source').querySelector('time').textContent, 'Completed 2026-10-23T10:01:04Z');
   assert.equal(get('model-verdict-source').querySelector('time').dateTime, '2026-10-23T10:01:04Z');
+  const reasonNode = get('model-verdict-reason'), focusSummary = get('model-verdict-focus-summary');
+  get('model-verdict-focus').open = true; focusSummary.focus();
+  context.snapshot.listener.lastModelOutput.focus = { kind: 'custom', text: 'Look at the exact source timestamp.' };
+  context.renderProcess();
+  assert.equal(get('model-verdict-reason'), reasonNode); assert.equal(get('model-verdict-source').children[1], acceptedSource);
+  assert.equal(document.activeElement, focusSummary); assert.equal(get('model-verdict-focus').open, true);
+  assert.equal(get('model-verdict-focus-text').textContent, 'Look at the exact source timestamp.');
+  assert.equal(get('model-verdict-focus-summary').textContent, 'Review focus: Custom');
   get('model-output').focus(); context.rawOpen = true;
   context.snapshot.listener.busy = true; context.snapshot.listener.modelReview = { id: 3, status: 'running' };
   context.snapshot.listener.modelOutput = { ...context.snapshot.listener.modelOutput, checkId: 3, status: 'streaming', text: '' };
@@ -275,6 +284,33 @@ test('only the exact displayed completed check is redundant during a later strea
   assert.equal(listenerRevisionPresentation({ version: 3, listener: row }).label, 'prior v1');
 });
 
+test('only the exact current failed research check already described on the desk is redundant', async () => {
+  const { decisionShownInDesk, latestDecisions } = await import('../public/desktop-ui.mjs');
+  const output = { status: 'failed', activityId: 'current-progress', checkId: 'current-check', entryId: 'note', origin: 'local', version: 3 };
+  const row = { id: output.activityId, checkId: output.checkId, entryId: output.entryId, origin: output.origin, version: 3, kind: 'research_check', status: 'waiting', reviewStatus: 'failed', reason: 'The local model stopped.' };
+  const failure = { checkId: output.checkId, reason: row.reason };
+  assert.equal(decisionShownInDesk(row, output, null, { failure }), true);
+  for (const change of [{ id: 'different-record' }, { checkId: 'earlier-check' }, { version: 2 }, { version: undefined }, { entryId: 'other' }, { origin: 'cloud' }, { reason: row.reason + ' ' }, { reviewStatus: 'stopped' }, { kind: 'orders' }]) {
+    assert.equal(decisionShownInDesk({ ...row, ...change }, output, null, { failure }), false);
+  }
+  assert.equal(decisionShownInDesk(row, output, null), false, 'An error not currently displayed cannot suppress history.');
+  assert.equal(latestDecisions([row], null, { limit: null }).length, 1, 'Activity retains the current failure.');
+});
+
+test('legacy empty reasons remain unavailable and saved review focus never comes from current settings', async () => {
+  const { activityReason, reviewFocusPresentation, entryCardPresentation, matchesResultFilter } = await import('../public/desktop-ui.mjs');
+  assert.equal(activityReason({ status: 'observed', reason: '  ' }), 'No reason was recorded for this result.');
+  assert.notEqual(activityReason({ status: 'observed' }), 'Processing this entry.');
+  assert.equal(activityReason({ status: 'observed', reason: ' Exact model words. ' }), ' Exact model words. ');
+  assert.equal(reviewFocusPresentation(null).label, 'Review focus unavailable');
+  assert.deepEqual(reviewFocusPresentation({ kind: 'custom', text: 'Original saved focus.' }), { label: 'Review focus: Custom', text: 'Original saved focus.' });
+  assert.equal(reviewFocusPresentation({ kind: 'default', text: 'Saved default goal.' }, { prepared: true }).label, 'Prepared focus: Default research review');
+  const entry = { version: 3, listener: { status: 'observed', decision: 'review', version: 2, reason: 'Prior accepted reason.' }, listenerCheck: { kind: 'research_check', status: 'waiting', reviewStatus: 'failed', version: 3 } };
+  const card = entryCardPresentation(entry);
+  assert.equal(card.outcome.label, 'review suggested · prior v2'); assert.equal(card.check.label, 'needs attention');
+  assert.equal(matchesResultFilter(entry, 'decided'), true, 'The failed current check does not replace accepted review/filter truth.');
+});
+
 test('inactive durable research progress says unfinished while the actual active review and ticket states retain their labels', async () => {
   const { activityStatus, listenerResult, modelOutputPresentation } = await import('../public/desktop-ui.mjs');
   const progress = { kind: 'research_check', status: 'processing' };
@@ -307,7 +343,7 @@ test('Activity metadata identifies source revisions and uses only known completi
 });
 
 test('Latest decisions offers resume only for the current research revision while retaining historical rows and ticket hints', async () => {
-  const { latestDecisions, completedModelPresentation, decisionShownInDesk, activityMetadata, activityStatus } = await import('../public/desktop-ui.mjs');
+  const { latestDecisions, completedModelPresentation, decisionShownInDesk, activityMetadata, activityStatus, activityReason } = await import('../public/desktop-ui.mjs');
   const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
   const render = source.slice(source.indexOf('function renderDecisions()'), source.indexOf('/* -------------------------------------------------------------- settings */'));
   const row = { entryId: 'note', origin: 'local', kind: 'research_check', status: 'waiting', reason: 'An actual earlier model failure.', atUtc: '2026-10-23T12:00:00Z' };
@@ -315,7 +351,7 @@ test('Latest decisions offers resume only for the current research revision whil
   const node = (tag, textContent) => ({ tag, textContent, children: [], append(...children) { this.children.push(...children); } });
   const panel = { contains: () => false }, list = { closest: () => panel }, cards = [];
   const context = { snapshot: { settings: { enabled: false }, listener: {}, activity, entries: [{ id: 'note', origin: 'local', version: 3 }, { id: 'ticket', origin: 'local', version: 3 }] },
-    document: {}, $: () => list, latestDecisions, completedModelPresentation, decisionShownInDesk, activityMetadata, activityStatus,
+    document: {}, $: () => list, latestDecisions, completedModelPresentation, decisionShownInDesk, activityMetadata, activityStatus, activityReason,
     decisionItems: (rows, details) => rows.map(row => ({ value: { row, ...details(row) } })), changed: () => true,
     reconcileRows: (_list, items, draw) => { for (const item of items) cards.push(draw(item.value)); },
     element: node, pill: (_label, _tone) => node('span'), sourceButton: () => node('button'), when: value => value };
@@ -355,7 +391,9 @@ test('model setup is optional, reports native progress, and never claims unknown
   assert.equal(modelPresentation({ state: 'installing' }).busy, true);
   assert.equal(modelPresentation({ state: 'ready' }).visible, false);
   assert.equal(modelPresentation({ state: 'error' }).label, 'Retry local model');
-  assert.equal(modelPresentation({ state: 'error' }).title, 'Restart the local model');
+  assert.equal(modelPresentation({ state: 'error', phase: 'runtime' }).title, 'Restart the local model');
+  assert.equal(modelPresentation({ state: 'error', phase: 'setup' }).title, 'Set up the local model');
+  assert.equal(modelPresentation({ state: 'error' }).title, 'Local model needs attention');
   assert.equal(modelPresentation({ state: 'error' }).state, 'error', 'The actual native state reaches the Retry control.');
   assert.equal(modelPresentation({ state: 'missing' }).title, 'Set up the local model');
   assert.equal(modelPresentation().visible, false);

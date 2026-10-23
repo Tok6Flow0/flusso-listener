@@ -28,7 +28,7 @@ export function modelPresentation(model = {}) {
   switch (model.state) {
     case 'ready': return { ...common, visible: false, label: 'Local model ready' };
     case 'installing': return { ...common, title: 'Preparing the local model', busy: true, label: 'Starting local model…' };
-    case 'error': return { ...common, title: 'Restart the local model', label: 'Retry local model' };
+    case 'error': return { ...common, title: model.phase === 'runtime' ? 'Restart the local model' : model.phase === 'setup' ? 'Set up the local model' : 'Local model needs attention', label: 'Retry local model' };
     case 'missing': return common;
     default: return { ...common, visible: false, busy: true, label: 'Checking local model…' };
   }
@@ -65,6 +65,7 @@ export function entryCardPresentation(entry, { book = '', time = '', selected = 
     id: entry.id, origin: entry.origin, title: entry.title, status: entry.status,
     book, time, selected,
     outcome: entry.ticket?.error ? ticket : result && { label: `${result.label}${revision ? ` · ${revision.label}` : ''}`, tone: result.tone },
+    check: !entry.ticket && entry.listener?.status === 'observed' && entry.listenerCheck ? activityStatus(entry.listenerCheck) : null,
   };
 }
 
@@ -96,6 +97,16 @@ export function activityStatus(row = {}, { historical = false } = {}) {
   if (row.status === 'processing' && row.decision !== 'ticket' && row.activeReview !== true) return { label: 'review unfinished', tone: 'warn' };
   const [label, tone] = RESULT[row.status] ?? (row.status === 'observed' ? DECISION[row.decision] : null) ?? [text(row.status) || 'noted', ''];
   return { label, tone };
+}
+
+export function activityReason(row = {}) {
+  if (typeof row.reason === 'string' && row.reason.trim()) return row.reason;
+  return row.status === 'observed' ? 'No reason was recorded for this result.' : row.status === 'processing' ? 'Review in progress; no response is recorded.' : 'No detail was recorded for this check.';
+}
+
+export function reviewFocusPresentation(focus, { prepared = false } = {}) {
+  if (!focus || !['default', 'custom'].includes(focus.kind) || typeof focus.text !== 'string' || !focus.text.trim()) return { label: 'Review focus unavailable', text: 'The effective focus was not recorded for this response.' };
+  return { label: `${prepared ? 'Prepared focus' : 'Review focus'}: ${focus.kind === 'default' ? 'Default research review' : 'Custom'}`, text: focus.text };
 }
 
 export function receiptDetails(line = {}) {
@@ -281,7 +292,7 @@ export function completedModelPresentation(listener = {}, entries = []) {
   const scope = source?.handoff?.context?.inScope;
   const current = !source ? 'Source not loaded' : output.version !== source.version ? `Current note is v${formatCount(source.version)}` : 'Same note revision';
   const status = { watching: 'Watching note', reviewed: 'Reviewed note', closed: 'Closed note' }[source?.status];
-  return { output, earlier, ...activityStatus({ status: 'observed', decision: output.decision }), reason: output.reason,
+  return { output, earlier, ...activityStatus({ status: 'observed', decision: output.decision }), reason: activityReason({ ...output, status: 'observed' }),
     context: `${revision} · ${current}${status ? ` · ${status}` : ''}${scope === false ? ' · Outside selected filters' : scope === true ? ' · Matches selected filters' : ''}` };
 }
 
@@ -321,7 +332,11 @@ export function latestDecisions(activity = [], output = null, { limit = 5 } = {}
 
 // Only the same validated research result is redundant with the response desk.
 // Activity records its start clock; a synthetic summary records completion.
-export function decisionShownInDesk(row, output, published, { completed = false } = {}) {
+export function decisionShownInDesk(row, output, published, { completed = false, failure = null } = {}) {
+  if (failure?.checkId != null && output?.activityId != null && row.kind === 'research_check' && row.status === 'waiting' && row.reviewStatus === 'failed'
+    && output?.status === 'failed' && output.checkId === failure.checkId && row.checkId === failure.checkId
+    && row.id === output.activityId && row.entryId === output.entryId && row.origin === output.origin
+    && Number.isSafeInteger(output.version) && output.version > 0 && row.version === output.version && row.reason === failure.reason) return true;
   const displayedCheck = completed && published?.activityId != null && published?.checkId != null
     && row.id === published.activityId && row.checkId === published.checkId;
   return Boolean((displayedCheck || modelOutputPresentation(output, published).accepted) && row.status === 'observed'

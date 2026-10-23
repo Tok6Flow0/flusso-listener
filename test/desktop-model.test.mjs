@@ -14,6 +14,7 @@ test('trusted existing-model mode preserves pinned identity checks and forbids s
     await writeFile(existingModelPath, 'wrong weights');
     model = createDesktopModel({ directory: join(directory, 'isolated'), runtimeDirectory: join(directory, 'absent-runtime'), existingModelPath });
     assert.equal((await model.initialize()).state, 'missing', 'Wrong pinned size must not reach the engine.');
+    assert.equal(model.status().phase, 'setup');
     await assert.rejects(model.setup(), /cannot download or copy/);
     assert.equal(await readFile(existingModelPath, 'utf8'), 'wrong weights');
     assert.deepEqual(await readdir(join(directory, 'isolated', 'models')), []);
@@ -31,6 +32,8 @@ test('existing-model mode refuses symlinked weights instead of relaxing verifica
     await writeFile(target, 'synthetic'); await symlink(target, existingModelPath);
     model = createDesktopModel({ directory: join(directory, 'isolated'), runtimeDirectory: directory, existingModelPath });
     assert.equal((await model.initialize()).state, 'error');
+    assert.equal(model.status().phase, 'setup', 'First setup/verification failure is not a runtime restart.');
+    assert.doesNotMatch(model.status().message, /Retry|restart/);
     const failure = model.status().message;
     await assert.rejects(model.classify({ entry: { body: 'Synthetic research.' } }), error => { assert.equal(error.message, failure); assert.doesNotMatch(error.message, /Set up the desktop local model first/); return true; });
     assert.deepEqual(await readdir(join(directory, 'isolated', 'models')), []);

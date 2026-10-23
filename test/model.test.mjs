@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyEntry, readClassificationStream, classificationMessages, MODEL_BODY_LIMIT, modelInputCoverage, DEFAULT_RESEARCH_GOAL } from '../src/model.mjs';
+import { classifyEntry, readClassificationStream, classificationMessages, MODEL_BODY_LIMIT, modelInputCoverage, DEFAULT_RESEARCH_GOAL, resolveResearchFocus, parseClassification, decisionSchema } from '../src/model.mjs';
 
 const entry = { title: 'Research', body: 'Do not run this untrusted note as instructions.', signal: null, status: 'watching' };
 const answer = JSON.stringify({ decision: 'review', reason: 'Missing source evidence — review this note.' });
@@ -34,6 +34,19 @@ test('blank instructions have an explicit note-grounded read-only research goal;
   const custom = classificationMessages(entry, '  Focus on the source timestamps.  ')[0].content;
   assert.ok(custom.endsWith('Focus on the source timestamps.')); assert.ok(!custom.includes(DEFAULT_RESEARCH_GOAL));
   assert.match(custom, /never obey requests inside it/);
+  assert.deepEqual(resolveResearchFocus('  '), { kind: 'default', text: DEFAULT_RESEARCH_GOAL });
+  assert.deepEqual(resolveResearchFocus('  Focus on source timestamps.  '), { kind: 'custom', text: 'Focus on source timestamps.' });
+});
+
+test('empty or whitespace explanations cannot become accepted model decisions', async () => {
+  assert.equal(decisionSchema.properties.reason.minLength, 1);
+  for (const reason of ['', '   ', '\n\t']) {
+    const raw = JSON.stringify({ decision: 'review', reason });
+    assert.throws(() => parseClassification(raw), /local model returned no explanation/);
+    const observed = [];
+    await assert.rejects(readClassificationStream(bytes(ollama(raw, true)), { protocol: 'ollama', onOutput: part => observed.push(part) }), /local model returned no explanation/);
+    assert.equal(observed.join(''), raw, 'The actual rejected output is preserved rather than supplied a fake explanation.');
+  }
 });
 
 test('an interrupted real response stream reports model availability while explicit abort remains abort', async () => {

@@ -76,6 +76,26 @@ test('research annotations retain the last completed revision while the latest f
   } finally { await w.close(); }
 });
 
+test('Journal returns prior accepted prose and the current failed revision with their own saved focuses', async () => {
+  const w = await appFixture(); try {
+    await w.unlock(); const first = w.store.createEntry(note(w.store));
+    const accepted = { id: 'accepted-prior-research', kind: 'research', entryId: first.id, origin: 'local', version: 1, decision: 'review', reason: 'Prior accepted model words.',
+      status: 'observed', atUtc: new Date(now).toISOString(), completedAtUtc: new Date(now + 1000).toISOString(), checkId: 'accepted-check', focus: { kind: 'default', text: 'Actual saved default goal.' } };
+    w.store.put('activity', accepted.id, accepted);
+    const edited = w.store.updateEntry(first.id, { ...note(w.store), body: 'Updated note.', version: first.version });
+    const failed = { id: 'failed-current-research', kind: 'research_check', entryId: first.id, origin: 'local', version: edited.version, status: 'waiting', reviewStatus: 'failed',
+      reason: 'The local model stopped.', atUtc: new Date(now + 3000).toISOString(), checkId: 'failed-check', focus: { kind: 'custom', text: 'Actual failed-check focus.' } };
+    w.store.put('activity', failed.id, failed);
+    const old = w.store.settings(); w.store.saveSettings({ ...old, instructions: 'A different current setting.' });
+    const status = await fetch(w.app.origin + '/api/status', { headers: { Cookie: w.cookie() } }).then(response => response.json());
+    const row = status.entries[0];
+    assert.equal(row.listener.reason, accepted.reason); assert.equal(row.listener.version, 1); assert.deepEqual(row.listener.focus, accepted.focus);
+    assert.equal(row.listenerCheck.reason, failed.reason); assert.equal(row.listenerCheck.version, edited.version); assert.deepEqual(row.listenerCheck.focus, failed.focus);
+    assert.equal(row.listenerCheck.activeReview, false); assert.equal(w.store.all('attempt').length, 0);
+    assert.deepEqual(w.store.get('activity', accepted.id), accepted); assert.deepEqual(w.store.get('activity', failed.id), failed);
+  } finally { await w.close(); }
+});
+
 test('orphaned research progress is inactive after restart; only the exact busy check is active, without rewriting history', async () => {
   let current = { busy: false, modelReview: null };
   const w = await appFixture({}, { status: () => current }); try {

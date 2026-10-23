@@ -157,7 +157,7 @@ export async function startServer({ store, cloud, listener, port = 0, open = ope
 // Each entry carries its ticket (if any) and the listener's latest decision on it.
 function annotate(entries, activity, store, now, listenerState = {}) {
   const settings = store.settings();
-  const latest = new Map(), acceptedResearch = new Map(), attempts = new Map();
+  const latest = new Map(), acceptedResearch = new Map(), researchChecks = new Map(), attempts = new Map();
   for (const row of store.all('attempt')) {
     const key = `${row.origin}:${row.entryId}:${row.version}`;
     if (!attempts.has(key)) attempts.set(key, []);
@@ -166,6 +166,10 @@ function annotate(entries, activity, store, now, listenerState = {}) {
   for (const row of activity) {
     const key = `${row.origin}:${row.entryId}`, seen = latest.get(key);
     if (!seen || row.atUtc > seen.atUtc) latest.set(key, row);
+    if (row.kind === 'research_check') {
+      const versionKey = `${key}:${row.version}`, seenCheck = researchChecks.get(versionKey);
+      if (!seenCheck || row.atUtc > seenCheck.atUtc) researchChecks.set(versionKey, row);
+    }
     if (row.status === 'observed' && ['candidate', 'review', 'ignore'].includes(row.decision)) {
       const accepted = acceptedResearch.get(key);
       const clock = row.completedAtUtc ?? row.atUtc, priorClock = accepted?.completedAtUtc ?? accepted?.atUtc;
@@ -176,7 +180,11 @@ function annotate(entries, activity, store, now, listenerState = {}) {
     const ticket = readTicket(entry.body);
     const key = `${entry.origin}:${entry.id}`, row = (ticket === null ? acceptedResearch.get(key) : null) ?? latest.get(key);
     const handoff = describeEntryHandoff({ entry, settings, ticket, activity: row, attempts: attempts.get(`${entry.origin}:${entry.id}:${entry.version}`), checkpoint: store.get('checkpoint', `${entry.origin}:${entry.id}`), now });
-    return { ...entry, ticket, handoff, listener: row ? { decision: row.decision ?? null, status: row.status, reason: row.reason ?? null, atUtc: row.atUtc, version: row.version ?? null, ...(row.kind === 'research_check' ? { kind: row.kind, reviewStatus: row.reviewStatus ?? null, activeReview: Boolean(row.checkId != null && listenerState.busy && row.checkId === listenerState.modelReview?.id) } : {}) } : null };
+    const annotation = value => value ? { decision: value.decision ?? null, status: value.status, reason: value.reason ?? null, atUtc: value.atUtc, version: value.version ?? null, focus: value.focus ?? null,
+      ...(value.kind === 'research_check' ? { kind: value.kind, reviewStatus: value.reviewStatus ?? null, responseReceived: value.responseReceived === true, activeReview: Boolean(value.checkId != null && listenerState.busy && value.checkId === listenerState.modelReview?.id) } : {}) } : null;
+    const check = ticket === null ? researchChecks.get(`${key}:${entry.version}`) : null;
+    const separateCheck = check && (row?.kind === 'research_check' || check.id !== row?.id && check.checkId !== row?.checkId && (!row || Date.parse(check.atUtc) >= Date.parse(row.completedAtUtc ?? row.atUtc)));
+    return { ...entry, ticket, handoff, listener: annotation(row), listenerCheck: separateCheck ? annotation(check) : null };
   });
 }
 function same(left, right) { if (typeof left !== 'string') return false; const a = Buffer.from(left), b = Buffer.from(right); return a.length === b.length && timingSafeEqual(a, b); }

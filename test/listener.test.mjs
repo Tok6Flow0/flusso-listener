@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createListener } from '../src/listener.mjs';
 import { openStore } from '../src/store.mjs';
-import { modelUnavailable } from '../src/model.mjs';
+import { modelUnavailable, classifyEntry, resolveResearchFocus } from '../src/model.mjs';
 import { workspace, note, ticket, hedge, signal, fakeCloud, enable, now, notebookId, accountId, memoryVault } from './helpers.mjs';
 
 const candidate = async () => ({ decision: 'candidate', reason: 'Fixture match.' });
@@ -487,6 +487,21 @@ test('a failed streamed answer retains its partial text as failed and leaves the
   } finally { await listener.stop(); await w.close(); }
 });
 
+test('a streamed blank explanation fails as model format, retains raw output, and cannot recover merely because the engine is ready', async () => {
+  const w = await workspace(), raw = JSON.stringify({ decision: 'review', reason: '   ' });
+  const listener = createListener({ store: w.store, cloud: fakeCloud(), clock: () => now,
+    classify: args => classifyEntry({ ...args, fetchImpl: async () => new Response(JSON.stringify({ message: { content: raw }, done: true }) + '\n') }) });
+  try {
+    enable(w.store, { executionEnabled: false }); const entry = w.store.createEntry(note(w.store, { status: 'reviewed' })); listener.start();
+    await listener.tick({ reviewLatest: true }); const state = listener.status();
+    assert.equal(state.modelOutput.status, 'failed'); assert.equal(state.modelOutput.text, raw);
+    assert.equal(state.lastError, 'The local model returned no explanation.'); assert.equal(state.lastModelOutput, null);
+    assert.equal(listener.modelReady(), false); assert.equal(w.store.all('attempt').length, 0);
+    assert.notEqual(w.store.get('checkpoint', `local:${entry.id}`)?.state, 'observed');
+    assert.equal(w.store.all('activity')[0].responseReceived, true);
+  } finally { await listener.stop(); await w.close(); }
+});
+
 test('model readiness clears only its matching availability error without a check, settings change, execution or history rewrite', async () => {
   const w = await workspace(); let calls = 0, unavailable = true;
   const listener = createListener({ store: w.store, cloud: fakeCloud(), classify: async () => {
@@ -522,9 +537,12 @@ test('failed repeat reviews preserve durable accepted research through SQLite re
       onOutput('partial retry'); throw new Error('The local model stopped during this repeat.');
     } });
     listener.start(); await listener.tick({ reviewLatest: true }); const accepted = listener.status().lastModelOutput;
+    assert.deepEqual(accepted.focus, resolveResearchFocus(''));
+    const saved = store.settings(); store.saveSettings({ ...saved, instructions: 'Check the exact recorded source timestamps.' });
     for (let i = 0; i < 3; i++) await listener.tick({ reviewLatest: true });
     assert.equal(calls, 4); assert.equal(store.all('activity').length, 2, 'One accepted and one unfinished research row per revision, not one per timer.');
     assert.deepEqual(listener.status().lastModelOutput, accepted);
+    assert.deepEqual(listener.status().modelOutput.focus, resolveResearchFocus('Check the exact recorded source timestamps.'));
     assert.equal(listener.status().modelOutput.status, 'failed');
     assert.ok(store.all('activity').some(row => row.kind === 'research_check' && row.status === 'waiting' && row.reason.includes('local model stopped')));
     await listener.stop(); listener = null; store.close(); store = null;
@@ -533,6 +551,7 @@ test('failed repeat reviews preserve durable accepted research through SQLite re
     const restored = listener.status();
     assert.equal(restored.modelOutput, null, 'No raw response is invented after reopening.');
     assert.deepEqual(restored.lastModelOutput, accepted); assert.equal(restored.lastModelOutput.version, entry.version);
+    assert.notEqual(restored.lastModelOutput.focus.text, store.settings().instructions, 'A current setting never retrofits the saved accepted focus.');
     assert.deepEqual(restored.lastModelOutput.coverage, { bodyUnits: 2000, totalBodyUnits: 2400, bodyTruncated: true, unit: 'UTF-16' });
     assert.equal(store.all('activity').length, 2); assert.deepEqual(store.get('attempt', retainedAttempt.id), retainedAttempt);
     assert.equal(store.claimAttempt({ ...retainedAttempt, id: 'copy' }), false); assert.equal(submissions, 0);

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { classifyEntry, modelInputCoverage } from './model.mjs';
+import { classifyEntry, modelInputCoverage, resolveResearchFocus } from './model.mjs';
 import { buildOrderRequest, readTicket, withResult } from './orders.mjs';
 import { entryInScope as inScope, ticketSetupGap } from './handoff.mjs';
 
@@ -233,7 +233,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
         const atUtc = new Date(clock()).toISOString();
         const resultId = createHash('sha256').update(`${key}:${entry.version}`).digest('hex');
         const activity = { id: ticket ? resultId : `${resultId}:research-check`, entryId: entry.id, title: entry.title, origin: entry.origin, version: entry.version, atUtc,
-          ...(!ticket ? { kind: 'research_check', checkId: review.id } : {}) };
+          ...(!ticket ? { kind: 'research_check', checkId: review.id, focus: resolveResearchFocus(settings.instructions) } : {}) };
         if (ticket) {
           publish('validate', 'Validating ticket format, freshness and local limits. Explicit tickets use the execution path directly.', entry, { index, total });
           const request = buildRequest({ entry, settings: store.settings(), now: clock() });
@@ -253,7 +253,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
         publish('model', 'The local model is reading the note and preparing its response.', entry, { index, total });
         review.status = 'running'; review.reason = null;
         const coverage = modelInputCoverage(entry);
-        state.modelOutput = { entryId: entry.id, title: entry.title, origin: entry.origin, version: entry.version, activityId: activity.id, checkId: review.id, coverage, atUtc, text: '', status: 'streaming' };
+        state.modelOutput = { entryId: entry.id, title: entry.title, origin: entry.origin, version: entry.version, activityId: activity.id, checkId: review.id, coverage, focus: activity.focus, atUtc, text: '', status: 'streaming' };
         changed();
         try {
           decision = await classify({ entry, instructions: settings.instructions, signal: activeAbort.signal, onOutput: delta => {
@@ -265,22 +265,22 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
         }
         catch (error) {
           state.modelOutput.status = review.status = activeAbort.signal.aborted ? 'stopped' : 'failed'; changed();
-          if (activeAbort.signal.aborted) { store.put('activity', activity.id, { ...activity, status: 'waiting', reviewStatus: 'stopped', reason: 'Model review paused before a decision. This note will be checked again when selected and the Listener is on.' }); break; }
+          if (activeAbort.signal.aborted) { store.put('activity', activity.id, { ...activity, status: 'waiting', reviewStatus: 'stopped', responseReceived: Boolean(state.modelOutput.text), reason: 'Model review paused before a decision. This note will be checked again when selected and the Listener is on.' }); break; }
           // Left unchecked so it is read again once the model is available.
           state.lastError = error?.code === 'LOCAL_MODEL_UNAVAILABLE' || error?.message?.includes('local model') || error?.message?.includes('classification') ? error.message : 'The local model could not read a note.';
           state.modelFailure = error?.code === 'LOCAL_MODEL_UNAVAILABLE' ? { checkId: review.id, message: state.lastError } : null;
-          store.put('activity', activity.id, { ...activity, status: 'waiting', reviewStatus: 'failed', reason: state.lastError });
+          store.put('activity', activity.id, { ...activity, status: 'waiting', reviewStatus: 'failed', responseReceived: Boolean(state.modelOutput.text), reason: state.lastError });
           publish('error', state.lastError, entry, { index, total });
           continue;
         }
         const latestSettings = store.settings();
         if (activeAbort.signal.aborted || latestSettings.version !== settingsVersion || !latestSettings.enabled || !inScope(entry, latestSettings)) {
           state.modelOutput.status = review.status = 'stopped'; changed();
-          store.put('activity', activity.id, { ...activity, status: 'waiting', reviewStatus: 'stopped', reason: 'Listener settings changed before the model decision was accepted. This note will be checked again when selected and the Listener is on.' });
+          store.put('activity', activity.id, { ...activity, status: 'waiting', reviewStatus: 'stopped', responseReceived: Boolean(state.modelOutput.text), reason: 'Listener settings changed before the model decision was accepted. This note will be checked again when selected and the Listener is on.' });
           break;
         }
         const completedAtUtc = new Date(clock()).toISOString();
-        const accepted = { ...activity, id: resultId, kind: 'research', decision: decision.decision, reason: decision.reason, status: 'observed', completedAtUtc, coverage };
+        const accepted = { ...activity, id: resultId, kind: 'research', decision: decision.decision, reason: decision.reason, status: 'observed', completedAtUtc, coverage, responseReceived: true };
         store.completeResearchResult(accepted, activity.id);
         state.modelOutput.status = 'complete';
         review.status = 'complete';
@@ -307,7 +307,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
         if (unfinished) {
           try {
             const progress = store.get('activity', state.modelOutput.activityId);
-            if (progress?.checkId === review.id) store.put('activity', progress.id, { ...progress, status: 'waiting', reviewStatus: 'failed', reason: state.lastError });
+            if (progress?.checkId === review.id) store.put('activity', progress.id, { ...progress, status: 'waiting', reviewStatus: 'failed', responseReceived: Boolean(state.modelOutput.text), reason: state.lastError });
           } catch { /* A failed store cannot promise a durable error row; live state remains terminal. */ }
         }
         publish('error', state.lastError);
