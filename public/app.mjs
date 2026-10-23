@@ -19,10 +19,29 @@ const TICKET_FENCE = /^(```|~~~)[ \t]*flusso-(?:orders|close)[ \t]*\n[\s\S]*?^\1
 function element(tag, content, className) { const node = document.createElement(tag); if (content != null) node.textContent = content; if (className) node.className = className; return node; }
 function pill(text, tone) { return element('span', text, `pill${tone ? ' ' + tone : ''}`); }
 function notify(message, success = false, error = false) {
-  $('notice-text').textContent = message; $('notice').hidden = false; $('notice').className = `notice${error ? ' error' : success ? ' success' : ''}`;
+  const notice = $('notice'), className = `notice${error ? ' error' : success ? ' success' : ''}`;
+  notify.pollMessage = null;
+  if (!notice.hidden && $('notice-text').textContent === message && notice.className === className) return;
+  $('notice-text').textContent = message; notice.hidden = false; notice.className = className;
   cancelAnimationFrame(notify.frame); $('notice-status').textContent = ''; $('notice-alert').textContent = '';
   notify.frame = requestAnimationFrame(() => { $(error ? 'notice-alert' : 'notice-status').textContent = message; });
   clearTimeout(notify.timer); if (success) notify.timer = setTimeout(() => { $('notice').hidden = true; }, 5000);
+  if (error) {
+    const bounds = notice.getBoundingClientRect(), top = matchMedia('(max-width:760px)').matches ? document.querySelector('.sidebar').getBoundingClientRect().bottom : 0;
+    if (bounds.top < top || bounds.bottom > window.innerHeight) notice.scrollIntoView({ block: 'start', behavior: 'auto' });
+  }
+}
+function recoverPollNotice() {
+  notify.pollFailure = null;
+  if (!notify.pollMessage) return;
+  if ($('notice-text').textContent === notify.pollMessage && $('notice').className === 'notice error') {
+    $('notice').hidden = true; cancelAnimationFrame(notify.frame); $('notice-alert').textContent = '';
+  }
+  notify.pollMessage = null;
+}
+function notifyPollFailure(message) {
+  if (notify.pollFailure === message) return;
+  notify(message, false, true); notify.pollMessage = message; notify.pollFailure = message;
 }
 async function api(path, body, headers = {}) {
   const response = await fetch(path, { method: body === undefined ? 'GET' : 'POST', headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json', 'x-flusso-csrf': csrf }), ...headers }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -63,7 +82,11 @@ function decisionItems(rows, details) {
   return rows.map((row, index) => ({ key: keys[index], value: { row, sourceAvailable: snapshot.entries.some(entry => entry.id === row.entryId && (!row.origin || row.origin === entry.origin)), ...details(row) } }));
 }
 // Writes only real changes, so live regions announce a state once rather than on every token.
-function setText(id, value) { const node = $(id); if (node.textContent !== value) node.textContent = value; }
+function setText(id, value) {
+  const node = $(id); if (node.textContent === value) return;
+  if (node.dataset.interfaceNumbers === 'true') node.replaceChildren(...value.split(/(\d+(?:[.,:]\d+)*)/g).map((part, index) => index % 2 ? element('span', part, 'mono') : document.createTextNode(part)));
+  else node.textContent = value;
+}
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 function reveal(node, block = 'start') { node.scrollIntoView({ behavior: reducedMotion.matches ? 'auto' : 'smooth', block }); }
 $('dismiss-notice').addEventListener('click', () => { clearTimeout(notify.timer); $('notice').hidden = true; });
@@ -223,6 +246,7 @@ async function load({ forms = false } = {}) {
   renderActivity();
   renderProcess(); renderDecisions();
   if (forms || !formDirty) fillSettings();
+  recoverPollNotice();
 }
 function renderStatus() {
   const { settings, listener } = snapshot;
@@ -666,7 +690,7 @@ function renderDetail() {
     button.addEventListener('click', () => { const current = snapshot.entries.find(item => item.id === row.id && item.origin === row.origin); if (current) showEditor(current.origin === 'local' ? current : { ...current, id: null, version: null }); }); actions.append(button); head.append(heading, actions);
     const prose = element('div', null, 'note-body'); renderMarkdown(prose, (row.body || '').replace(TICKET_FENCE, '').trim() || ' ');
     const live = element('div'); live.dataset.entryPart = 'live';
-    const check = element('div'); check.dataset.entryPart = 'check'; detail.replaceChildren(head, prose, live, check);
+    const check = element('div'); check.dataset.entryPart = 'check'; detail.replaceChildren(head, prose, check, live);
     if (row.signal) {
       const section = element('section', null, 'detail-section'), quality = row.signal.quality;
       section.append(element('h3', 'Structured signal'), element('p', `${quality ? quality[0].toUpperCase() + quality.slice(1) : 'Unavailable'} · ${row.signal.sourceOperationId} · ${row.signal.sourceAsOfUtc ? when(row.signal.sourceAsOfUtc) : 'no source time'}`, 'hint mono'), element('p', 'Recorded source quality; not a current venue reading.', 'hint'));
@@ -684,8 +708,8 @@ function renderDetail() {
   if (changed('entry-detail:check', row.listenerCheck)) {
     const slot = detail.querySelector('[data-entry-part="check"]'); slot.replaceChildren();
     if (row.listenerCheck) {
-      const check = row.listenerCheck, status = activityStatus(check), section = element('aside', null, 'detail-section');
-      const at = element('time', `Recorded ${when(check.atUtc, true)} · v${formatCount(check.version)}`); at.dateTime = check.atUtc;
+      const check = row.listenerCheck, status = activityStatus(check), section = element('aside', null, 'detail-section handoff-section');
+      const metadata = activityMetadata(check, row), at = element('time', `${metadata.clockLabel} ${when(metadata.clock, true)} · ${metadata.revision}`, 'detail-facts'); at.dateTime = metadata.clock ?? '';
       section.append(element('h3', 'Latest research check'), pill(status.label, status.tone), element('p', activityReason(check)), at);
       const focus = reviewFocusPresentation(check.focus, { prepared: check.responseReceived !== true }), details = element('details');
       details.append(element('summary', focus.label), element('p', focus.text, 'focus-copy')); section.append(details); slot.append(section);
@@ -696,10 +720,10 @@ function renderDetail() {
   const revision = listenerRevisionPresentation(row);
   if (row.handoff || (!row.ticket && row.listener?.status === 'observed')) {
     const section = element('aside', null, 'detail-section handoff-section'), title = element('div', null, 'handoff-head'), mark = element('img');
-    mark.src = '/flusso-mark.png'; mark.alt = ''; mark.width = mark.height = 18; title.append(mark, element('h3', 'Listener status')); section.append(title);
+    mark.src = '/flusso-mark.png'; mark.alt = ''; mark.width = mark.height = 18; title.append(mark, element('h3', !row.ticket && row.listener?.status === 'observed' ? 'Completed research response' : 'Listener status')); section.append(title);
     const review = listenerResult(row);
     if (!row.ticket && row.listener?.status === 'observed' && review) {
-      const line = element('p', null, 'handoff-review'), at = element('time', when(row.listener.atUtc)); at.dateTime = row.listener.atUtc ?? '';
+      const metadata = activityMetadata(row.listener, row), line = element('p', null, 'handoff-review'), at = element('time', `${metadata.clockLabel} ${when(metadata.clock, true)}`); at.dateTime = metadata.clock ?? '';
       line.append(pill(review.label, review.tone), element('span', activityReason(row.listener)), at); section.append(line);
       if (revision) section.append(element('p', revision.note, 'hint mono'));
       const focus = reviewFocusPresentation(row.listener.focus), details = element('details');
@@ -902,7 +926,7 @@ async function initialize() {
     const interval = listenerEvents?.readyState === EventSource.OPEN ? 10000 : (!$('view-listener').hidden || snapshot?.listener.busy ? 1500 : 10000);
     if (document.hidden || pollBusy || Date.now() - lastPolledAt < interval) return;
     pollBusy = true; lastPolledAt = Date.now();
-    try { await load(); } catch (error) { notify(error.message, false, true); } finally { pollBusy = false; }
+    try { await load(); } catch (error) { notifyPollFailure(error.message); } finally { pollBusy = false; }
   }, 1500);
 }
 async function startWorkspace() {

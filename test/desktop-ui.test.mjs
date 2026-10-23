@@ -4,6 +4,75 @@ import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
 import { accountPresentation, updatePresentation, modelPresentation } from '../public/desktop-ui.mjs';
 
+test('unchanged visible notices announce once, recover without focus theft, and announce a later recurrence', async () => {
+  const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
+  const functions = source.slice(source.indexOf('function notify('), source.indexOf('async function api('));
+  const frames = new Map(), nodes = new Map(); let sequence = 0, scrolls = 0;
+  const get = id => { if (!nodes.has(id)) nodes.set(id, { hidden: true, textContent: '', className: '', getBoundingClientRect: () => ({ top: -40, bottom: 20 }), scrollIntoView() { scrolls++; } }); return nodes.get(id); };
+  const focusedDraft = {}, context = { $: get, window: { innerHeight: 600 }, matchMedia: () => ({ matches: true }), document: { activeElement: focusedDraft, querySelector: () => ({ getBoundingClientRect: () => ({ bottom: 62 }) }) },
+    requestAnimationFrame: callback => { frames.set(++sequence, callback); return sequence; }, cancelAnimationFrame: id => frames.delete(id), clearTimeout() {}, setTimeout: () => 1 };
+  runInNewContext(functions, context);
+  const flush = () => { for (const [id, callback] of frames) { frames.delete(id); callback(); } };
+  context.notifyPollFailure('Status read unavailable.'); flush();
+  assert.equal(get('notice-alert').textContent, 'Status read unavailable.'); assert.equal(scrolls, 1);
+  get('notice').getBoundingClientRect = () => ({ top: 20, bottom: 60 });
+  context.notifyPollFailure('Status read unavailable.');
+  assert.equal(frames.size, 0); assert.equal(get('notice-alert').textContent, 'Status read unavailable.'); assert.equal(scrolls, 1);
+  get('notice').hidden = true; context.notifyPollFailure('Status read unavailable.');
+  assert.equal(get('notice').hidden, true); assert.equal(frames.size, 0, 'Dismissing an ongoing polling outage keeps it dismissed.');
+  context.recoverPollNotice(); assert.equal(get('notice').hidden, true); assert.equal(get('notice-alert').textContent, '');
+  context.notifyPollFailure('Status read unavailable.'); flush(); assert.equal(scrolls, 2);
+  context.notify('Different save error.', false, true); flush(); assert.equal(get('notice-alert').textContent, 'Different save error.');
+  context.notifyPollFailure('Status read unavailable.'); assert.equal(frames.size, 0, 'The same polling outage does not replace a new action error.');
+  context.recoverPollNotice(); assert.equal(get('notice').hidden, false, 'A successful poll must not clear an unrelated action error.');
+  get('notice').hidden = true; context.notify('Different save error.', false, true); assert.equal(frames.size, 1, 'A dismissed notice may announce a recurrence.');
+  assert.equal(context.document.activeElement, focusedDraft);
+  const css = await readFile(new URL('../public/styles.css', import.meta.url), 'utf8');
+  assert.match(css, /\.notice\{position:relative/);
+  assert.doesNotMatch(css, /\.notice\{(?:[^}]*;)?(?:top|bottom):/);
+});
+
+test('interface prose keeps numbers mono without making its whole sentence a data readout', async () => {
+  const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
+  const helper = source.slice(source.indexOf('function setText('), source.indexOf('const reducedMotion'));
+  const node = { dataset: { interfaceNumbers: 'true' }, textContent: '', replaceChildren(...children) { this.children = children; this.textContent = children.map(row => row.textContent).join(''); } };
+  const context = { $: () => node, element: (tag, textContent, className) => ({ tag, textContent, className }), document: { createTextNode: textContent => ({ textContent }) } };
+  runInNewContext(helper, context); const text = 'Checks 60 seconds after completion · v2 · first 2,000 UTF-16 text units'; context.setText('mixed', text);
+  assert.equal(node.textContent, text); assert.deepEqual(node.children.filter(row => row.className === 'mono').map(row => row.textContent), ['60', '2', '2,000', '16']);
+  const children = node.children; context.setText('mixed', text); assert.equal(node.children, children, 'Unchanged text keeps its DOM and selection.');
+  const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  for (const id of ['last-check', 'model-input-coverage', 'model-verdict-context', 'model-verdict-coverage']) {
+    const tag = html.match(new RegExp(`<[^>]+id="${id}"[^>]*>`))?.[0]; assert.match(tag, /data-interface-numbers="true"/); assert.doesNotMatch(tag, /class="[^"]*\bmono\b/);
+  }
+});
+
+test('the Journal reader shows the current check before the preserved completed response with actual clocks', async () => {
+  const ui = await import('../public/desktop-ui.mjs'), source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
+  const render = source.slice(source.indexOf('function renderDetail('), source.indexOf('// The editor takes'));
+  const make = (tag, textContent = '', className = '') => ({ tag, textContent, className, dataset: {}, children: [], setAttribute() {}, addEventListener() {},
+    append(...children) { this.children.push(...children); }, replaceChildren(...children) { this.children = children; },
+    querySelector(selector) { const field = selector.includes('ticket-kind') ? 'ticket-kind' : selector.includes('"check"') ? 'check' : selector.includes('"live"') ? 'live' : null;
+      const find = node => field && node.dataset.entryPart === field || !field && node.dataset.entryAction ? node : node.children.map(find).find(Boolean); return this.children.map(find).find(Boolean) ?? null; }, focus() {} });
+  const detail = make('article'), keys = new Map(), recorded = '2026-10-23T10:01:05Z', completed = '2026-10-23T10:00:04Z';
+  const row = { id: 'note', origin: 'local', title: 'Real research', body: 'Original note prose.', version: 2, status: 'reviewed',
+    listener: { status: 'observed', decision: 'review', reason: 'Preserved accepted words.', version: 1, atUtc: '2026-10-23T10:00:00Z', completedAtUtc: completed },
+    listenerCheck: { kind: 'research_check', status: 'waiting', reviewStatus: 'failed', version: 2, reason: 'Actual latest failure.', atUtc: recorded } };
+  const context = { ...ui, selected: row, snapshot: { entries: [row] }, $: () => detail, element: make, pill: (text, tone) => make('span', text, tone),
+    document: { activeElement: {}, createTextNode: text => make(null, text) }, renderMarkdown: (node, text) => { node.textContent = text; }, notebookName: () => 'Research', renderKeys: keys,
+    changed: (key, value) => { const next = JSON.stringify(value); if (keys.get(key) === next) return false; keys.set(key, next); return true; },
+    formatCount: String, when: (value, seconds) => `${value}/${seconds ? 'seconds' : 'minutes'}`, TICKET_FENCE: /never-match/g };
+  runInNewContext(render, context); context.renderDetail();
+  const check = detail.children.find(node => node.dataset.entryPart === 'check'), live = detail.children.find(node => node.dataset.entryPart === 'live');
+  assert.ok(detail.children.indexOf(check) < detail.children.indexOf(live));
+  const all = node => [node, ...node.children.flatMap(all)];
+  assert.ok(all(check).some(node => node.textContent === 'Latest research check')); assert.ok(all(check).some(node => node.textContent === 'Actual latest failure.'));
+  assert.ok(all(check).some(node => node.tag === 'time' && node.textContent === `Recorded ${recorded}/seconds · v2` && node.className === 'detail-facts'));
+  assert.ok(all(live).some(node => node.textContent === 'Completed research response')); assert.ok(all(live).some(node => node.textContent === 'Preserved accepted words.'));
+  assert.ok(all(live).some(node => node.tag === 'time' && node.textContent === `Completed ${completed}/seconds`));
+  row.listener = { ...row.listener, completedAtUtc: null }; context.renderDetail();
+  assert.ok(all(live).some(node => node.tag === 'time' && node.textContent === 'Recorded 2026-10-23T10:00:00Z/seconds'), 'Legacy records retain their recorded clock without an invented completion.');
+});
+
 test('entry saves lock the actual form handler until acceptance and an older refresh cannot unlock a newer save', async () => {
   const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
   const handler = source.slice(source.indexOf("$('entry-form').addEventListener('submit'"), source.indexOf("$('notebook-form').addEventListener('submit'"));

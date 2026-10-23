@@ -180,7 +180,7 @@ function annotate(entries, activity, store, now, listenerState = {}) {
     const ticket = readTicket(entry.body);
     const key = `${entry.origin}:${entry.id}`, row = (ticket === null ? acceptedResearch.get(key) : null) ?? latest.get(key);
     const handoff = describeEntryHandoff({ entry, settings, ticket, activity: row, attempts: attempts.get(`${entry.origin}:${entry.id}:${entry.version}`), checkpoint: store.get('checkpoint', `${entry.origin}:${entry.id}`), now });
-    const annotation = value => value ? { decision: value.decision ?? null, status: value.status, reason: value.reason ?? null, atUtc: value.atUtc, version: value.version ?? null, focus: value.focus ?? null,
+    const annotation = value => value ? { decision: value.decision ?? null, status: value.status, reason: value.reason ?? null, atUtc: value.atUtc, completedAtUtc: value.completedAtUtc ?? null, version: value.version ?? null, focus: value.focus ?? null,
       ...(value.kind === 'research_check' ? { kind: value.kind, reviewStatus: value.reviewStatus ?? null, responseReceived: value.responseReceived === true, activeReview: Boolean(value.checkId != null && listenerState.busy && value.checkId === listenerState.modelReview?.id) } : {}) } : null;
     const check = ticket === null ? researchChecks.get(`${key}:${entry.version}`) : null;
     const separateCheck = check && (row?.kind === 'research_check' || check.id !== row?.id && check.checkId !== row?.checkId && (!row || Date.parse(check.atUtc) >= Date.parse(row.completedAtUtc ?? row.atUtc)));

@@ -453,8 +453,7 @@ tr:last-child td{border-bottom:0}
   .account-toggle{width:auto;min-height:40px;padding:4px}
   .account-copy,.account-chevron{display:none}
   .account-menu{position:fixed;top:62px;bottom:auto;right:12px;left:auto;max-height:calc(100dvh - 80px)}
-  .notice{top:auto;bottom:20px}
-  body:has(#editor:not([hidden])) .notice{bottom:88px}
+  .notice{scroll-margin-top:80px}
   main{padding:20px 16px 40px}
   h1{font-size:var(--fs-display-sm)}
   .journal-layout{grid-template-columns:minmax(0,1fr);min-height:0}

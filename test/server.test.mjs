@@ -73,11 +73,12 @@ test('save replies carry canonical ticket validation and the actual historical r
     await w.unlock();
     const first = await w.post('/api/entries', note(w.store), { 'Idempotency-Key': 'annotated-save-research-key' }).then(response => response.json());
     assert.equal(first.version, 1); assert.equal(first.ticket, null); assert.equal(first.listener, null);
-    w.store.put('activity', 'original-review', { id: 'original-review', entryId: first.id, origin: 'local', version: 1, status: 'observed', decision: 'review', reason: 'The original revision needs evidence.', atUtc: new Date(now).toISOString() });
+    w.store.put('activity', 'original-review', { id: 'original-review', entryId: first.id, origin: 'local', version: 1, status: 'observed', decision: 'review', reason: 'The original revision needs evidence.', atUtc: new Date(now).toISOString(), completedAtUtc: new Date(now + 500).toISOString() });
     const body = '```flusso-orders\n{"id":"empty-order-draft","orders":[]}\n```';
     const saved = await w.post('/api/entries/' + first.id, { ...note(w.store), body, version: first.version }).then(response => response.json());
     assert.equal(saved.version, 2); assert.equal(saved.body, body); assert.ok(saved.ticket.error);
     assert.equal(saved.listener.version, 1); assert.equal(saved.listener.reason, 'The original revision needs evidence.');
+    assert.equal(saved.listener.completedAtUtc, new Date(now + 500).toISOString());
     assert.equal(w.store.get('activity', 'original-review').version, 1);
     const status = await fetch(w.app.origin + '/api/status', { headers: { Cookie: w.cookie() } }).then(response => response.json());
     assert.deepEqual(status.entries[0], saved, 'POST uses the same canonical annotations as the existing status read.');

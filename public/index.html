@@ -81,7 +81,7 @@
 
     <section id="view-listener" class="view">
       <header class="view-head listener-head">
-        <div class="title-block"><h1>Listener</h1><p class="status-line mono" id="last-check">Loading Journal…</p></div>
+        <div class="title-block"><h1>Listener</h1><p class="status-line" id="last-check" data-interface-numbers="true">Loading Journal…</p></div>
         <label class="switch switch-lg"><input id="enabled" type="checkbox" aria-label="Listener loading"><span class="switch-track" aria-hidden="true"></span><span id="enabled-label">Loading</span></label>
       </header>
       <div class="listener-toolbar">
@@ -104,7 +104,7 @@
               <p id="model-completion" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
             </div>
             <div id="model-output-source" class="output-source" hidden></div>
-            <p id="model-input-coverage" class="output-note mono" hidden></p>
+            <p id="model-input-coverage" class="output-note" data-interface-numbers="true" hidden></p>
             <details id="model-input-focus" hidden><summary id="model-input-focus-summary">Review focus unavailable</summary><p id="model-input-focus-text" class="focus-copy"></p></details>
             <div id="model-draft" class="verdict" data-state="draft" hidden>
               <div class="verdict-head" id="model-draft-head"><p id="model-draft-kicker" class="verdict-kicker">Format check pending</p><h3 id="model-draft-label" class="verdict-label">Live model response</h3></div>
@@ -119,9 +119,9 @@
             <div id="model-verdict" class="verdict" hidden>
               <div class="verdict-head"><p id="model-verdict-kicker" class="verdict-kicker">Local model response · format checked</p><h3 id="model-verdict-label" class="verdict-label" tabindex="-1"></h3></div>
               <div id="model-verdict-source" class="output-source"></div>
-              <p id="model-verdict-context" class="hint mono"></p>
+              <p id="model-verdict-context" class="hint" data-interface-numbers="true"></p>
               <p id="model-verdict-reason" class="verdict-reason"></p>
-              <p id="model-verdict-coverage" class="output-note mono"></p>
+              <p id="model-verdict-coverage" class="output-note" data-interface-numbers="true"></p>
               <details id="model-verdict-focus"><summary id="model-verdict-focus-summary">Review focus unavailable</summary><p id="model-verdict-focus-text" class="focus-copy"></p></details>
             </div>
           </div>
