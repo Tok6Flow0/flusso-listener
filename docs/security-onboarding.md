@@ -43,12 +43,12 @@ repository instructions and packaging exclusions do not replace platform IAM.
 
 The desktop workflow signs and publishes previews from main. Both its plan and
 build jobs use the `release-signing` environment, which requires Aaron's approval,
-disallows admin bypass, and permits only `main` and `v*` tags. Active GitHub tag rulesets restrict production-tag creation and all version-tag
-updates/deletions to repository admins. The verified GitHub Actions app may create
-new `v*-preview.*` tags so automatic previews still publish; it cannot create
-production tags or retarget existing version tags. Every signing request still
-requires Aaron to approve the exact commit and workflow, including preview tags.
-Ordinary development branches cannot obtain the update-signing key. The
+disallows admin bypass, and permits only `main` and `v*` tags. Active GitHub tag
+rulesets restrict production-tag creation and all version-tag updates/deletions
+to repository admins. Preview-tag creation (`v*-preview.*`) is open to writers so
+CI can publish automatically; signing remains owner-approved. Aaron must review
+the exact commit and workflow before approving any signing request. Ordinary
+development branches cannot obtain the update-signing key. The
 repository-level key was removed after an encrypted owner-only migration and a
 protected job verified the same public-key identity as the existing packaged app.
 Installed update trust was preserved; no signing key was rotated.
