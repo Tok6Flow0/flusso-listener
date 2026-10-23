@@ -264,7 +264,7 @@ function renderProcess() {
 
   $('output-frame').dataset.status = view.status;
   setText('model-output-heading', !settings.enabled && output ? 'Last model response' : 'Model output');
-  setText('model-output-status', !settings.enabled && view.status === 'complete' ? 'Last check complete' : view.label); $('model-output-status').className = `output-status ${view.tone}`;
+  setText('model-output-status', !settings.enabled && view.status === 'complete' ? 'Last check complete' : view.label); $('model-output-status').className = `output-status ${!settings.enabled && view.status === 'complete' ? '' : view.tone}`;
   if (changed('model-output-source', output ? [output.entryId, output.origin, output.title, output.atUtc, snapshot.entries.some(row => row.id === output.entryId && row.origin === output.origin)] : null)) {
     const source = $('model-output-source');
     if (output) { const time = element('time', when(output.atUtc, true)); time.dateTime = output.atUtc; source.replaceChildren(sourceButton(output, output.title || 'Journal entry'), time); }
@@ -342,7 +342,7 @@ function fillSettings() {
   }));
   if (!snapshot.notebooks.length) $('watch-notebooks').append(element('span', 'No notebooks yet.', 'hint'));
   renderAccountChoice();
-  formDirty = false; $('settings-draft-hint').hidden = true; $('save-settings').disabled = true; $('save-settings').textContent = 'Saved';
+  formDirty = false; setText('configure-label', 'Configure'); $('settings-draft-hint').hidden = true; $('save-settings').disabled = true; $('save-settings').textContent = 'Saved';
 }
 function ensureOption(select, value, label) { if (![...select.options].some(option => option.value === String(value))) select.append(new Option(label, String(value))); }
 function amount(id) { const raw = $(id).value.trim(); if (!raw) return null; const value = Number(raw); if (!Number.isFinite(value) || value <= 0) throw new Error('Limits must be positive numbers, or left blank.'); return value; }
@@ -361,12 +361,13 @@ async function saveSettings(message) {
   try { await api('/api/settings', settingsBody()); await load({ forms: true }); notify(message, true); }
   catch (error) { await load().catch(() => {}); throw error; }
 }
-$('settings-form').addEventListener('input', () => { formDirty = true; $('settings-draft-hint').hidden = false; $('save-settings').disabled = false; $('save-settings').textContent = 'Save'; });
+$('settings-form').addEventListener('input', () => { formDirty = true; setText('configure-label', 'Configure · Unsaved'); $('settings-draft-hint').hidden = false; $('save-settings').disabled = false; $('save-settings').textContent = 'Save'; });
 $('settings-form').addEventListener('submit', event => { event.preventDefault(); action(event.submitter, () => saveSettings('Saved.')); });
 // Immediate switches use saved settings only; an unsaved risk draft is never
 // silently applied or discarded. Off remains available even with a dirty form.
 async function saveSwitch(id, field, message) {
   const value = $(id).checked;
+  const savedMessage = formDirty ? `${message} Using saved settings; your edits are still unsaved.` : message;
   if (field === 'executionEnabled' && value && formDirty) {
     $(id).checked = snapshot.settings.executionEnabled;
     notify('Save your changes before turning Auto-trade on. Switches use saved settings.'); return;
@@ -375,8 +376,8 @@ async function saveSwitch(id, field, message) {
   try {
     snapshot.settings = await api('/api/settings', settingsSwitchBody(snapshot.settings, field, value));
     try { await load(); }
-    catch { notify(`${message} Settings saved, but the view could not refresh. Refresh to check the latest activity.`); return; }
-    notify(message, true);
+    catch { notify(`${savedMessage} Settings saved, but the view could not refresh. Refresh to check the latest activity.`); return; }
+    notify(savedMessage, true);
   } catch (error) { await load().catch(() => {}); throw error; }
   finally {
     $('enabled').checked = snapshot.settings.enabled;
