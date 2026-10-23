@@ -292,5 +292,5 @@ jobs:
           if [ "$RELEASE_CHANNEL" = preview ]; then
             gh release create "$tag" release-assets/* --target "$GITHUB_SHA" --prerelease --latest=false --title "Flusso Journal ${RELEASE_VERSION} — preview" --notes 'Preview build. Installers are not yet signed by Apple or Microsoft. Packaged preview apps check this channel and show an in-app Update prompt when a newer signed preview manifest is published. Review docs/desktop-releases.md before installation.'
           else
-            gh release create "$tag" release-assets/* --target "$GITHUB_SHA" --latest --title "Flusso Journal ${RELEASE_VERSION}" --generate-notes
+            gh release create "$tag" release-assets/* --verify-tag --target "$GITHUB_SHA" --latest --title "Flusso Journal ${RELEASE_VERSION}" --generate-notes
           fi
