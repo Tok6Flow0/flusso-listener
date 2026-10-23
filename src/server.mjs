@@ -133,8 +133,8 @@ export async function startServer({ store, cloud, listener, port = 0, open = ope
         return reply(200, { complete: snapshot.complete, reason: snapshot.reason ?? null, asOfUtc: snapshot.asOfUtc });
       }
       if (url.pathname === '/api/notebooks' && request.method === 'POST') { object(input, ['name']); return reply(201, store.createNotebook(input.name)); }
-      if (url.pathname === '/api/entries' && request.method === 'POST') return reply(201, store.createEntry(input, request.headers['idempotency-key'] ?? randomUUID()));
-      if (/^\/api\/entries\/[a-f\d-]+$/i.test(url.pathname) && request.method === 'POST') return reply(200, store.updateEntry(url.pathname.split('/').at(-1), input));
+      if (url.pathname === '/api/entries' && request.method === 'POST') return reply(201, annotate([store.createEntry(input, request.headers['idempotency-key'] ?? randomUUID())], store.all('activity'), store, clock())[0]);
+      if (/^\/api\/entries\/[a-f\d-]+$/i.test(url.pathname) && request.method === 'POST') return reply(200, annotate([store.updateEntry(url.pathname.split('/').at(-1), input)], store.all('activity'), store, clock())[0]);
       return reply(404, { error: 'Route not found.' });
     } catch (error) {
       const status = error instanceof InputError ? error.status : error.name === 'CloudError' ? 400 : 500;
@@ -164,7 +164,7 @@ function annotate(entries, activity, store, now) {
     const row = latest.get(`${entry.origin}:${entry.id}`);
     const ticket = readTicket(entry.body);
     const handoff = describeEntryHandoff({ entry, settings, ticket, activity: row, attempts: attempts.get(`${entry.origin}:${entry.id}:${entry.version}`), checkpoint: store.get('checkpoint', `${entry.origin}:${entry.id}`), now });
-    return { ...entry, ticket, handoff, listener: row ? { decision: row.decision ?? null, status: row.status, reason: row.reason ?? null, atUtc: row.atUtc } : null };
+    return { ...entry, ticket, handoff, listener: row ? { decision: row.decision ?? null, status: row.status, reason: row.reason ?? null, atUtc: row.atUtc, version: row.version ?? null } : null };
   });
 }
 function same(left, right) { if (typeof left !== 'string') return false; const a = Buffer.from(left), b = Buffer.from(right); return a.length === b.length && timingSafeEqual(a, b); }

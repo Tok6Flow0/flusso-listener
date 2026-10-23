@@ -39,6 +39,27 @@ test('authorized local Journal save/readback and version conflict flow use the s
     assert.equal((await w.post('/api/entries', { ...note(w.store), execute: true })).status, 400);
   } finally { await w.close(); }
 });
+
+test('save replies carry canonical ticket validation and the actual historical result revision', async () => {
+  let submissions = 0;
+  const w = await appFixture({ submitOrders: async () => { submissions++; throw new Error('No execution is authorized.'); } }); try {
+    await w.unlock();
+    const first = await w.post('/api/entries', note(w.store), { 'Idempotency-Key': 'annotated-save-research-key' }).then(response => response.json());
+    assert.equal(first.version, 1); assert.equal(first.ticket, null); assert.equal(first.listener, null);
+    w.store.put('activity', 'original-review', { id: 'original-review', entryId: first.id, origin: 'local', version: 1, status: 'observed', decision: 'review', reason: 'The original revision needs evidence.', atUtc: new Date(now).toISOString() });
+    const body = '```flusso-orders\n{"id":"empty-order-draft","orders":[]}\n```';
+    const saved = await w.post('/api/entries/' + first.id, { ...note(w.store), body, version: first.version }).then(response => response.json());
+    assert.equal(saved.version, 2); assert.equal(saved.body, body); assert.ok(saved.ticket.error);
+    assert.equal(saved.listener.version, 1); assert.equal(saved.listener.reason, 'The original revision needs evidence.');
+    assert.equal(w.store.get('activity', 'original-review').version, 1);
+    const status = await fetch(w.app.origin + '/api/status', { headers: { Cookie: w.cookie() } }).then(response => response.json());
+    assert.deepEqual(status.entries[0], saved, 'POST uses the same canonical annotations as the existing status read.');
+    w.store.put('activity', 'legacy-review', { id: 'legacy-review', entryId: first.id, origin: 'local', status: 'observed', decision: 'ignore', atUtc: new Date(now + 1000).toISOString() });
+    const legacy = await fetch(w.app.origin + '/api/status', { headers: { Cookie: w.cookie() } }).then(response => response.json());
+    assert.equal(legacy.entries[0].listener.version, null, 'A missing historical version is not filled with the current source version.');
+    assert.equal(w.store.get('activity', 'legacy-review').version, undefined); assert.equal(submissions, 0);
+  } finally { await w.close(); }
+});
 test('auto-trade needs a write connection and an account this connection owns', async () => {
   let scopes = ['mcp:read'];
   const w = await appFixture({ status: async () => ({ connected: true, clientId: 'fixture-client', scopes }) }); try {

@@ -300,7 +300,7 @@ tr:last-child td{border-bottom:0}
 .meta-book{font-family:var(--font-sans);overflow-wrap:anywhere}
 .meta-book::before{content:"·";margin-right:8px}
 .tags{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.tags .pill{min-height:18px;padding:0 6px;font-size:var(--fs-micro)}
+.tags .pill{min-height:20px;padding:0 6px;font-size:var(--fs-caption)}
 .entry-state{font:var(--fw-regular) var(--fs-caption)/1 var(--font-mono);text-transform:uppercase;letter-spacing:var(--ls-label);color:var(--c-ink-5)}
 .entry-state.watching{color:var(--c-info)}
 .list-empty{display:grid;justify-items:center;gap:6px}
@@ -460,6 +460,7 @@ tr:last-child td{border-bottom:0}
   .editor{padding:20px 18px 0;scroll-margin-top:80px}
   .editor .form-actions{position:static;margin:16px -18px 0;padding:12px 18px}
   .journal-layout:has(#editor:not([hidden])) .entry-pane{display:none}
+  #view-journal:has(#editor:not([hidden])) .head-actions{display:none}
   .field-grid{grid-template-columns:minmax(0,1fr)}
   .card{padding:18px}
   .head-actions{width:100%}

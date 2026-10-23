@@ -12,15 +12,15 @@ test('entry saves lock the actual form handler until acceptance and an older ref
   const controls = ['entry-notebook', 'entry-title', 'entry-body', 'entry-status', 'entry-signal'].map(id => ({ id, value: ({ 'entry-notebook': 'book', 'entry-title': 'Draft', 'entry-body': 'Exact submitted notes', 'entry-status': 'watching' })[id] ?? '', disabled: false }));
   const disabled = { disabled: true }, attributes = new Map(), nodes = Object.fromEntries(controls.map(control => [control.id, control]));
   const focus = { dataset: { rowKey: 'local:saved-note' }, focus() {} };
-  let submit, closes = 0;
+  let submit, closes = 0, renders = 0; const notices = [];
   nodes['entry-form'] = { elements: [...controls, disabled], setAttribute: (key, value) => attributes.set(key, value), removeAttribute: key => attributes.delete(key), addEventListener: (_event, callback) => { submit = callback; } };
   nodes['entry-list'] = { contains: () => false }; nodes['new-entry'] = focus;
   const context = {
-    $: id => nodes[id], entrySaving: false, editing: null, entryRetryKey: 'original-retry-key', selected: null,
+    $: id => nodes[id], entrySaving: false, editing: null, entryRetryKey: 'original-retry-key', selected: null, snapshot: { entries: [{ id: 'saved-note', origin: 'cloud', version: 7 }] },
     document: { activeElement: focus, querySelector: () => focus },
     action: (_button, work) => { const promise = work().catch(error => errors.push(error.message)); actions.push(promise); },
     api: (path, body, headers) => { requests.push({ path, body, headers }); return requests.length === 1 ? first.promise : second.promise; },
-    updateDraftProtection() {}, showSelectedEntry() {}, renderEntries() {}, notify() {},
+    updateDraftProtection() {}, showSelectedEntry() {}, renderEntries() { renders++; }, notify: message => notices.push(message),
     closeEditor: () => { assert.equal(context.entrySaving, false); closes++; }, load: () => refresh.promise,
   };
   runInNewContext(handler, context);
@@ -32,9 +32,13 @@ test('entry saves lock the actual form handler until acceptance and an older ref
   assert.equal(requests[0].body.body, 'Exact submitted notes');
   first.resolve({ id: 'saved-note', version: 1 }); await new Promise(resolve => setImmediate(resolve));
   assert.equal(context.entrySaving, false); assert.equal(attributes.has('aria-busy'), false); assert.equal(closes, 1);
+  assert.equal(renders, 1, 'The confirmed saved row is rendered before the follow-up read.');
+  assert.equal(context.snapshot.entries[0].id, 'saved-note'); assert.equal(context.snapshot.entries[0].origin, 'local');
+  assert.equal(context.snapshot.entries[1].origin, 'cloud', 'An equal cloud ID must not be replaced by the local save.');
   assert.ok(controls.every(control => !control.disabled)); assert.equal(disabled.disabled, true);
   submit(event); assert.equal(context.entrySaving, true);
-  refresh.resolve(); await actions[0];
+  refresh.reject(new Error('The list refresh is unavailable.')); await actions[0];
+  assert.equal(context.snapshot.entries[0].version, 1); assert.ok(notices.some(message => message.includes('Entry saved, but the list could not refresh')));
   assert.equal(context.entrySaving, true, 'Finishing the older refresh must not release the newer form lock.');
   assert.ok(controls.every(control => control.disabled));
   second.reject(new Error('Save could not be confirmed.')); await actions[1];
@@ -42,6 +46,25 @@ test('entry saves lock the actual form handler until acceptance and an older ref
   assert.ok(controls.every(control => !control.disabled)); assert.equal(disabled.disabled, true);
   assert.equal(nodes['entry-body'].value, 'Exact submitted notes'); assert.equal(context.entryRetryKey, 'original-retry-key');
   assert.deepEqual(errors, ['Save could not be confirmed.']);
+});
+
+test('historical and unrecorded result revisions are explicit without changing Listener result groups', async () => {
+  const { listenerRevisionPresentation, entryCardPresentation, matchesResultFilter } = await import('../public/desktop-ui.mjs');
+  const entry = { id: 'note', origin: 'local', version: 2, listener: { version: 1, status: 'observed', decision: 'review', reason: 'Original review.' } };
+  assert.deepEqual(listenerRevisionPresentation(entry), { label: 'prior v1', note: 'This result is for entry v1. You are reading v2.' });
+  assert.equal(entryCardPresentation(entry).outcome.label, 'review suggested · prior v1');
+  assert.equal(matchesResultFilter(entry, 'decided'), true, 'The historical review remains available.');
+  assert.equal(listenerRevisionPresentation({ ...entry, listener: { ...entry.listener, version: 2 } }), null);
+  assert.equal(listenerRevisionPresentation({ ...entry, listener: { ...entry.listener, version: 3 } }).label, 'v3', 'A newer source result must not be mislabeled as prior.');
+  for (const version of [undefined, null, '1', 0, -1, NaN, Infinity]) {
+    const unknown = { ...entry, listener: { ...entry.listener, version } };
+    assert.equal(listenerRevisionPresentation(unknown).label, 'revision unknown');
+    assert.match(entryCardPresentation(unknown).outcome.label, /revision unknown/);
+  }
+  const ticket = { ...entry, ticket: { kind: 'orders' }, listener: { version: 1, status: 'submitted' } };
+  assert.equal(entryCardPresentation(ticket).outcome.label, 'submitted · prior v1');
+  assert.equal(matchesResultFilter(ticket, 'placed'), true);
+  assert.equal(listenerRevisionPresentation({ ...entry, listener: null }), null);
 });
 
 test('a saving clean entry cannot be replaced, closed or navigated away from', async () => {
@@ -344,6 +367,16 @@ test('receipt details preserve explicit order and close refusal codes without in
   }
   assert.equal(receiptDetails({ riskCode: 'A'.repeat(80) }).riskCode.length, 80);
   assert.deepEqual(receiptDetails({ message: { secret: 'not a message' }, detail: 'unknown data' }), { message: '', riskCode: null });
+});
+
+test('Operations event keys survive appended updates and retain the exact newest thirty source events', async () => {
+  const { decisionRowKeys } = await import('../public/desktop-ui.mjs');
+  const events = Array.from({ length: 31 }, (_, index) => ({ id: `source-event-${index}`, entryId: 'research', origin: 'local', stage: 'model', message: `Actual event ${index}.`, atUtc: `2026-10-23T00:00:${String(index).padStart(2, '0')}Z` }));
+  const earlier = events.slice(0, 30), current = events.slice(-30);
+  const before = decisionRowKeys(earlier), after = decisionRowKeys(current);
+  assert.equal(current.length, 30); assert.equal(current[0], events[1]); assert.equal(current.at(-1), events.at(-1));
+  assert.deepEqual(after.slice(0, -1), before.slice(1), 'Surviving rows keep their source keys and therefore their focused controls.');
+  assert.equal(decisionRowKeys([{ ...events[1], message: 'Updated source explanation.' }])[0], before[1], 'A revised event uses the same focus-restoration identity.');
 });
 
 test('immediate switches keep saved risk values and reject unrelated fields', async () => {

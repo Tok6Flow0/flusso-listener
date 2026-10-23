@@ -60,11 +60,23 @@ export function entryStatus(entry) {
 // Reconciliation keys contain only what the card or source-owned reader shows.
 // Periodic review annotations update their own status regions, not the note.
 export function entryCardPresentation(entry, { book = '', time = '', selected = false } = {}) {
-  const ticket = entryStatus(entry), result = listenerResult(entry);
+  const ticket = entryStatus(entry), result = listenerResult(entry), revision = listenerRevisionPresentation(entry);
   return {
     id: entry.id, origin: entry.origin, title: entry.title, status: entry.status,
     book, time, selected,
-    outcome: entry.ticket?.error ? ticket : result && { label: result.label, tone: result.tone },
+    outcome: entry.ticket?.error ? ticket : result && { label: `${result.label}${revision ? ` · ${revision.label}` : ''}`, tone: result.tone },
+  };
+}
+
+export function listenerRevisionPresentation(entry) {
+  if (!entry?.listener) return null;
+  const version = entry.listener.version, current = entry.version;
+  if (!Number.isSafeInteger(version) || version < 1) return { label: 'revision unknown', note: 'The entry revision for this result was not recorded.' };
+  if (version === current) return null;
+  const knownCurrent = Number.isSafeInteger(current) && current > 0;
+  return {
+    label: `${knownCurrent && version < current ? 'prior ' : ''}v${formatCount(version)}`,
+    note: `This result is for entry v${formatCount(version)}.${knownCurrent ? ` You are reading v${formatCount(current)}.` : ' The current entry revision is unavailable.'}`,
   };
 }
 

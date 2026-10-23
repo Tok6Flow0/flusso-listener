@@ -1,6 +1,6 @@
 import { formatCount, formatPrice, formatQuantity, formatPercentLabel, formatMoney, formatPercent } from './format.mjs';
 import { renderMarkdown } from './markdown.mjs';
-import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, entryCardPresentation, entryReadingCore, activityStatus, listenerResult, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions, decisionRowKeys, receiptDetails, modelOutputPresentation, completionAnnouncement, localDraftDirty, intervalLabel, settingsSwitchBody, ticketDraft } from './desktop-ui.mjs';
+import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, entryCardPresentation, entryReadingCore, activityStatus, listenerResult, listenerRevisionPresentation, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions, decisionRowKeys, receiptDetails, modelOutputPresentation, completionAnnouncement, localDraftDirty, intervalLabel, settingsSwitchBody, ticketDraft } from './desktop-ui.mjs';
 
 const $ = id => document.getElementById(id);
 let csrf, snapshot, selected = null, editing = null, entryRetryKey = crypto.randomUUID();
@@ -363,16 +363,17 @@ function renderProcess() {
   setText('model-output-empty', view.empty ?? ''); $('model-output-empty').hidden = !view.empty;
 
   const events = (listener.events ?? []).slice(-30);
-  if (!changed('process-events', events)) return;
+  const items = decisionItems(events, () => ({}));
+  if (!changed('process-events', items)) return;
   const list = $('process-events'), atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
-  list.replaceChildren(...events.map(row => {
+  reconcileRows(list, items, ({ row }) => {
     const item = element('li', null, `process-event${row.stage === 'error' ? ' warn' : ''}`), time = element('time', timeOf(row.atUtc)); time.dateTime = row.atUtc;
     const head = element('div', null, 'event-head'), body = element('div', null, 'event-body');
     head.append(element('span', processStage(row.stage), 'event-stage'), time);
     if (row.title) body.append(sourceButton(row));
     if (row.message) body.append(element('p', row.message));
     item.append(head, body); return item;
-  }));
+  });
   list.hidden = !events.length; $('process-events-empty').hidden = Boolean(events.length);
   setText('process-count', events.length ? `Latest ${formatCount(events.length)} update${events.length === 1 ? '' : 's'}` : '');
   if (atBottom) list.scrollTop = list.scrollHeight;
@@ -625,6 +626,7 @@ function renderDetail() {
   if (changed('entry-detail:kind', status)) { const slot = detail.querySelector('[data-entry-part="ticket-kind"]'); slot.hidden = !status; slot.replaceChildren(...(status ? [pill(status.label, status.tone)] : [])); }
   if (!changed('entry-detail:live', [row.handoff, row.listener, row.ticket])) return;
   const live = detail.querySelector('[data-entry-part="live"]'); live.replaceChildren();
+  const revision = listenerRevisionPresentation(row);
   if (row.handoff || (!row.ticket && row.listener?.status === 'observed')) {
     const section = element('aside', null, 'detail-section handoff-section'), title = element('div', null, 'handoff-head'), mark = element('img');
     mark.src = '/flusso-mark.png'; mark.alt = ''; mark.width = mark.height = 18; title.append(mark, element('h3', 'Listener status')); section.append(title);
@@ -632,6 +634,7 @@ function renderDetail() {
     if (!row.ticket && row.listener?.status === 'observed' && review) {
       const line = element('p', null, 'handoff-review'), at = element('time', when(row.listener.atUtc)); at.dateTime = row.listener.atUtc ?? '';
       line.append(pill(review.label, review.tone), element('span', row.listener.reason || 'No reason given.'), at); section.append(line);
+      if (revision) section.append(element('p', revision.note, 'hint mono'));
     }
     if (row.handoff) section.append(element('p', row.handoff.reason, 'hint'));
     live.append(section);
@@ -643,6 +646,7 @@ function renderDetail() {
     if (outcome && (!row.ticket.error || row.listener)) {
       const line = element('p', null, 'hint ticket-result');
       line.append(pill(outcome.label, outcome.tone), document.createTextNode(row.listener ? ` ${when(row.listener.atUtc)}${row.listener.reason ? ` · ${row.listener.reason}` : ''}` : ' The listener has not acted on this ticket yet.')); section.append(line);
+      if (revision) section.append(element('p', revision.note, 'hint mono'));
     }
     if (row.ticket.error) section.append(element('p', row.ticket.error, 'hint'), element('p', 'Correct the ticket and save a new revision before it can be checked.', 'hint'));
     else section.append(row.ticket.kind === 'close' ? positionsTable(row.ticket.ticket.positionIds) : ordersTable(row.ticket.ticket.orders));
@@ -723,7 +727,9 @@ $('entry-form').addEventListener('submit', event => {
   let signal = null; if ($('entry-signal').value.trim()) { try { signal = JSON.parse($('entry-signal').value); } catch { throw new Error('The structured signal is not valid JSON.'); } }
   const body = { notebookId: $('entry-notebook').value, title: $('entry-title').value, body: $('entry-body').value, status: $('entry-status').value, source: editing?.source ?? 'manual', observedAtUtc: editing?.observedAtUtc ?? null, instrument: editing?.instrument ?? null, venue: editing?.venue ?? null, signal, ...(editing ? { version: editing.version } : {}) };
   const saved = await api(editing ? `/api/entries/${editing.id}` : '/api/entries', body, { 'Idempotency-Key': entryRetryKey });
-  selected = { ...saved, origin: 'local' }; releaseSave(); showSelectedEntry(); closeEditor({ focus: true });
+  selected = { ...saved, origin: 'local' };
+  snapshot.entries = [selected, ...snapshot.entries.filter(row => row.origin !== selected.origin || row.id !== selected.id)];
+  showSelectedEntry(); renderEntries(); releaseSave(); closeEditor({ focus: true });
   const returnFocus = document.activeElement;
   try { await load(); } catch { notify('Entry saved, but the list could not refresh. Refresh to check the latest entries.', false, true); return; }
   renderEntries();
