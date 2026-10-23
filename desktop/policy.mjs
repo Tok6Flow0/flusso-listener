@@ -38,3 +38,18 @@ export function createDraftExitGuard({ confirmDiscard }) {
     },
   };
 }
+
+// A stopped runtime cannot become an editable Journal again after an installer
+// fails. Explain once, then exit; neither the updater nor this handler resumes it.
+export function createStoppedUpdateFailureHandler({ isStopped, explain, quit }) {
+  let handled = false;
+  return {
+    isHandled: () => handled,
+    handle() {
+      if (!isStopped() || handled) return false;
+      handled = true;
+      try { explain(); } finally { quit(); }
+      return true;
+    },
+  };
+}

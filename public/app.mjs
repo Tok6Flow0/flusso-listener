@@ -209,6 +209,8 @@ async function load({ forms = false } = {}) {
   renderAccount(); renderDesktop(); refreshAccountProfile();
   if (connectionKey(snapshot.cloud) !== accountsKey && !$('view-listener').hidden) loadAccounts();
   renderStatus();
+  $('journal-coverage').textContent = snapshot.limits?.entries ? `Showing up to ${formatCount(snapshot.limits.entries)} recent entries.` : 'Showing the loaded entries.';
+  $('activity-coverage').textContent = snapshot.limits?.activity ? `Up to ${formatCount(snapshot.limits.activity)} saved results, plus the latest model response. Unconfirmed results stay on top.` : 'Recent decisions and order receipts. Unconfirmed results stay on top.';
   if (!desktop) $('model-state').textContent = snapshot.model.installed ? 'Qwen3 1.7B is ready through Ollama.' : snapshot.model.available ? 'Ollama is running. Download the model:' : 'Start Ollama, then download the model:';
   $('sync').disabled = !snapshot.cloud.connected;
   const notebookOptions = snapshot.notebooks.map(row => [row.origin, row.id, row.name]);

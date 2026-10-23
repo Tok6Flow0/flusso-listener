@@ -16,6 +16,7 @@ export function createUpdates({
   clearTimeoutFn = clearTimeout,
 }) {
   let installing;
+  let installPrepared = false;
   let providerReady;
   let timers = [];
   // Packaged preview and production builds both use signed update manifests.
@@ -66,10 +67,11 @@ export function createUpdates({
     version: info.version,
     message: 'Update ready. Restart turns off the Listener and Auto-trade. Turn them back on after reviewing the updated app.',
   }));
-  updater.on('error', () => publish({
-    state: 'error',
-    message: 'The update could not be verified or downloaded. Your installed app and Journal are unchanged.',
-  }));
+  const installationFailure = () => publish({ state: 'error', installationFailed: true, message: 'The update installation could not finish. Quit and reopen Flusso Journal manually. The Listener and Auto-trade remain off.' });
+  updater.on('error', () => {
+    if (installPrepared) installationFailure();
+    else publish({ state: 'error', message: 'The update could not be verified or downloaded. Your installed app and Journal are unchanged.' });
+  });
 
   async function checkQuietly() {
     if (!packaged || ['checking', 'downloading', 'downloaded'].includes(state.state)) return { ...state };
@@ -108,7 +110,9 @@ export function createUpdates({
       if (!installing) {
         installing = (async () => {
           if (await beforeInstall() === false) { installing = undefined; return { ...state, cancelled: true }; }
-          updater.quitAndInstall({ isSilent: false, isForceRunAfter: true });
+          installPrepared = true;
+          try { updater.quitAndInstall({ isSilent: false, isForceRunAfter: true }); }
+          catch { installationFailure(); throw new Error('The update installation could not finish. Quit and reopen Flusso Journal manually.'); }
           return { ...state };
         })().catch(error => { installing = undefined; throw error; });
       }

@@ -21,7 +21,7 @@
           <div class="menu-group">
             <button id="account-connect" type="button">Connect Flusso</button>
             <button id="account-disconnect" type="button" hidden>Disconnect</button>
-            <a id="account-settings" href="https://flusso.stream/app/settings#profile" target="_blank" rel="noopener noreferrer">Account settings <span aria-hidden="true">↗</span></a>
+            <a id="account-settings" href="https://flusso.stream/app/settings#ai-connections" target="_blank" rel="noopener noreferrer">Account settings <span aria-hidden="true">↗</span></a>
           </div>
           <div class="menu-group">
             <p class="menu-label">Appearance</p>
@@ -57,6 +57,7 @@
           <button id="new-entry" type="button" class="primary"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg>New entry</button>
         </div>
       </header>
+      <p class="hint" id="journal-coverage">Showing the loaded entries.</p>
       <div class="journal-layout">
         <div class="entry-pane">
           <div class="entry-list" id="entry-list" role="region" aria-label="Journal entries"></div>
@@ -174,7 +175,7 @@
     </section>
 
     <section id="view-activity" class="view" hidden>
-      <header class="view-head"><div class="title-block"><h1>Activity</h1><p class="status-line">Listener decisions and order receipts, newest first. Unconfirmed results stay on top.</p></div></header>
+      <header class="view-head"><div class="title-block"><h1>Activity</h1><p class="status-line" id="activity-coverage">Recent decisions and order receipts. Unconfirmed results stay on top.</p></div></header>
       <div id="activity-list" class="activity-list"></div>
     </section>
   </main>

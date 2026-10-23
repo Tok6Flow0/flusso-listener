@@ -8,6 +8,8 @@ import { modelStatus } from './model.mjs';
 import { readTicket } from './orders.mjs';
 import { describeEntryHandoff } from './handoff.mjs';
 
+const STATUS_LIMITS = Object.freeze({ entries: 500, activity: 100, attempts: 100 });
+
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']], ['/app.mjs', ['app.mjs', 'text/javascript; charset=utf-8']],
   ['/styles.css', ['styles.css', 'text/css; charset=utf-8']], ['/tokens.css', ['tokens.css', 'text/css; charset=utf-8']],
@@ -73,7 +75,7 @@ export async function startServer({ store, cloud, listener, port = 0, open = ope
         send(listener.status());
         return;
       }
-      if (request.method === 'GET' && url.pathname === '/api/status') return reply(200, { settings: store.settings(), listener: listener.status(), cloud: await cloud.status(), model: await checkModel(), display: { theme: theme() }, notebooks: store.notebooks(), entries: annotate(store.entries().slice(0, 500), store.all('activity'), store, clock()), activity: store.all('activity').sort((a, b) => Number(unconfirmed(b)) - Number(unconfirmed(a)) || newest(a, b)).slice(0, 100), attempts: store.all('attempt').filter(row => ['orders', 'close', 'legacy'].includes(row.kind)).sort((a, b) => Number(unconfirmed(b)) - Number(unconfirmed(a)) || newest(a, b)).slice(0, 100).map(row => ({ ...row, orders: row.orders ?? [] })) });
+      if (request.method === 'GET' && url.pathname === '/api/status') return reply(200, { limits: STATUS_LIMITS, settings: store.settings(), listener: listener.status(), cloud: await cloud.status(), model: await checkModel(), display: { theme: theme() }, notebooks: store.notebooks(), entries: annotate(store.entries().slice(0, STATUS_LIMITS.entries), store.all('activity'), store, clock()), activity: store.all('activity').sort((a, b) => Number(unconfirmed(b)) - Number(unconfirmed(a)) || newest(a, b)).slice(0, STATUS_LIMITS.activity), attempts: store.all('attempt').filter(row => ['orders', 'close', 'legacy'].includes(row.kind)).sort((a, b) => Number(unconfirmed(b)) - Number(unconfirmed(a)) || newest(a, b)).slice(0, STATUS_LIMITS.attempts).map(row => ({ ...row, orders: row.orders ?? [] })) });
       const input = request.method === 'POST' ? await readJson(request) : null;
       if (url.pathname === '/api/connect' && request.method === 'POST') {
         object(input, []);

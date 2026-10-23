@@ -143,7 +143,7 @@ export function processingPresentation(listener = {}, enabled = false) {
     const error = current?.stage === 'error';
     return { state: error ? 'error' : 'reviewing', title: error ? 'Needs attention' : 'Reading', label: processStage(current?.stage), message: text(current?.message) || 'Checking Journal entries.', tone: error ? 'warn' : 'info', busy: true, position: position(current) };
   }
-  if (!enabled) return { state: 'off', title: 'Off', label: 'Listener off', message: 'Not watching your Journal.', tone: '', busy: false, position: null };
+  if (!enabled) return { state: 'off', title: 'Off', label: 'Listener off', message: 'Turn on the Listener to run a check.', tone: '', busy: false, position: null };
   if (listener.lastError) return { state: 'error', title: 'Needs attention', label: 'Needs attention', message: text(listener.lastError), tone: 'warn', busy: false, position: null };
   if (current?.stage === 'paused') return { state: 'paused', title: 'Paused', label: 'Paused', message: text(current.message) || 'The last check paused before it finished.', tone: 'warn', busy: false, position: null };
   const checked = Boolean(listener.lastCheckedAtUtc);

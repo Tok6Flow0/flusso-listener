@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { createUpdates } from '../desktop/updates.mjs';
-import { createDraftExitGuard } from '../desktop/policy.mjs';
+import { createDraftExitGuard, createStoppedUpdateFailureHandler } from '../desktop/policy.mjs';
 
 function deferred() { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
 class FakeUpdater extends EventEmitter {
@@ -84,6 +84,57 @@ test('installation waits for Listener and Journal shutdown, then uses the v7 exp
 test('a failed shutdown never starts the installer', async () => {
   const { updater, updates } = fixture({ beforeInstall: async () => { throw new Error('Journal flush failed'); } });
   await downloaded(updater, updates); await assert.rejects(updates.install(), /Journal flush failed/);
+  assert.equal(updater.calls.some(([call]) => call === 'install'), false);
+});
+
+test('a synchronous installer throw after shutdown produces a bounded failure and one safe native exit', async () => {
+  let closed = false;
+  const calls = [], settings = { enabled: true, executionEnabled: true };
+  const failure = createStoppedUpdateFailureHandler({ isStopped: () => closed, explain: () => calls.push('explain'), quit: () => calls.push('quit') });
+  const { updater, updates } = fixture({ beforeInstall: async () => {
+    calls.push('shutdown'); settings.enabled = settings.executionEnabled = false; closed = true;
+  }, onChange: state => { if (state.installationFailed) failure.handle(); } });
+  await downloaded(updater, updates);
+  updater.quitAndInstall = () => { calls.push('install'); throw new Error('https://private.example.test/installer?token=synthetic'); };
+  await assert.rejects(updates.install(), error => /installation could not finish/.test(error.message) && !/private|token/.test(error.message));
+  assert.equal(updates.status().state, 'error'); assert.equal(updates.status().installationFailed, true);
+  assert.doesNotMatch(updates.status().message, /unchanged|private|token/);
+  assert.deepEqual(calls, ['shutdown', 'install', 'explain', 'quit']);
+  failure.handle();
+  assert.deepEqual(calls, ['shutdown', 'install', 'explain', 'quit']);
+  assert.deepEqual(settings, { enabled: false, executionEnabled: false });
+  await assert.rejects(updates.install(), /Download and verify/);
+});
+
+test('an emitted installer error after shutdown explains and exits without resuming safety settings', async () => {
+  let closed = false;
+  const calls = [], settings = { enabled: true, executionEnabled: true };
+  const failure = createStoppedUpdateFailureHandler({ isStopped: () => closed, explain: () => calls.push('explain'), quit: () => calls.push('quit') });
+  const { updater, updates } = fixture({ beforeInstall: async () => {
+    calls.push('shutdown'); settings.enabled = settings.executionEnabled = false; closed = true;
+  }, onChange: state => { if (state.installationFailed) failure.handle(); } });
+  await downloaded(updater, updates); await updates.install();
+  assert.deepEqual(calls, ['shutdown']);
+  updater.emit('error', new Error('Synthetic asynchronous installer failure'));
+  updater.emit('error', new Error('Same failure reported twice'));
+  assert.equal(updates.status().installationFailed, true);
+  assert.match(updates.status().message, /remain off/);
+  assert.deepEqual(calls, ['shutdown', 'explain', 'quit']);
+  assert.deepEqual(settings, { enabled: false, executionEnabled: false });
+  assert.equal(updater.calls.filter(([call]) => call === 'install').length, 1);
+});
+
+test('an updater error after cancelling draft confirmation does not trigger stopped-runtime recovery', async () => {
+  let shutdownCalls = 0, failureCalls = 0;
+  const guard = createDraftExitGuard({ confirmDiscard: async () => false }); guard.reportDirty(true);
+  const { updater, updates } = fixture({ beforeInstall: () => guard.run('restart', async () => { shutdownCalls++; }), onChange: state => { if (state.installationFailed) failureCalls++; } });
+  await downloaded(updater, updates);
+  assert.equal((await updates.install()).cancelled, true);
+  updater.emit('error', new Error('Synthetic unrelated update error'));
+  assert.equal(updates.status().installationFailed, undefined);
+  assert.match(updates.status().message, /unchanged/);
+  assert.equal(shutdownCalls, 0); assert.equal(failureCalls, 0);
+  assert.equal(guard.isApproved(), false);
   assert.equal(updater.calls.some(([call]) => call === 'install'), false);
 });
 

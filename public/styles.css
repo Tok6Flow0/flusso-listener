@@ -96,7 +96,7 @@ details[open]>:not(summary){animation:fade .2s ease}
 .chips label{display:inline-flex;margin:0}
 .chips input{position:absolute;opacity:0;width:1px;height:1px}
 .chips span{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:0 12px;border:1px solid var(--c-line-strong);border-radius:16px;background:var(--c-surface);font-size:var(--fs-body);font-weight:var(--fw-regular);color:var(--c-ink-2);cursor:pointer;transition:background-color .15s,border-color .15s}
-.chips span small{font:var(--fw-regular) var(--fs-micro)/1 var(--font-mono);color:var(--c-ink-5);text-transform:uppercase;letter-spacing:var(--ls-label)}
+.chips span small{font:var(--fw-regular) var(--fs-caption)/1 var(--font-mono);color:var(--c-ink-5);text-transform:uppercase;letter-spacing:var(--ls-label)}
 .chips input:checked+span{background:var(--c-teal-wash);border-color:var(--c-teal-soft);color:var(--c-teal-deep)}
 .chips input:focus-visible+span{outline:2px solid var(--c-teal);outline-offset:2px}
 .affix{display:flex;align-items:center;border:1px solid var(--c-line-strong);border-radius:10px;background:var(--c-surface);overflow:hidden}
@@ -108,7 +108,7 @@ details[open]>:not(summary){animation:fade .2s ease}
 .affix:has(#max-order[aria-invalid=true]),.affix:has(#max-ticket[aria-invalid=true]),.affix:has(#max-leverage[aria-invalid=true]){border-color:var(--c-warn-deep);color:var(--c-warn-deep)}
 #max-order[aria-invalid=true],#max-ticket[aria-invalid=true],#max-leverage[aria-invalid=true],#max-order-error,#max-ticket-error,#max-leverage-error{color:var(--c-warn-deep)}
 
-.pill{display:inline-flex;align-items:center;gap:6px;min-height:22px;padding:0 8px;border-radius:6px;border:1px solid var(--c-line);color:var(--c-ink-4);font:var(--fw-regular) var(--fs-label)/1 var(--font-mono);text-transform:uppercase;letter-spacing:var(--ls-label);white-space:nowrap}
+.pill{display:inline-flex;align-items:center;gap:6px;min-height:22px;padding:0 8px;border-radius:6px;border:1px solid var(--c-line);color:var(--c-ink-4);font:var(--fw-regular) var(--fs-caption)/1 var(--font-mono);text-transform:uppercase;letter-spacing:var(--ls-label);white-space:nowrap}
 .pill.pos{background:var(--c-pos-wash);border-color:var(--c-pos-soft);color:var(--c-pos-deep)}
 .pill.neg{background:var(--c-neg-wash);border-color:var(--c-neg-soft);color:var(--c-neg-deep)}
 .pill.warn{background:var(--c-warn-wash);border-color:var(--c-warn-soft);color:var(--c-warn-deep)}

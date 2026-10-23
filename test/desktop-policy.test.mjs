@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { trustedFrame, externalUrl, createDraftExitGuard, reportDraftState } from '../desktop/policy.mjs';
+import { trustedFrame, externalUrl, createDraftExitGuard, reportDraftState, createStoppedUpdateFailureHandler } from '../desktop/policy.mjs';
 
 const origin = 'http://127.0.0.1:43127';
 function frameFixture(url = origin + '/') {
@@ -108,4 +108,18 @@ test('concurrent native exits cannot run competing quit and update side effects'
   const retry = guard.run('quit', async () => { effects++; });
   answer(true); assert.equal(await retry, true);
   assert.equal(prompts, 2); assert.equal(effects, 1);
+});
+
+test('a stopped update failure explains and quits once without acting on a live runtime', () => {
+  let stopped = false;
+  const calls = [], failure = createStoppedUpdateFailureHandler({ isStopped: () => stopped, explain: () => calls.push('explain'), quit: () => calls.push('quit') });
+  assert.equal(failure.handle(), false);
+  assert.equal(failure.isHandled(), false);
+  assert.deepEqual(calls, []);
+  stopped = true;
+  assert.equal(failure.handle(), true);
+  assert.equal(failure.isHandled(), true);
+  assert.deepEqual(calls, ['explain', 'quit']);
+  assert.equal(failure.handle(), false);
+  assert.deepEqual(calls, ['explain', 'quit']);
 });
