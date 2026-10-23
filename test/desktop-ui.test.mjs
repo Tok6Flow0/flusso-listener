@@ -120,6 +120,53 @@ test('partial or unmatched model output is never presented as an accepted decisi
   assert.equal(modelOutputPresentation({ ...output, status: 'unexpected' }).label, 'Unavailable');
 });
 
+test('the streamed reason is decoded only from complete JSON text and never runs ahead of the final answer', async () => {
+  const { streamedReason } = await import('../public/desktop-ui.mjs');
+  const full = '{\n  "decision": "review",\n  "reason": "Say \\"hold\\" \\\\ wait\\nthen caf\\u00e9 \\ud83d\\ude00 \\/ done."\n}';
+  const final = JSON.parse(full).reason;
+  let previous = '';
+  for (let end = 0; end <= full.length; end += 1) {
+    const read = streamedReason(full.slice(0, end));
+    assert.notEqual(read, null, `prefix ${end} should stay readable`);
+    if (read.reason === null) continue;
+    assert.ok(final.startsWith(read.reason), `prefix ${end} decoded past the final answer`);
+    assert.doesNotMatch(read.reason, /[\uD800-\uDBFF]$/);
+    assert.ok(read.reason.length >= previous.length); previous = read.reason;
+  }
+  assert.equal(streamedReason(full).reason, final);
+  assert.deepEqual(streamedReason('{"decision": "rev'), { reason: null });
+  assert.deepEqual(streamedReason('{"decision":"review","reason":'), { reason: null });
+  assert.equal(streamedReason('{"decision":"review","reason":"a\\').reason, 'a');
+  assert.equal(streamedReason('{"decision":"review","reason":"a\\u00').reason, 'a');
+  assert.equal(streamedReason('{"reason":"first","reason":"second"}').reason, JSON.parse('{"reason":"first","reason":"second"}').reason);
+  for (const unreadable of ['Sure! {"reason":"x"}', '[{"reason":"x"}]', '{"decision":1,"reason":"x"}', '{"reason":"x\\q"}', '{"reason":"x\\u00zz"}', '{"reason":"line\nbreak"}', '{"reason":"x"} trailing', '{"reason":"x",}', '{"a":"b" "reason":"x"}', null]) {
+    assert.equal(streamedReason(unreadable), null, String(unreadable));
+  }
+});
+
+test('a streamed reason is a labelled draft until the same run is published', async () => {
+  const { modelOutputPresentation } = await import('../public/desktop-ui.mjs');
+  const base = { entryId: 'note-a', origin: 'local', title: 'Note', atUtc: '2026-10-22T17:20:00Z' };
+  const published = { entryId: 'note-a', origin: 'local', decision: 'review', reason: 'Needs a quantity.', atUtc: '2026-10-22T17:20:04Z' };
+  const streaming = modelOutputPresentation({ ...base, status: 'streaming', text: '{"decision":"review","reason":"Needs a qua' }, published);
+  assert.deepEqual([streaming.draft, streaming.draftLabel, streaming.verdict, streaming.accepted], ['Needs a qua', 'Reason so far', null, false]);
+  assert.match(streaming.note, /Nothing is accepted/);
+  assert.equal(modelOutputPresentation({ ...base, status: 'streaming', text: '{"decision":"rev' }).draft, '');
+  assert.equal(modelOutputPresentation({ ...base, status: 'streaming', text: 'Not JSON at all' }).draft, null);
+  const stopped = modelOutputPresentation({ ...base, status: 'stopped', text: '{"decision":"review","reason":"Needs' });
+  assert.deepEqual([stopped.draft, stopped.draftLabel, stopped.verdict], ['Needs', 'Partial reason', null]);
+  assert.match(stopped.note, /not accepted/);
+  for (const text of ['{"decision":"review","reason":', '{"decision":"review","reason":"']) {
+    assert.equal(modelOutputPresentation({ ...base, status: 'stopped', text }).draft, null);
+  }
+  const text = '{"decision":"review","reason":"Needs a quantity."}';
+  const unmatched = modelOutputPresentation({ ...base, status: 'complete', text }, { ...published, entryId: 'note-b' });
+  assert.deepEqual([unmatched.draft, unmatched.draftLabel, unmatched.verdict], ['Needs a quantity.', 'Model reason', null]);
+  const accepted = modelOutputPresentation({ ...base, status: 'complete', text }, published);
+  assert.deepEqual([accepted.draft, accepted.verdict.reason], [null, 'Needs a quantity.']);
+  assert.deepEqual([modelOutputPresentation(null).draft, modelOutputPresentation({ ...base, status: 'streaming', text: '' }).draft], [null, null]);
+});
+
 test('an empty model output names the next action for the current Listener state', async () => {
   const { modelOutputPresentation } = await import('../public/desktop-ui.mjs');
   assert.match(modelOutputPresentation(null, null, { enabled: false }).empty, /^Turn the Listener on/);

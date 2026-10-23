@@ -127,15 +127,69 @@ export function intervalLabel(seconds) {
   return `${formatCount(count)} ${unit}${count === 1 ? '' : 's'}`;
 }
 
+const ESCAPES = { '"': '"', '\\': '\\', '/': '/', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t' };
+// Reads the model's own `reason` string from its JSON answer while it streams.
+// Only complete escapes are decoded; anything other than the start of an object
+// of string fields returns null so the raw text is shown uninterpreted instead.
+// `reason` is null until that string begins. Display only: the server's parse of
+// the finished response remains the sole authority for any decision.
+export function streamedReason(source) {
+  if (typeof source !== 'string') return null;
+  const n = source.length;
+  let i = 0, reason = null;
+  const space = () => { while (i < n && ' \t\n\r'.includes(source[i])) i += 1; };
+  const string = () => {
+    let value = ''; i += 1;
+    while (i < n) {
+      const c = source[i];
+      if (c === '"') { i += 1; return { value, done: true }; }
+      if (c < ' ') return null;
+      if (c !== '\\') { value += c; i += 1; continue; }
+      const escape = source[i + 1];
+      if (escape === undefined) break;
+      if (escape === 'u') {
+        const hex = source.slice(i + 2, i + 6);
+        if (!/^[0-9a-fA-F]*$/.test(hex)) return null;
+        if (hex.length < 4) break;
+        value += String.fromCharCode(parseInt(hex, 16)); i += 6; continue;
+      }
+      if (!(escape in ESCAPES)) return null;
+      value += ESCAPES[escape]; i += 2;
+    }
+    // Half of a surrogate pair waits for the rest rather than rendering as a broken glyph.
+    return { value: value.replace(/[\uD800-\uDBFF]$/, ''), done: false };
+  };
+  space();
+  if (i >= n) return { reason };
+  if (source[i] !== '{') return null;
+  i += 1;
+  for (let first = true; ; first = false) {
+    space(); if (i >= n) return { reason };
+    if (source[i] === '}') { i += 1; space(); return i >= n ? { reason } : null; }
+    if (!first) { if (source[i] !== ',') return null; i += 1; space(); if (i >= n) return { reason }; }
+    if (source[i] !== '"') return null;
+    const key = string(); if (!key) return null; if (!key.done) return { reason };
+    space(); if (i >= n) return { reason };
+    if (source[i] !== ':') return null;
+    i += 1; space(); if (i >= n) return { reason };
+    if (source[i] !== '"') return null;
+    const value = string(); if (!value) return null;
+    // A repeated key replaces the earlier one, as JSON.parse does.
+    if (key.value === 'reason') reason = value.value;
+    if (!value.done) return { reason };
+  }
+}
+
 const OUTPUT_STATUS = { streaming: ['Streaming', 'info'], complete: ['Complete', 'pos'], failed: ['Failed', 'warn'], stopped: ['Stopped', 'warn'] };
-// The streamed text is shown exactly as received. A readable decision appears only
-// when that same run completed and the Listener published its validated decision.
+// The streamed text is kept exactly as received. Until that same run completes and
+// the Listener publishes its validated decision, only the model's own reason words
+// are lifted out of it, as a draft that is never labelled or styled as a decision.
 export function modelOutputPresentation(output, published = null, { disconnected = false, enabled = false, busy = false } = {}) {
   if (!output) {
     const empty = !enabled ? 'Turn the Listener on to begin. Each check reviews the newest selected research note, and the model’s real response streams here.'
       : busy ? 'Reading the Journal. The model’s response appears here as soon as it starts.'
         : 'Nothing reviewed yet. Choose Check now to review the newest selected research note.';
-    return { status: 'none', label: 'Not run', tone: '', live: false, accepted: false, verdict: null, note: null, empty };
+    return { status: 'none', label: 'Not run', tone: '', live: false, accepted: false, verdict: null, draft: null, draftLabel: null, note: null, empty };
   }
   const [label, tone] = OUTPUT_STATUS[output.status] ?? ['Unavailable', 'warn'];
   const live = output.status === 'streaming' && !disconnected;
@@ -145,11 +199,16 @@ export function modelOutputPresentation(output, published = null, { disconnected
     && Number.isFinite(startedAt) && Number.isFinite(publishedAt) && publishedAt >= startedAt;
   const verdict = accepted ? { ...activityStatus({ status: 'observed', decision: published.decision }), reason: text(published.reason) } : null;
   const hasText = Boolean(output.text);
-  const note = output.status === 'streaming' ? (disconnected ? 'Reconnecting. Showing the last output received; nothing is accepted until the response completes.' : 'Partial output. Nothing is accepted until the response completes and passes validation.')
+  // While streaming, a readable answer holds its place even before the reason begins.
+  // Otherwise the draft needs real reason text; an unreadable answer stays raw.
+  const reading = !accepted && hasText ? streamedReason(output.text) : null;
+  const draft = !reading ? null : output.status === 'streaming' ? reading.reason ?? '' : reading.reason || null;
+  const draftLabel = draft === null ? null : output.status === 'streaming' ? 'Reason so far' : output.status === 'complete' ? 'Model reason' : 'Partial reason';
+  const note =output.status === 'streaming' ? (disconnected ? 'Reconnecting. Showing the last output received; nothing is accepted until the response completes.' : 'Partial output. Nothing is accepted until the response completes and passes validation.')
     : ['failed', 'stopped'].includes(output.status) ? (hasText ? 'Partial output shown. It was not accepted as a decision.' : 'No output was received. Nothing was accepted.')
       : output.status === 'complete' && !accepted ? 'The response completed, but no published decision matches it.' : null;
   const empty = hasText ? null : output.status === 'streaming' ? 'Waiting for the model’s first response token.' : 'The model returned no response.';
-  return { status: output.status, label: disconnected && output.status === 'streaming' ? 'Reconnecting' : label, tone, live, accepted, verdict, note, empty };
+  return { status: output.status, label: disconnected && output.status === 'streaming' ? 'Reconnecting' : label, tone, live, accepted, verdict, draft, draftLabel, note, empty };
 }
 
 export function latestDecisions(activity = [], output = null) {

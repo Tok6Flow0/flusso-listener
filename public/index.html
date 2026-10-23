@@ -51,14 +51,14 @@
         <h1>Journal</h1>
         <div class="head-actions">
           <label class="sr-only" for="journal-filter">Notebook</label><select id="journal-filter"><option value="">All notebooks</option></select>
-          <label class="sr-only" for="result-filter">Listener result</label><select id="result-filter"></select>
+          <label>Listener result<select id="result-filter"></select></label>
           <button id="sync" type="button" class="icon-button" title="Sync cloud Journal" aria-label="Sync cloud Journal"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16 10a6 6 0 0 1-10.4 4.1M4 10a6 6 0 0 1 10.4-4.1"/><path d="M14.5 2.5v3.6h-3.6M5.5 17.5v-3.6h3.6"/></svg></button>
           <button id="new-entry" type="button" class="primary"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg>New entry</button>
         </div>
       </header>
       <div class="journal-layout">
         <div class="entry-pane">
-          <div class="entry-list" id="entry-list" aria-label="Journal entries"></div>
+          <div class="entry-list" id="entry-list" role="region" aria-label="Journal entries"></div>
           <form id="notebook-form" class="notebook-form"><label class="sr-only" for="notebook-name">New notebook</label><input id="notebook-name" placeholder="New notebook" maxlength="120" required><button type="submit" class="icon-button" aria-label="Add notebook" title="Add notebook"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg></button></form>
         </div>
         <article class="entry-detail" id="entry-detail" tabindex="-1" aria-label="Selected entry"><div class="empty-art"><img src="/flusso-mark.png" alt="" width="40" height="40"><p>Pick an entry or write a new one.</p></div></article>
@@ -78,7 +78,7 @@
     <section id="view-listener" class="view">
       <header class="view-head listener-head">
         <div class="title-block"><h1>Listener</h1><p class="status-line" id="last-check">Not checked yet</p></div>
-        <label class="switch switch-lg"><input id="enabled" type="checkbox" aria-label="Listener"><span class="switch-track" aria-hidden="true"></span><span id="enabled-label">Off</span></label>
+        <label class="switch switch-lg"><input id="enabled" type="checkbox" aria-label="Turn on Listener"><span class="switch-track" aria-hidden="true"></span><span id="enabled-label">Turn on</span></label>
       </header>
       <div class="connect-hint" id="connect-hint" hidden><span>Connect Flusso for the cloud Journal and auto-trade. Local notes work without it.</span><button id="connect" type="button">Connect</button></div>
       <div class="listener-toolbar">
@@ -101,7 +101,7 @@
             </div>
             <div id="model-output-source" class="output-source" hidden></div>
             <div id="model-verdict" class="verdict" hidden>
-              <div class="verdict-head"><p class="verdict-kicker">Published decision</p><span id="model-verdict-label" class="pill"></span></div>
+              <div class="verdict-head"><p id="model-verdict-kicker" class="verdict-kicker">Published decision</p><span id="model-verdict-label" class="pill"></span></div>
               <p id="model-verdict-reason" class="verdict-reason"></p>
               <button id="model-raw-toggle" type="button" class="link-button" aria-expanded="false" aria-controls="model-output">Show raw response</button>
             </div>
@@ -134,7 +134,7 @@
               </fieldset>
               <label>Check every<select id="interval"><option value="15">15 seconds</option><option value="30">30 seconds</option><option value="60">1 minute</option><option value="120">2 minutes</option><option value="300">5 minutes</option><option value="900">15 minutes</option><option value="1800">30 minutes</option><option value="3600">1 hour</option></select></label>
             </div>
-            <fieldset class="picks"><legend>Notebooks <span class="hint">· none selected means all</span></legend><div id="watch-notebooks" class="chips"></div></fieldset>
+            <fieldset class="picks"><legend>Notebooks <span class="hint">· none selected means all for research</span></legend><p class="hint">Auto-trade requires explicitly picked notebooks. Only Watching entries can supply <code>flusso-orders</code> or <code>flusso-close</code> tickets.</p><div id="watch-notebooks" class="chips"></div></fieldset>
             <details><summary>Model instructions</summary>
               <label>Only notes under this heading<input id="section" maxlength="200" placeholder="Optional"></label>
               <label>What the model should do<textarea id="instructions" rows="3" maxlength="1000" placeholder="Optional"></textarea></label>
@@ -142,15 +142,15 @@
           </section>
           <section class="card trade-card">
             <div class="card-head"><h2>Auto-trade</h2><label class="switch"><input id="execution" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span class="sr-only">Auto-trade</span></label></div>
-            <p class="hint">Any <code>flusso-orders</code> ticket from the notebooks you pick, written within the window below and not yet acted on, is placed or refused, even if it arrived while the app was closed. Included with Flusso Automate and Pro; each order counts toward your plan’s daily connected-order allowance. Set maximums per order, per ticket and for leverage before enabling auto-trade.</p>
+            <p class="hint">Any <code>flusso-orders</code> or <code>flusso-close</code> ticket from the notebooks you pick, written within the window below and not yet acted on, is submitted or refused, even if it arrived while the app was closed. Included with Flusso Automate and Pro; each order counts toward your plan’s daily connected-order allowance. Set maximums per order, per ticket and for leverage before enabling auto-trade.</p>
             <div id="execution-draft-warning" class="hint" role="status" hidden><p>Save your changes before turning Auto-trade on. Switches use saved settings.</p><button type="submit">Save changes</button></div>
             <div class="field-grid">
               <label>Account<select id="account"><option value="">Connect Flusso first</option></select></label>
               <label>Act on tickets from the last<select id="max-age"><option value="900">15 minutes</option><option value="1800">30 minutes</option><option value="3600">1 hour</option><option value="7200">2 hours</option><option value="21600">6 hours</option><option value="43200">12 hours</option><option value="86400">24 hours</option></select></label>
               <label>Max slippage<span class="affix"><input id="max-slippage" type="number" inputmode="decimal" step="any" min="0.01" max="100" placeholder="None"><span>%</span></span></label>
-              <label>Max per order<span class="affix"><span>$</span><input id="max-order" type="number" inputmode="decimal" step="any" min="0.01" placeholder="Not set"></span></label>
-              <label>Max per ticket<span class="affix"><span>$</span><input id="max-ticket" type="number" inputmode="decimal" step="any" min="0.01" placeholder="Not set"></span></label>
-              <label>Max leverage<span class="affix"><input id="max-leverage" type="number" inputmode="decimal" step="any" min="1" placeholder="Not set"><span>×</span></span></label>
+              <label>Max per order<span class="affix"><span>$</span><input id="max-order" type="number" inputmode="decimal" step="any" min="0.01" placeholder="Required"></span><span id="max-order-error" class="hint" hidden></span></label>
+              <label>Max per ticket<span class="affix"><span>$</span><input id="max-ticket" type="number" inputmode="decimal" step="any" min="0.01" placeholder="Required"></span><span id="max-ticket-error" class="hint" hidden></span></label>
+              <label>Max leverage<span class="affix"><input id="max-leverage" type="number" inputmode="decimal" step="any" min="1" placeholder="Required"><span>×</span></span><span id="max-leverage-error" class="hint" hidden></span></label>
               <label>Tickets per day<input id="max-tickets" type="number" inputmode="numeric" step="1" min="1" max="500"></label>
               <label>Min 24h volume<span class="affix"><span>$</span><input id="min-volume" type="number" inputmode="decimal" step="any" min="1" placeholder="None"></span></label>
               <label class="switch switch-row"><input id="together" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span>Send legs together</span></label>

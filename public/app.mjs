@@ -6,7 +6,7 @@ const $ = id => document.getElementById(id);
 let csrf, snapshot, selected = null, editing = null, entryRetryKey = crypto.randomUUID();
 const desktop = window.flussoDesktop;
 let desktopStatus = null, connectionBusy = false, connectionOperation = null, connectionGeneration = 0, profileConnectionKey = null, profileGeneration = 0, dismissedUpdate = null;
-let accounts = [], accountsKey = null, formDirty = false, settingsEdit = 0, themeMode = document.documentElement.dataset.themeMode || 'system';
+let accounts = [], accountsKey = null, formDirty = false, settingsEdit = 0, riskValidationActive = false, themeMode = document.documentElement.dataset.themeMode || 'system';
 const nativeTasks = new Set();
 const renderKeys = new Map();
 let pollBusy = false, lastPolledAt = 0;
@@ -18,12 +18,12 @@ const TICKET_FENCE = /^(```|~~~)[ \t]*flusso-(?:orders|close)[ \t]*\n[\s\S]*?^\1
 
 function element(tag, content, className) { const node = document.createElement(tag); if (content != null) node.textContent = content; if (className) node.className = className; return node; }
 function pill(text, tone) { return element('span', text, `pill${tone ? ' ' + tone : ''}`); }
-function notify(message, success = false) { $('notice').hidden = false; $('notice-text').textContent = message; $('notice').className = `notice${success ? ' success' : ''}`; clearTimeout(notify.timer); if (success) notify.timer = setTimeout(() => { $('notice').hidden = true; }, 5000); }
+function notify(message, success = false, error = false) { $('notice').setAttribute('role', error ? 'alert' : 'status'); $('notice-text').textContent = message; $('notice').hidden = false; $('notice').className = `notice${success ? ' success' : ''}`; clearTimeout(notify.timer); if (success) notify.timer = setTimeout(() => { $('notice').hidden = true; }, 5000); }
 async function api(path, body, headers = {}) {
   const response = await fetch(path, { method: body === undefined ? 'GET' : 'POST', headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json', 'x-flusso-csrf': csrf }), ...headers }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const value = await response.json(); if (!response.ok) throw new Error(value.error || 'That did not work. Try again.'); return value;
 }
-async function action(button, work) { if (button?.disabled) return; if (button) button.disabled = true; try { await work(); } catch (error) { notify(error.message); } finally { if (button) button.disabled = false; } }
+async function action(button, work) { if (button?.disabled) return; if (button) button.disabled = true; try { await work(); } catch (error) { notify(error.message, false, true); } finally { if (button) button.disabled = false; } }
 function when(value, seconds = false) { const date = new Date(value); return Number.isFinite(date.getTime()) ? date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', ...(seconds ? { second: '2-digit' } : {}) }) : '—'; }
 function timeOf(value) { const date = new Date(value); return Number.isFinite(date.getTime()) ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'; }
 function changed(key, value) { const next = JSON.stringify(value); if (renderKeys.get(key) === next) return false; renderKeys.set(key, next); return true; }
@@ -39,7 +39,7 @@ function applyTheme(mode = themeMode) {
   const theme = resolveTheme(mode, matchMedia('(prefers-color-scheme: dark)').matches);
   document.documentElement.setAttribute('data-theme', theme);
   document.documentElement.dataset.themeMode = mode;
-  for (const button of $('theme-grid').children) button.setAttribute('aria-checked', String(button.dataset.mode === mode));
+  for (const button of $('theme-grid').children) { const selected = button.dataset.mode === mode; button.setAttribute('aria-checked', String(selected)); button.tabIndex = selected ? 0 : -1; }
 }
 function renderThemes() {
   $('theme-grid').replaceChildren(...THEME_OPTIONS.map(option => {
@@ -53,6 +53,14 @@ function renderThemes() {
   }));
   applyTheme();
 }
+$('theme-grid').addEventListener('keydown', event => {
+  const buttons = [...$('theme-grid').children], index = buttons.indexOf(event.target);
+  if (index < 0) return;
+  const delta = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
+  const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : delta ? (index + delta + buttons.length) % buttons.length : null;
+  if (next === null) return;
+  event.preventDefault(); buttons[next].focus(); buttons[next].click();
+});
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (themeMode === 'system') applyTheme(); });
 
 /* --------------------------------------------------------------- account */
@@ -82,10 +90,10 @@ async function loadAccounts() {
   if (key) { try { accounts = (await api('/api/accounts')).accounts; } catch { accounts = []; accountsKey = null; } }
   renderAccountChoice();
 }
-function renderAccountChoice() {
-  const current = $('account').value || snapshot?.settings.accountId || '';
-  const options = accounts.map(row => new Option(row.displayName || row.publicId, row.id));
-  $('account').replaceChildren(new Option(snapshot?.cloud.connected ? (accounts.length ? 'Choose an account' : 'No accounts found') : 'Connect Flusso first', ''), ...options);
+function renderAccountChoice(current = $('account').value || snapshot?.settings.accountId || '') {
+  const options = accounts.map(row => [row.id, row.displayName || row.publicId]);
+  const prompt = snapshot?.cloud.connected ? (accounts.length ? 'Choose an account' : 'No accounts found') : 'Connect Flusso first';
+  if (changed('account-options', [prompt, options])) $('account').replaceChildren(new Option(prompt, ''), ...options.map(([id, label]) => new Option(label, id)));
   $('account').value = accounts.some(row => row.id === current) ? current : '';
   $('account').disabled = !accounts.length;
   if (snapshot) renderWatchSummary();
@@ -126,7 +134,7 @@ async function nativeAction(method, argument) {
   if (!desktop || nativeTasks.has(method)) return;
   nativeTasks.add(method); renderDesktop();
   try { await desktop[method](argument); desktopStatus = await desktop.status(); }
-  catch (error) { notify(error.message || 'That did not work. Try again.'); }
+  catch (error) { notify(error.message || 'That did not work. Try again.', false, true); }
   finally { nativeTasks.delete(method); renderDesktop(); }
 }
 async function initializeDesktop() {
@@ -166,9 +174,12 @@ async function load({ forms = false } = {}) {
   renderStatus();
   if (!desktop) $('model-state').textContent = snapshot.model.installed ? 'Qwen3 1.7B is ready through Ollama.' : snapshot.model.available ? 'Ollama is running. Download the model:' : 'Start Ollama, then download the model:';
   $('sync').disabled = !snapshot.cloud.connected;
-  const selectedFilter = $('journal-filter').value;
-  $('journal-filter').replaceChildren(new Option('All notebooks', ''), ...snapshot.notebooks.map(row => new Option(row.origin === 'cloud' ? `${row.name} · cloud` : row.name, `${row.origin}:${row.id}`)));
-  $('journal-filter').value = selectedFilter;
+  const notebookOptions = snapshot.notebooks.map(row => [row.origin, row.id, row.name]);
+  if (changed('journal-notebook-options', notebookOptions)) {
+    const selectedFilter = $('journal-filter').value;
+    $('journal-filter').replaceChildren(new Option('All notebooks', ''), ...notebookOptions.map(([origin, id, name]) => new Option(origin === 'cloud' ? `${name} · cloud` : name, `${origin}:${id}`)));
+    $('journal-filter').value = selectedFilter;
+  }
   if (changed('entries', snapshot.entries)) renderEntries();
   if (changed('activity', [snapshot.activity, snapshot.attempts, snapshot.settings.enabled])) renderActivity();
   renderProcess(); renderDecisions();
@@ -181,7 +192,7 @@ function renderStatus() {
   $('listener-dot-label').textContent = !settings.enabled ? 'Off' : listener.lastError ? 'Needs attention' : listener.busy ? 'Reading' : 'On';
   // The schedule lives here; the review desk owns state, errors and the next action.
   const interval = intervalLabel(settings.intervalSeconds), parts = [];
-  if (!settings.enabled) parts.push('Turn Listener on to check notes');
+  if (!settings.enabled) parts.push(listener.lastCheckedAtUtc ? `Last checked ${when(listener.lastCheckedAtUtc)}` : 'Not checked yet');
   else {
     if (interval) parts.push(`Checks every ${interval}`);
     parts.push(listener.lastCheckedAtUtc ? `Last checked ${when(listener.lastCheckedAtUtc)}` : 'Not checked yet');
@@ -235,7 +246,7 @@ function openEntry(entry) {
   reveal($('entry-detail'), 'start'); $('entry-detail').focus({ preventScroll: true });
 }
 
-// The raw response stays one click away once a decision is published.
+// The raw response stays one click away whenever its reason is shown as prose.
 let rawOpen = false;
 $('model-raw-toggle').addEventListener('click', () => { rawOpen = !rawOpen; renderProcess(); if (rawOpen) $('model-output').focus({ preventScroll: true }); });
 
@@ -249,6 +260,12 @@ function renderOutputText(output) {
   const following = node.scrollHeight - node.scrollTop - node.clientHeight < 24;
   if (current && text.startsWith(current)) node.append(text.slice(current.length)); else node.textContent = text;
   if (following) node.scrollTop = node.scrollHeight;
+}
+// Streamed words are appended, so a reader's selection survives the next token.
+function growText(node, value) {
+  const current = node.textContent;
+  if (value === current) return;
+  if (current && value.startsWith(current)) node.append(value.slice(current.length)); else node.textContent = value;
 }
 
 function renderProcess() {
@@ -271,18 +288,24 @@ function renderProcess() {
     else source.replaceChildren();
     source.hidden = !output;
   }
-  // Keep the raw answer open if a keyboard reader is using it as it completes.
-  if (view.verdict && $('model-output').contains(document.activeElement)) rawOpen = true;
-  // Scheduled checks must not strand a keyboard reader inside a hidden verdict.
-  if (!view.verdict && $('model-verdict').contains(document.activeElement)) $('model-output-heading').focus({ preventScroll: true });
-  $('model-verdict').hidden = !view.verdict;
-  if (view.verdict) {
-    setText('model-verdict-label', view.verdict.label); $('model-verdict-label').className = `pill ${view.verdict.tone}`;
-    setText('model-verdict-reason', view.verdict.reason || 'The model gave no reason.');
+  // One block carries the reason from its first streamed words to the published
+  // decision; only a validated, matching run earns the decision label.
+  const summary = view.verdict ? { state: 'published', kicker: 'Published decision', label: view.verdict.label, tone: view.verdict.tone, reason: view.verdict.reason || 'The model gave no reason.' }
+    : view.draft !== null ? { state: 'draft', kicker: view.draftLabel, label: 'not accepted', tone: '', reason: view.draft } : null;
+  // Keep the raw answer open if a keyboard reader is using it as the reason appears.
+  if (summary && $('model-output').contains(document.activeElement)) rawOpen = true;
+  // Scheduled checks must not strand a keyboard reader inside a hidden summary.
+  if (!summary && $('model-verdict').contains(document.activeElement)) $('model-output-heading').focus({ preventScroll: true });
+  $('model-verdict').hidden = !summary;
+  if (summary) {
+    $('model-verdict').dataset.state = summary.state;
+    setText('model-verdict-kicker', summary.kicker);
+    setText('model-verdict-label', summary.label); $('model-verdict-label').className = `pill ${summary.tone}`;
+    growText($('model-verdict-reason'), summary.reason);
     setText('model-raw-toggle', rawOpen ? 'Hide raw response' : 'Show raw response'); $('model-raw-toggle').setAttribute('aria-expanded', String(rawOpen));
   }
   renderOutputText(output);
-  $('model-output').hidden = !output?.text || (Boolean(view.verdict) && !rawOpen);
+  $('model-output').hidden = !output?.text || (Boolean(summary) && !rawOpen);
   setText('model-output-note', view.note ?? ''); $('model-output-note').hidden = !view.note;
   setText('model-output-empty', view.empty ?? ''); $('model-output-empty').hidden = !view.empty;
 
@@ -317,15 +340,15 @@ function renderDecisions() {
     if (row.status === 'waiting' && !snapshot.settings.enabled) item.append(element('p', 'Checks resume when you turn the Listener on.', 'hint'));
     return item;
   }));
-  if (!latest.length) $('latest-decisions').append(element('p', snapshot.settings.enabled ? 'No decisions yet. Each published model decision and order result is listed here after a check.' : 'No decisions yet. Turn the Listener on; published model decisions and order results are listed here.', 'empty'));
+  if (!latest.length) $('latest-decisions').append(element('p', 'No decisions yet. Published model decisions and order results are listed here after a check.', 'empty'));
 }
 
 /* -------------------------------------------------------------- settings */
 function fillSettings() {
   const settings = snapshot.settings, risk = settings.risk ?? {};
-  $('enabled').checked = settings.enabled; $('enabled-label').textContent = settings.enabled ? 'On' : 'Off';
+  $('enabled').checked = settings.enabled; $('enabled-label').textContent = settings.enabled ? 'On' : 'Turn on';
+  $('enabled').setAttribute('aria-label', settings.enabled ? 'Listener on' : 'Turn on Listener');
   $('execution').checked = settings.executionEnabled;
-  for (const id of ['max-order', 'max-ticket', 'max-leverage']) $(id).placeholder = settings.executionEnabled ? 'Required' : 'Not set';
   for (const radio of document.querySelectorAll('input[name=source]')) radio.checked = radio.value === settings.source;
   ensureOption($('interval'), settings.intervalSeconds, `${formatCount(settings.intervalSeconds)} seconds`); $('interval').value = String(settings.intervalSeconds);
   ensureOption($('max-age'), settings.maxSignalAgeSeconds, `${formatCount(Math.round(settings.maxSignalAgeSeconds / 60))} minutes`); $('max-age').value = String(settings.maxSignalAgeSeconds);
@@ -334,15 +357,38 @@ function fillSettings() {
   $('max-tickets').value = settings.maxTicketsPerDay ?? 24; $('max-ticket').value = risk.maxTicketUsd ?? ''; $('max-leverage').value = risk.maxLeverage ?? '';
   $('together').checked = risk.together !== false;
   $('write-back').checked = settings.writeBack !== false;
-  $('watch-notebooks').replaceChildren(...snapshot.notebooks.map(row => {
-    const label = element('label'), input = element('input'), chip = element('span', row.name);
-    input.type = 'checkbox'; input.value = row.id; input.checked = settings.notebookIds.includes(row.id);
-    if (row.origin === 'cloud') chip.append(element('small', 'cloud'));
-    label.append(input, chip); return label;
-  }));
-  if (!snapshot.notebooks.length) $('watch-notebooks').append(element('span', 'No notebooks yet.', 'hint'));
-  renderAccountChoice();
+  if (changed('watch-notebook-options', snapshot.notebooks.map(row => [row.id, row.origin, row.name]))) {
+    $('watch-notebooks').replaceChildren(...snapshot.notebooks.map(row => {
+      const label = element('label'), input = element('input'), chip = element('span', row.name);
+      input.type = 'checkbox'; input.value = row.id;
+      if (row.origin === 'cloud') chip.append(element('small', 'cloud'));
+      label.append(input, chip); return label;
+    }));
+    if (!snapshot.notebooks.length) $('watch-notebooks').append(element('span', 'No notebooks yet.', 'hint'));
+  }
+  for (const input of $('watch-notebooks').querySelectorAll('input')) input.checked = settings.notebookIds.includes(input.value);
+  renderAccountChoice(settings.accountId ?? '');
+  renderRiskValidation();
   formDirty = false; $('execution-draft-warning').hidden = true; setText('configure-label', 'Configure'); $('settings-draft-hint').hidden = true; $('save-settings').disabled = true; $('save-settings').textContent = 'Saved';
+}
+const requiredRiskFields = { 'max-order': 'Set a maximum USD amount per order.', 'max-ticket': 'Set a maximum USD amount per ticket.', 'max-leverage': 'Set a maximum leverage.' };
+function renderRiskValidation() {
+  let firstInvalid = null;
+  for (const [id, missingMessage] of Object.entries(requiredRiskFields)) {
+    const input = $(id), message = $(`${id}-error`);
+    input.placeholder = 'Required';
+    input.required = snapshot.settings.executionEnabled;
+    let error = '';
+    if (riskValidationActive) {
+      input.required = true;
+      if (!input.validity.valid) { error = input.validity.valueMissing ? missingMessage : input.validationMessage; firstInvalid ??= input; }
+      input.required = snapshot.settings.executionEnabled;
+    }
+    input.setAttribute('aria-invalid', String(Boolean(error)));
+    if (error) input.setAttribute('aria-describedby', message.id); else input.removeAttribute('aria-describedby');
+    message.textContent = error; message.hidden = !error;
+  }
+  return firstInvalid;
 }
 function ensureOption(select, value, label) { if (![...select.options].some(option => option.value === String(value))) select.append(new Option(label, String(value))); }
 function amount(id) { const raw = $(id).value.trim(); if (!raw) return null; const value = Number(raw); if (!Number.isFinite(value) || value <= 0) throw new Error('Limits must be positive numbers, or left blank.'); return value; }
@@ -365,10 +411,10 @@ async function saveSettings(message, body = settingsBody(), { forms = true } = {
   // Edits typed during that request remain a draft rather than being replaced.
   if (forms && edit === settingsEdit) fillSettings();
   try { await load(); }
-  catch { renderStatus(); renderProcess(); notify(`${message} Settings saved, but the view could not refresh. Refresh to check the latest activity.`); return; }
+  catch { renderStatus(); renderProcess(); notify(`${message} Settings saved, but the view could not refresh. Refresh to check the latest activity.`, false, true); return; }
   notify(message, true);
 }
-$('settings-form').addEventListener('input', () => { formDirty = true; settingsEdit += 1; setText('configure-label', 'Configure · Unsaved'); $('settings-draft-hint').hidden = !$('execution-draft-warning').hidden; $('save-settings').disabled = false; $('save-settings').textContent = 'Save'; });
+$('settings-form').addEventListener('input', () => { formDirty = true; settingsEdit += 1; setText('configure-label', 'Configure · Unsaved'); $('settings-draft-hint').hidden = !$('execution-draft-warning').hidden; $('save-settings').disabled = false; $('save-settings').textContent = 'Save'; if (riskValidationActive) renderRiskValidation(); });
 $('settings-form').addEventListener('submit', async event => {
   event.preventDefault(); await action(event.submitter, () => saveSettings('Saved.'));
   $('save-settings').disabled = !formDirty;
@@ -378,6 +424,14 @@ $('settings-form').addEventListener('submit', async event => {
 async function saveSwitch(id, field, message) {
   const value = $(id).checked;
   const savedMessage = formDirty ? `${message} Using saved settings; your edits are still unsaved.` : message;
+  if (field === 'executionEnabled' && value) {
+    riskValidationActive = true;
+    const invalid = renderRiskValidation();
+    if (invalid) {
+      $(id).checked = snapshot.settings.executionEnabled;
+      configureListener(true); reveal(invalid, 'center'); invalid.focus({ preventScroll: true }); return;
+    }
+  }
   if (field === 'executionEnabled' && value && formDirty) {
     $(id).checked = snapshot.settings.executionEnabled;
     $('execution-draft-warning').hidden = false; $('settings-draft-hint').hidden = true; $('notice').hidden = true; return;
@@ -386,9 +440,11 @@ async function saveSwitch(id, field, message) {
   try { await saveSettings(savedMessage, settingsSwitchBody(snapshot.settings, field, value), { forms: false }); }
   finally {
     $('enabled').checked = snapshot.settings.enabled;
-    $('enabled-label').textContent = snapshot.settings.enabled ? 'On' : 'Off';
+    $('enabled-label').textContent = snapshot.settings.enabled ? 'On' : 'Turn on';
+    $('enabled').setAttribute('aria-label', snapshot.settings.enabled ? 'Listener on' : 'Turn on Listener');
     $('execution').checked = snapshot.settings.executionEnabled;
     $('enabled').disabled = $('execution').disabled = false;
+    renderRiskValidation();
     renderStatus(); renderProcess();
   }
 }
@@ -576,7 +632,7 @@ $('entry-form').addEventListener('submit', event => { event.preventDefault(); ac
   const body = { notebookId: $('entry-notebook').value, title: $('entry-title').value, body: $('entry-body').value, status: $('entry-status').value, source: editing?.source ?? 'manual', observedAtUtc: editing?.observedAtUtc ?? null, instrument: editing?.instrument ?? null, venue: editing?.venue ?? null, signal, ...(editing ? { version: editing.version } : {}) };
   const saved = await api(editing ? `/api/entries/${editing.id}` : '/api/entries', body, { 'Idempotency-Key': entryRetryKey });
   selected = { ...saved, origin: 'local' }; closeEditor();
-  try { await load(); } catch { notify('Entry saved, but the list could not refresh. Refresh to check the latest entries.'); return; }
+  try { await load(); } catch { notify('Entry saved, but the list could not refresh. Refresh to check the latest entries.', false, true); return; }
   renderEntries(); notify('Saved.', true);
 }); });
 $('notebook-form').addEventListener('submit', event => { event.preventDefault(); action(event.submitter, async () => { await api('/api/notebooks', { name: $('notebook-name').value }); $('notebook-name').value = ''; await load({ forms: !formDirty }); notify('Notebook added.', true); }); });
@@ -592,7 +648,7 @@ async function changeConnection(connect) {
     await api(connect ? '/api/connect' : '/api/disconnect', {}); if (generation !== connectionGeneration) return;
     await load({ forms: true }); if (generation !== connectionGeneration) return;
     notify(connect ? 'Flusso connected.' : 'Disconnected. The Listener is off.', true);
-  } catch (error) { if (generation === connectionGeneration) notify(error.message); }
+  } catch (error) { if (generation === connectionGeneration) notify(error.message, false, true); }
   finally { if (generation === connectionGeneration) { connectionBusy = false; connectionOperation = null; renderAccount(); refreshAccountProfile(); loadAccounts(); } }
 }
 for (const id of ['connect', 'account-connect']) $(id).addEventListener('click', () => changeConnection(true));
@@ -646,7 +702,7 @@ function streamListener() {
     const finished = snapshot.listener.busy && !listener.busy;
     snapshot.listener = listener;
     renderStatus(); renderProcess(); renderDecisions();
-    if (finished) load().catch(error => notify(error.message));
+    if (finished) load().catch(error => notify(error.message, false, true));
   };
 }
 window.addEventListener('pagehide', () => listenerEvents?.close());
@@ -662,9 +718,9 @@ async function initialize() {
     const interval = listenerEvents?.readyState === EventSource.OPEN ? 10000 : (!$('view-listener').hidden || snapshot?.listener.busy ? 1500 : 10000);
     if (document.hidden || pollBusy || Date.now() - lastPolledAt < interval) return;
     pollBusy = true; lastPolledAt = Date.now();
-    try { await load(); } catch (error) { notify(error.message); } finally { pollBusy = false; }
+    try { await load(); } catch (error) { notify(error.message, false, true); } finally { pollBusy = false; }
   }, 1500);
 }
 renderThemes();
-initialize().catch(error => notify(error.message));
-initializeDesktop().catch(error => { $('app-update-status').textContent = 'Desktop status unavailable'; notify(error.message || 'Desktop status could not be read.'); });
+initialize().catch(error => notify(error.message, false, true));
+initializeDesktop().catch(error => { $('app-update-status').textContent = 'Desktop status unavailable'; notify(error.message || 'Desktop status could not be read.', false, true); });
