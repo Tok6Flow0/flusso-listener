@@ -433,6 +433,7 @@ tr:last-child td{border-bottom:0}
 /* ------------------------------------------------------------ responsive */
 @media(min-width:1200px){
   .listener-body{grid-template-columns:minmax(0,1fr) minmax(300px,360px);grid-template-areas:"primary secondary"}
+  .listener-body:has(>.listener-secondary>.decisions-panel[hidden]):not(:has(>.listener-configuration:not([hidden]))){grid-template-columns:minmax(0,1fr);grid-template-areas:"primary" "secondary"}
   .listener-body:has(>.listener-configuration:not([hidden])){grid-template-columns:minmax(0,1fr) minmax(380px,440px);grid-template-areas:"primary config" "secondary config";grid-template-rows:min-content 1fr}
   .listener-configuration{position:sticky;top:20px;max-height:calc(100dvh - 40px);overflow-y:auto;overscroll-behavior:contain}
 }
