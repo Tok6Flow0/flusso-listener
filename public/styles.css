@@ -245,6 +245,8 @@ tr:last-child td{border-bottom:0}
 .output-frame[data-status=failed] .output-raw,.output-frame[data-status=stopped] .output-raw{border-style:dashed;color:var(--c-ink-4)}
 .focus-copy{white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--fs-body-sm);color:var(--c-ink-3)}
 .output-note{font-size:var(--fs-body-sm);color:var(--c-ink-4);max-width:95ch}
+.output-note.warn,.latest-check strong{color:var(--c-warn-deep)}
+.latest-check{display:grid;gap:4px;padding-bottom:12px;border-bottom:1px solid var(--c-line)}
 .output-frame[data-status=failed]>.response-tools>#model-output-note,.output-frame[data-status=stopped]>.response-tools>#model-output-note{color:var(--c-warn-deep)}
 .output-empty{display:grid;place-items:center;min-height:150px;padding:24px;border:1px dashed var(--c-line-strong);border-radius:12px;color:var(--c-ink-4);font-size:var(--fs-body);text-align:center;text-wrap:balance}
 
@@ -306,6 +308,7 @@ tr:last-child td{border-bottom:0}
 .tags{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .tags .pill{min-height:20px;padding:0 6px;font-size:var(--fs-caption)}
 .entry-card .tags .pill{max-width:100%;white-space:normal;overflow-wrap:anywhere;line-height:var(--lh-normal)}
+.entry-card .earlier-result{flex-basis:100%;font-size:var(--fs-caption);color:var(--c-ink-5);line-height:var(--lh-normal);overflow-wrap:anywhere}
 .entry-state{font:var(--fw-regular) var(--fs-caption)/1 var(--font-mono);text-transform:uppercase;letter-spacing:var(--ls-label);color:var(--c-ink-5)}
 .entry-state.watching{color:var(--c-info)}
 .list-empty{display:grid;justify-items:center;gap:6px}

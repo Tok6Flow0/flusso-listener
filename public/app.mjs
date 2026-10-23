@@ -1,6 +1,6 @@
 import { formatCount, formatPrice, formatQuantity, formatPercentLabel, formatMoney, formatPercent } from './format.mjs';
 import { renderMarkdown } from './markdown.mjs';
-import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, entryCardPresentation, entryReadingCore, activityStatus, activityReason, reviewFocusPresentation, activityMetadata, listenerResult, listenerRevisionPresentation, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions, decisionShownInDesk, decisionRowKeys, receiptDetails, modelOutputPresentation, completedModelPresentation, modelCoverageLabel, completionAnnouncement, localDraftDirty, intervalLabel, settingsSwitchBody, ticketDraft } from './desktop-ui.mjs';
+import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, entryCardPresentation, entryReadingCore, activityStatus, activityReason, reviewFocusPresentation, activityMetadata, listenerResult, listenerRevisionPresentation, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions, decisionShownInDesk, decisionRowKeys, receiptDetails, modelOutputPresentation, completedModelPresentation, modelCoverageLabel, latestCheckPresentation, completionAnnouncement, localDraftDirty, intervalLabel, settingsSwitchBody, ticketDraft } from './desktop-ui.mjs';
 
 const $ = id => document.getElementById(id);
 let csrf, snapshot, selected = null, editing = null, entryRetryKey = crypto.randomUUID();
@@ -350,7 +350,7 @@ function growText(node, value) {
 let lastCompletionKey = null, completionFrame = null;
 function renderReviewFocus(id, focus, prepared = false) {
   const view = reviewFocusPresentation(focus, { prepared });
-  setText(`${id}-summary`, view.label); setText(`${id}-text`, view.text);
+  setText(`${id}-summary`, 'Review details'); setText(`${id}-label`, view.label); setText(`${id}-text`, view.text);
 }
 function positionResponseTools(accepted) {
   const tools = $('model-response-tools'), verdict = $('model-verdict');
@@ -365,6 +365,7 @@ function renderProcess() {
   const state = processingPresentation(listener, settings.enabled, { disconnected: streamDisconnected });
   const view = modelOutputPresentation(output, listener.lastModelOutput, { disconnected: streamDisconnected, enabled: settings.enabled, busy: listener.busy });
   const completed = completedModelPresentation(listener, snapshot.entries);
+  const latestCheck = latestCheckPresentation(listener);
   const earlier = listener.modelReview?.id != null && output?.checkId !== listener.modelReview.id;
   const desk = $('review-desk');
   desk.dataset.state = state.state; desk.dataset.live = String(view.live);
@@ -372,11 +373,16 @@ function renderProcess() {
   const stage = state.busy ? `${state.label}${state.position ? ` · ${formatCount(state.position.index)} of ${formatCount(state.position.total)}` : ''}` : '';
   setText('process-stage', stage); $('process-stage').hidden = !stage;
   setText('process-message', state.message);
+  $('latest-check').hidden = !latestCheck;
+  if (latestCheck) {
+    setText('latest-check-label', latestCheck.label); setText('latest-check-reason', latestCheck.reason);
+    setText('latest-check-time', `${latestCheck.clockLabel} ${latestCheck.clock ? when(latestCheck.clock, true) : '—'}`); $('latest-check-time').dateTime = latestCheck.clock ?? '';
+  }
 
   $('output-frame').dataset.status = view.status;
   setText('model-output-heading', !settings.enabled && output ? 'Last model response' : 'Model output');
   setText('model-output-status', earlier && output ? 'Earlier response' : !settings.enabled && view.status === 'complete' ? 'Last check complete' : view.label); $('model-output-status').className = `output-status ${!settings.enabled && view.status === 'complete' ? '' : view.tone}`;
-  $('model-output-status').hidden = !output && Boolean(completed) || settings.enabled && view.accepted && !earlier || view.live || view.status === 'failed' && state.title === view.label && Boolean(listener.lastError);
+  $('model-output-status').hidden = !output && Boolean(completed) || settings.enabled && view.accepted && !earlier || view.live || view.status === 'failed' && state.title === view.label && Boolean(listener.lastError) || Boolean(latestCheck && output?.checkId === listener.modelReview?.id && ['failed', 'stopped'].includes(view.status));
   if (changed('model-output-source', output ? [output.entryId, output.origin, output.title, output.atUtc, snapshot.entries.some(row => row.id === output.entryId && row.origin === output.origin)] : null)) {
     const source = $('model-output-source');
     if (output) { const time = element('time', `Check started ${when(output.atUtc, true)}`); time.dateTime = output.atUtc; source.replaceChildren(element('span', 'Source note', 'hint'), sourceButton(output, output.title || 'Journal entry'), time); }
@@ -386,6 +392,8 @@ function renderProcess() {
   // in the same DOM node, labelled with its own source, revision and completion.
   const draft = view.draft !== null;
   setText('model-input-coverage', output ? modelCoverageLabel(output.coverage, { received: Boolean(output.text) || view.accepted }) : '');
+  setText('model-input-coverage-detail', output ? modelCoverageLabel(output.coverage, { received: Boolean(output.text) || view.accepted, detail: true }) : '');
+  $('model-input-coverage').classList.toggle('warn', Boolean(output?.coverage?.bodyTruncated));
   $('model-input-coverage').hidden = !output || view.accepted;
   $('model-input-focus').hidden = !output || view.accepted;
   if (output) renderReviewFocus('model-input-focus', output.focus, !output.text && !view.accepted);
@@ -424,6 +432,8 @@ function renderProcess() {
     growText($('model-verdict-reason'), completed.reason);
     setText('model-verdict-context', completed.context);
     setText('model-verdict-coverage', modelCoverageLabel(completed.output.coverage, { received: true }));
+    setText('model-verdict-coverage-detail', modelCoverageLabel(completed.output.coverage, { received: true, detail: true }));
+    $('model-verdict-coverage').classList.toggle('warn', Boolean(completed.output.coverage?.bodyTruncated));
     renderReviewFocus('model-verdict-focus', completed.output.focus);
     const source = completed.output;
     const metadata = $('model-verdict-source');
@@ -639,7 +649,7 @@ function renderEntries() {
     const tags = element('span', null, 'tags');
     tags.append(element('span', row.status, `entry-state ${row.status}`));
     if (row.check) tags.append(pill(row.check.label, row.check.tone));
-    if (row.outcome) tags.append(pill(row.outcome.label, row.outcome.tone));
+    if (row.outcome) tags.append(row.check ? element('span', row.outcome.label, 'earlier-result interface-numbers') : pill(row.outcome.label, row.outcome.tone));
     if (row.origin === 'cloud') tags.append(pill('cloud'));
     button.append(element('strong', row.title), meta, tags);
     button.addEventListener('click', () => { const current = snapshot.entries.find(item => item.id === row.id && item.origin === row.origin); if (current) openEntry(current); }); return button;
@@ -739,7 +749,7 @@ function renderDetail() {
     if (!row.ticket && row.listener?.status === 'observed' && review) {
       const metadata = activityMetadata(row.listener, row), line = element('div', null, 'detail-meta'), at = element('time', `${metadata.clockLabel} ${when(metadata.clock, true)}`, 'detail-facts'); at.dateTime = metadata.clock ?? '';
       line.append(pill(review.label, review.tone), at); section.append(line, element('p', activityReason(row.listener), 'verdict-reason'));
-      if (row.handoff?.context?.listenerEnabled === false) section.append(element('p', 'Listener is off.', 'hint'));
+      if (row.handoff?.context?.listenerEnabled === false) line.append(element('span', 'Listener off', 'hint'));
       const focus = reviewFocusPresentation(row.listener.focus), details = element('details');
       details.append(element('summary', 'Review details'));
       if (revision) details.append(element('p', revision.note, 'hint interface-numbers'));

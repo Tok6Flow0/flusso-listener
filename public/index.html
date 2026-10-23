@@ -99,6 +99,7 @@
             </div>
           </header>
           <div class="output-frame" id="output-frame" data-status="none">
+            <aside id="latest-check" class="latest-check hint" aria-label="Last check outcome" hidden><div class="detail-meta"><strong id="latest-check-label"></strong><time id="latest-check-time" class="detail-facts" data-interface-numbers="true"></time></div><p id="latest-check-reason"></p></aside>
             <div class="output-head">
               <h2 id="model-output-heading" class="sr-only" tabindex="-1">Model output</h2>
               <span id="model-output-status" class="output-status">Loading</span>
@@ -106,7 +107,7 @@
             </div>
             <div id="model-output-source" class="output-source" hidden></div>
             <p id="model-input-coverage" class="output-note" data-interface-numbers="true" hidden></p>
-            <details id="model-input-focus" hidden><summary id="model-input-focus-summary">Review focus unavailable</summary><p id="model-input-focus-text" class="focus-copy"></p></details>
+            <details id="model-input-focus" hidden><summary id="model-input-focus-summary">Review details</summary><p id="model-input-coverage-detail" class="hint" data-interface-numbers="true"></p><p id="model-input-focus-label" class="hint"></p><p id="model-input-focus-text" class="focus-copy"></p></details>
             <div id="model-draft" class="verdict" data-state="draft" hidden>
               <div class="verdict-head" id="model-draft-head"><p id="model-draft-kicker" class="verdict-kicker">Format check pending</p><h3 id="model-draft-label" class="verdict-label">Live model response</h3></div>
               <p id="model-draft-reason" class="verdict-reason"></p>
@@ -123,7 +124,7 @@
               <p id="model-verdict-context" class="hint" data-interface-numbers="true"></p>
               <p id="model-verdict-reason" class="verdict-reason"></p>
               <p id="model-verdict-coverage" class="output-note" data-interface-numbers="true"></p>
-              <details id="model-verdict-focus"><summary id="model-verdict-focus-summary">Review focus unavailable</summary><p id="model-verdict-focus-text" class="focus-copy"></p></details>
+              <details id="model-verdict-focus"><summary id="model-verdict-focus-summary">Review details</summary><p id="model-verdict-coverage-detail" class="hint" data-interface-numbers="true"></p><p id="model-verdict-focus-label" class="hint"></p><p id="model-verdict-focus-text" class="focus-copy"></p></details>
             </div>
           </div>
         </section>

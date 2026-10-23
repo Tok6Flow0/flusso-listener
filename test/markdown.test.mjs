@@ -21,5 +21,8 @@ test('rendered ISO dates and signed decimals preserve exact prose and leave sent
     const walk = node => [node, ...(node.children ?? []).flatMap(walk)];
     assert.deepEqual(walk(root).filter(node => node.className === 'mono').map(node => node.textContent), ['2026-10-20', '2026-10-20T14:03:05.250Z', '-12.50bps', '+3%', '1,234.56']);
     assert.ok(root.children[0].children.some(node => node.textContent === '. At '), 'A period following a date remains ordinary punctuation.');
+    const hyphens = 'COVID-19 takes 2-3 days or 2–3 days; the recorded changes were -12.50bps and −3%.';
+    renderMarkdown(root, hyphens); assert.equal(root.textContent, hyphens);
+    assert.deepEqual(walk(root).filter(node => node.className === 'mono').map(node => node.textContent), ['19', '2', '3', '2', '3', '-12.50bps', '−3%']);
   } finally { globalThis.document = previous; }
 });

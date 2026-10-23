@@ -267,13 +267,23 @@ export function modelOutputPresentation(output, published = null, { disconnected
   return { status: output.status, label: disconnected && output.status === 'streaming' ? 'Reconnecting' : label, tone, live, accepted, verdict, draft, draftLabel, note, empty };
 }
 
-export function modelCoverageLabel(coverage, { received = false } = {}) {
+export function modelCoverageLabel(coverage, { received = false, detail = false } = {}) {
   if (!coverage || coverage.unit !== 'UTF-16' || !Number.isSafeInteger(coverage.bodyUnits) || !Number.isSafeInteger(coverage.totalBodyUnits)
     || coverage.bodyUnits < 0 || coverage.totalBodyUnits < coverage.bodyUnits) return 'Review coverage unavailable';
+  if (!detail) return `${coverage.bodyTruncated ? 'Note excerpt' : 'Full note'} ${received ? 'supplied' : 'prepared'}`;
   return coverage.bodyTruncated
     ? received ? `Excerpt only: first ${formatCount(coverage.bodyUnits)} of ${formatCount(coverage.totalBodyUnits)} UTF-16 text units. The rest was not sent to the model.`
       : `Prepared excerpt: first ${formatCount(coverage.bodyUnits)} of ${formatCount(coverage.totalBodyUnits)} UTF-16 text units. Remaining text is excluded from this review.`
     : `${received ? 'Full note body supplied' : 'Prepared note body'} · ${formatCount(coverage.bodyUnits)} UTF-16 text units`;
+}
+
+export function latestCheckPresentation(listener = {}) {
+  const review = listener.modelReview;
+  if (listener.busy || !review || !['failed', 'stopped', 'skipped'].includes(review.status)) return null;
+  const finished = Number.isFinite(Date.parse(review.completedAtUtc)), clock = finished ? review.completedAtUtc : review.startedAtUtc;
+  return { label: review.status === 'failed' ? 'Last check failed' : review.status === 'stopped' ? 'Last check unfinished' : 'Last research review skipped',
+    reason: text(review.reason) || text(listener.lastError) || 'No completed result was recorded for this check.',
+    clock: Number.isFinite(Date.parse(clock)) ? clock : null, clockLabel: finished ? 'Finished' : 'Recorded' };
 }
 
 export function activityMetadata(row, source = null) {

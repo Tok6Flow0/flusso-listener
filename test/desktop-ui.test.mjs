@@ -83,7 +83,8 @@ test('the Journal reader shows the current check before the preserved completed 
   assert.ok(all(check).some(node => node.tag === 'time' && node.textContent === `Recorded ${recorded}/seconds · v2` && node.className === 'detail-facts'));
   assert.ok(all(live).some(node => node.textContent === 'Completed research response')); assert.ok(all(live).some(node => node.textContent === 'Preserved accepted words.'));
   assert.ok(all(live).some(node => node.textContent === 'Preserved accepted words.' && node.className === 'verdict-reason'), 'The same published words use the Listener prose style.');
-  assert.ok(all(live).some(node => node.textContent === 'Listener is off.'));
+  const metadataLine = all(live).find(node => node.className === 'detail-meta');
+  assert.ok(metadataLine.children.some(node => node.textContent === 'Listener off'), 'System state belongs with metadata, separately from the untouched model prose.');
   const disclosure = all(live).find(node => node.tag === 'details' && node.children[0]?.textContent === 'Review details');
   assert.ok(disclosure); assert.ok(all(disclosure).some(node => node.textContent === row.handoff.reason), 'Secondary historical context stays inside a compact disclosure.');
   assert.ok(all(live).some(node => node.tag === 'time' && node.textContent === `Completed ${completed}/seconds`));
@@ -191,12 +192,12 @@ test('the existing entry Save and Cancel controls sit in its heading and the out
 });
 
 test('a hidden verdict returns keyboard focus to visible process state and keyed source metadata survives token updates', async () => {
-  const { processingPresentation, modelOutputPresentation, completedModelPresentation, modelCoverageLabel, reviewFocusPresentation, completionAnnouncement } = await import('../public/desktop-ui.mjs');
+  const { processingPresentation, modelOutputPresentation, completedModelPresentation, modelCoverageLabel, latestCheckPresentation, reviewFocusPresentation, completionAnnouncement } = await import('../public/desktop-ui.mjs');
   const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
   const focusRender = source.slice(source.indexOf('function renderReviewFocus('), source.indexOf('function positionResponseTools('));
   const render = focusRender + source.slice(source.indexOf('function renderProcess()'), source.indexOf('function renderDecisions()'));
   const document = { activeElement: { id: 'model-output' } }, nodes = new Map(), keys = new Map(); let sourceButtons = 0;
-  const node = (id, textContent = '') => ({ id, textContent, dataset: {}, children: [], scrollHeight: 0, scrollTop: 0, clientHeight: 0,
+  const node = (id, textContent = '') => ({ id, textContent, dataset: {}, classList: { toggle() {} }, children: [], scrollHeight: 0, scrollTop: 0, clientHeight: 0,
     replaceChildren(...children) { this.children = children; },
     querySelector(tag) { return this.children.find(child => child.id === tag) ?? null; },
     contains(target) { return target?.id === id || this.children.includes(target); },
@@ -205,7 +206,7 @@ test('a hidden verdict returns keyboard focus to visible process state and keyed
   const get = id => { if (!nodes.has(id)) nodes.set(id, node(id)); return nodes.get(id); };
   const context = {
     document, $: get, snapshot: { settings: { enabled: true }, entries: [], listener: { busy: true, modelOutput: null, events: [] } },
-    processingPresentation, modelOutputPresentation, completedModelPresentation, modelCoverageLabel, reviewFocusPresentation, completionAnnouncement, streamDisconnected: false, rawOpen: false, lastCompletionKey: null, completionFrame: null,
+    processingPresentation, modelOutputPresentation, completedModelPresentation, modelCoverageLabel, latestCheckPresentation, reviewFocusPresentation, completionAnnouncement, streamDisconnected: false, rawOpen: false, lastCompletionKey: null, completionFrame: null,
     setText: (id, value) => { get(id).textContent = value; }, interfaceText: (target, value) => { target.textContent = value; }, growText: (target, value) => { target.textContent = value; },
     changed: (key, value) => { const serialized = JSON.stringify(value); if (keys.get(key) === serialized) return false; keys.set(key, serialized); return true; },
     element: (tag, content) => node(tag, content), sourceButton: (_row, title) => node(`source-${++sourceButtons}`, title), when: value => value,
@@ -217,7 +218,8 @@ test('a hidden verdict returns keyboard focus to visible process state and keyed
   const output = { entryId: 'research', origin: 'local', title: 'Source research', version: 2, coverage: { bodyUnits: 2000, totalBodyUnits: 2400, bodyTruncated: true, unit: 'UTF-16' }, atUtc: '2026-10-23T10:00:00Z', status: 'streaming', text: '{"decision":"review","reason":"Public model' };
   context.snapshot.entries = [{ id: output.entryId, origin: output.origin, version: output.version }]; context.snapshot.listener.modelOutput = output;
   context.renderProcess();
-  assert.match(get('model-input-coverage').textContent, /^Excerpt only:/, 'Actual public output proves the request progressed beyond preparation.');
+  assert.equal(get('model-input-coverage').textContent, 'Note excerpt supplied', 'Actual public output proves the request progressed beyond preparation.');
+  assert.match(get('model-input-coverage-detail').textContent, /^Excerpt only:/);
   const metadata = get('model-output-source'), button = metadata.children[1]; button.focus();
   assert.equal(metadata.children[0].textContent, 'Source note'); assert.equal(metadata.children[2].textContent, `Check started ${output.atUtc}`); assert.equal(metadata.children[2].dateTime, output.atUtc);
   output.text += ' wording.'; context.renderProcess();
@@ -263,12 +265,14 @@ test('a hidden verdict returns keyboard focus to visible process state and keyed
   assert.equal(get('model-verdict-reason'), reasonNode); assert.equal(get('model-verdict-source').children[1], acceptedSource);
   assert.equal(document.activeElement, focusSummary); assert.equal(get('model-verdict-focus').open, true);
   assert.equal(get('model-verdict-focus-text').textContent, 'Look at the exact source timestamp.');
-  assert.equal(get('model-verdict-focus-summary').textContent, 'Review focus: Custom');
+  assert.equal(get('model-verdict-focus-summary').textContent, 'Review details');
+  assert.equal(get('model-verdict-focus-label').textContent, 'Review focus: Custom');
   get('model-output').focus(); context.rawOpen = true;
   context.snapshot.listener.busy = true; context.snapshot.listener.modelReview = { id: 3, status: 'running' };
   context.snapshot.listener.modelOutput = { ...context.snapshot.listener.modelOutput, checkId: 3, status: 'streaming', text: '' };
   context.renderProcess(); assert.equal(document.activeElement, get('process-state'));
-  assert.match(get('model-input-coverage').textContent, /^Prepared excerpt:/);
+  assert.equal(get('model-input-coverage').textContent, 'Note excerpt prepared');
+  assert.match(get('model-input-coverage-detail').textContent, /^Prepared excerpt:/);
   assert.doesNotMatch(get('model-input-coverage').textContent, /supplied|sent to the model/);
   assert.equal(get('model-output').hidden, true); assert.equal(document.activeElement.focusOptions, undefined);
   acceptedSource.focus(); context.snapshot.listener.lastModelOutput = { ...context.snapshot.listener.lastModelOutput, entryId: 'different-source', title: 'Different source' };
@@ -284,7 +288,31 @@ test('a hidden verdict returns keyboard focus to visible process state and keyed
   context.snapshot.listener.modelOutput = { ...output, checkId: 'recovered', status: 'failed' }; context.renderProcess();
   assert.equal(get('model-output-status').textContent, 'Needs attention', 'Recovery cannot relabel an actual failed response as stopped or unfinished.');
   context.snapshot.listener.modelOutput.status = 'stopped'; context.renderProcess(); assert.equal(get('model-output-status').textContent, 'Review unfinished');
+  context.snapshot.settings.enabled = false;
+  context.snapshot.listener.modelRecovery = null; context.snapshot.listener.modelOutput = null;
+  context.snapshot.listener.modelReview = { id: 'latest-failed', status: 'failed', restored: true, startedAtUtc: '2026-10-23T10:02:00Z', completedAtUtc: '2026-10-23T10:02:04Z', reason: 'The actual latest model failure.' };
+  context.snapshot.listener.lastModelOutput = { ...output, checkId: 'earlier-accepted', status: 'complete', decision: 'review', reason: 'Earlier actual model words.', atUtc: '2026-10-23T10:00:04Z' };
+  context.renderProcess();
+  assert.equal(get('process-state').textContent, 'Off'); assert.equal(get('latest-check').hidden, false);
+  assert.equal(get('latest-check-label').textContent, 'Last check failed'); assert.equal(get('latest-check-reason').textContent, 'The actual latest model failure.');
+  assert.equal(get('latest-check-time').textContent, 'Finished 2026-10-23T10:02:04Z');
+  assert.equal(get('model-verdict-reason').textContent, 'Earlier actual model words.'); assert.match(get('model-verdict-kicker').textContent, /^Earlier/);
+  const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  assert.ok(html.indexOf('id="latest-check"') < html.indexOf('id="model-verdict"'), 'The latest outcome precedes the retained earlier response, including while Off.');
+  assert.equal(context.snapshot.listener.lastError, undefined, 'A historical failure is not invented as an active model error.');
 
+});
+
+test('last-check summary uses only retained terminal evidence and distinguishes finished, recorded and unavailable clocks', async () => {
+  const { latestCheckPresentation } = await import('../public/desktop-ui.mjs');
+  const review = { id: 'check', status: 'failed', reason: 'The actual recorded failure.', startedAtUtc: '2026-10-23T10:00:00Z', completedAtUtc: '2026-10-23T10:00:03Z' };
+  const listener = { busy: false, modelReview: review }, before = JSON.stringify(listener);
+  assert.deepEqual(latestCheckPresentation(listener), { label: 'Last check failed', reason: review.reason, clock: review.completedAtUtc, clockLabel: 'Finished' });
+  assert.equal(latestCheckPresentation({ ...listener, busy: true }), null);
+  assert.deepEqual(latestCheckPresentation({ modelReview: { ...review, status: 'stopped', completedAtUtc: null } }), { label: 'Last check unfinished', reason: review.reason, clock: review.startedAtUtc, clockLabel: 'Recorded' });
+  assert.equal(latestCheckPresentation({ modelReview: { status: 'failed' } }).clock, null);
+  assert.equal(latestCheckPresentation({ modelReview: { ...review, status: 'complete' } }), null);
+  assert.equal(JSON.stringify(listener), before);
 });
 
 test('native menu uses Electron zoom and window roles without changing the existing close or quit handlers', async () => {
@@ -378,8 +406,11 @@ test('completed responses distinguish earlier checks, known revisions and canoni
   assert.match(completedModelPresentation(listener, []).context, /Source not loaded/);
   assert.match(completedModelPresentation({ lastModelOutput: { ...published, version: null } }, [source]).context, /revision unknown/);
   assert.equal(processingPresentation(listener, true).title, 'No model run');
-  assert.match(modelCoverageLabel({ bodyUnits: 2000, totalBodyUnits: 2100, bodyTruncated: true, unit: 'UTF-16' }, { received: true }), /first 2,000 of 2,100 UTF-16 text units\. The rest was not sent to the model\./);
-  assert.match(modelCoverageLabel({ bodyUnits: 40, totalBodyUnits: 40, bodyTruncated: false, unit: 'UTF-16' }, { received: true }), /Full note body supplied · 40 UTF-16 text units/);
+  const excerpt = { bodyUnits: 2000, totalBodyUnits: 2100, bodyTruncated: true, unit: 'UTF-16' }, full = { bodyUnits: 40, totalBodyUnits: 40, bodyTruncated: false, unit: 'UTF-16' };
+  assert.equal(modelCoverageLabel(excerpt, { received: true }), 'Note excerpt supplied'); assert.equal(modelCoverageLabel(excerpt), 'Note excerpt prepared');
+  assert.equal(modelCoverageLabel(full, { received: true }), 'Full note supplied'); assert.equal(modelCoverageLabel(full), 'Full note prepared');
+  assert.match(modelCoverageLabel(excerpt, { received: true, detail: true }), /first 2,000 of 2,100 UTF-16 text units\. The rest was not sent to the model\./);
+  assert.match(modelCoverageLabel(full, { received: true, detail: true }), /Full note body supplied · 40 UTF-16 text units/);
   assert.equal(completedModelPresentation({ lastModelOutput: published }, [source]).earlier, false, 'Restoring the latest accepted result alone is not a newer attempt.');
   assert.equal(modelCoverageLabel(null), 'Review coverage unavailable');
   const output = { ...published, text: '{}', status: 'complete', atUtc: '2026-10-23T11:59:59Z' };
