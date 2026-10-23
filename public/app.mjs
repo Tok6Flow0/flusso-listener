@@ -60,6 +60,9 @@ async function api(path, body, headers = {}) {
   catch { throw new Error('Journal could not reach its local service. Keep Journal running, or reopen it to reconnect.'); }
   const value = await response.json(); if (!response.ok) throw Object.assign(new Error(value.error || 'That did not work. Try again.'), { status: response.status }); return value;
 }
+function initialLocalSaveRefusal(error) {
+  return error.status >= 400 && error.status < 500 && error.status !== 408 && !(error.status === 409 && error.message === 'Retry key was used for different content.');
+}
 async function action(button, work) { if (button?.disabled) return; if (button) button.disabled = true; try { await work(); } catch (error) { notify(error.message, false, true); } finally { if (button) button.disabled = false; } }
 function when(value, seconds = false) { const date = new Date(value); return Number.isFinite(date.getTime()) ? date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', ...(seconds ? { second: '2-digit' } : {}) }) : '—'; }
 function timeOf(value) { const date = new Date(value); return Number.isFinite(date.getTime()) ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'; }
@@ -247,7 +250,7 @@ document.querySelectorAll('[data-view]').forEach(button => button.addEventListen
 async function load({ forms = false } = {}) {
   const next = await api('/api/status');
   if ((snapshot?.listener.sequence ?? 0) > (next.listener.sequence ?? 0)) next.listener = snapshot.listener;
-  snapshot = next;
+  snapshot = { ...next, notebooks: [...next.notebooks].sort((a, b) => a.name.localeCompare(b.name) || a.origin.localeCompare(b.origin) || a.id.localeCompare(b.id)) };
   if (snapshot.display?.theme && snapshot.display.theme !== themeMode) applyTheme(snapshot.display.theme);
   renderAccount(); renderDesktop(); refreshAccountProfile();
   if (connectionKey(snapshot.cloud) !== accountsKey && !$('view-listener').hidden) loadAccounts();
@@ -820,12 +823,20 @@ function showEditor(row = null) {
   $('entry-notebook').replaceChildren(...notebooks.map(item => new Option(item.name, item.id)));
   if (row?.origin === 'local') $('entry-notebook').value = row.notebookId;
   $('entry-title').value = row?.title ?? ''; $('entry-body').value = row?.body ?? ''; $('entry-status').value = row?.status ?? 'watching'; $('entry-signal').value = row?.signal ? JSON.stringify(row.signal, null, 2) : '';
-  editorBase = editorValues(); updateDraftProtection(); reveal($('editor'), window.matchMedia('(max-width:760px)').matches ? 'start' : 'nearest'); $('entry-title').focus({ preventScroll: true });
+  editorBase = editorValues(); renderEntrySaveState(); updateDraftProtection(); reveal($('editor'), window.matchMedia('(max-width:760px)').matches ? 'start' : 'nearest'); $('entry-title').focus({ preventScroll: true });
 }
-// Picking another entry keeps the draft; Cancel requires an explicit discard choice.
-let editorBase = null, reportedDraftDirty, entrySaving = false;
+// Picking another entry keeps the draft; unconfirmed saves retain their exact request until confirmed.
+let editorBase = null, reportedDraftDirty, entrySaving = false, entryIntent = null;
+const entrySavePendingMessage = 'The original save is unconfirmed and may already be stored. Retry save to confirm it before closing. You can select and copy this draft.';
+function renderEntrySaveState() {
+  const uncertain = Boolean(entryIntent?.uncertain);
+  for (const id of ['entry-title', 'entry-body', 'entry-signal']) $(id).readOnly = uncertain;
+  for (const id of ['entry-notebook', 'entry-status', 'insert-ticket', 'insert-close-ticket']) $(id).disabled = entrySaving || uncertain;
+  $('entry-save').textContent = uncertain ? 'Retry save' : 'Save';
+  $('entry-save-status').textContent = uncertain ? entrySavePendingMessage : ''; $('entry-save-status').hidden = !uncertain;
+}
 function editorValues() { return { notebookId: $('entry-notebook').value, title: $('entry-title').value, body: $('entry-body').value, status: $('entry-status').value, signal: $('entry-signal').value }; }
-function editorDirty() { return !$('editor').hidden && localDraftDirty(editorBase, editorValues()); }
+function editorDirty() { return !$('editor').hidden && (Boolean(entryIntent?.uncertain) || localDraftDirty(editorBase, editorValues())); }
 function protectDraftOnLeave(event) { if (entrySaving || editorDirty()) { event.preventDefault(); event.returnValue = ''; } }
 function updateDraftProtection() {
   const dirty = entrySaving || editorDirty();
@@ -837,7 +848,7 @@ function updateDraftProtection() {
 }
 function keepDraftVisible() {
   switchView('journal');
-  notify('Your local draft is still open. Save it, or choose Cancel to discard it.');
+  notify(entryIntent?.uncertain ? entrySavePendingMessage : 'Your local draft is still open. Save it, or choose Cancel to discard it.');
   reveal($('editor'), window.matchMedia('(max-width:760px)').matches ? 'start' : 'nearest'); $('entry-title').focus({ preventScroll: true });
 }
 $('entry-form').addEventListener('input', updateDraftProtection);
@@ -849,12 +860,14 @@ function leaveEditor() {
   closeEditor(); return true;
 }
 function closeEditor({ focus = false } = {}) {
+  if (entryIntent?.uncertain) { notify(entrySavePendingMessage, false, true); return; }
   if (entrySaving) { notify('This entry is still saving. Wait for the result before closing it.'); return; }
   if ($('editor').hidden) return;
   $('editor').hidden = true; $('entry-detail').hidden = false; editorBase = null; updateDraftProtection();
   if (focus) (document.querySelector('.entry-card.selected') ?? $('new-entry')).focus();
 }
 function insertTicket(close = false) {
+  if (entryIntent?.uncertain) { notify(entrySavePendingMessage, false, true); return; }
   const id = `ticket-${crypto.randomUUID()}`;
   const body = $('entry-body'), block = '```' + (close ? 'flusso-close' : 'flusso-orders') + '\n' + JSON.stringify(ticketDraft(id, close), null, 2) + '\n```\n';
   if (TICKET_FENCE.test(body.value)) { TICKET_FENCE.lastIndex = 0; notify('This entry already has an action ticket.'); return; }
@@ -867,7 +880,7 @@ $('result-filter').replaceChildren(...RESULT_FILTERS.map(option => new Option(op
 $('journal-filter').addEventListener('change', renderEntries);
 $('result-filter').addEventListener('change', renderEntries);
 $('new-entry').addEventListener('click', () => showEditor());
-$('cancel-edit').addEventListener('click', () => { if (editorDirty()) $('discard-entry').showModal(); else closeEditor({ focus: true }); });
+$('cancel-edit').addEventListener('click', () => { if (entryIntent?.uncertain) { closeEditor(); return; } if (editorDirty()) $('discard-entry').showModal(); else closeEditor({ focus: true }); });
 $('keep-writing').addEventListener('click', () => $('discard-entry').close());
 $('discard-writing').addEventListener('click', () => { $('discard-entry').close(); closeEditor({ focus: true }); });
 $('entry-form').addEventListener('submit', event => {
@@ -879,13 +892,22 @@ $('entry-form').addEventListener('submit', event => {
   const releaseSave = ({ restoreFocus = false } = {}) => {
     if (released) return; released = true;
     controls.forEach(([control, disabled]) => { control.disabled = disabled; });
-    form.removeAttribute('aria-busy'); entrySaving = false; updateDraftProtection();
+    form.removeAttribute('aria-busy'); entrySaving = false; renderEntrySaveState(); updateDraftProtection();
     if (restoreFocus && document.activeElement === document.body && focusBeforeSave?.isConnected && !focusBeforeSave.disabled && controls.some(([control]) => control === focusBeforeSave)) focusBeforeSave.focus();
   };
   action(null, async () => { try {
-  let signal = null; if ($('entry-signal').value.trim()) { try { signal = JSON.parse($('entry-signal').value); } catch { throw new Error('The structured signal is not valid JSON.'); } }
-  const body = { notebookId: $('entry-notebook').value, title: $('entry-title').value, body: $('entry-body').value, status: $('entry-status').value, source: editing?.source ?? 'manual', observedAtUtc: editing?.observedAtUtc ?? null, instrument: editing?.instrument ?? null, venue: editing?.venue ?? null, signal, ...(editing ? { version: editing.version } : {}) };
-  const saved = await api(editing ? `/api/entries/${editing.id}` : '/api/entries', body, { 'Idempotency-Key': entryRetryKey });
+  if (!entryIntent) {
+    let signal = null; if ($('entry-signal').value.trim()) { try { signal = JSON.parse($('entry-signal').value); } catch { throw new Error('The structured signal is not valid JSON.'); } }
+    const body = { notebookId: $('entry-notebook').value, title: $('entry-title').value, body: $('entry-body').value, status: $('entry-status').value, source: editing?.source ?? 'manual', observedAtUtc: editing?.observedAtUtc ?? null, instrument: editing?.instrument ?? null, venue: editing?.venue ?? null, signal, ...(editing ? { version: editing.version } : {}) };
+    entryIntent = { path: editing ? `/api/entries/${editing.id}` : '/api/entries', body, key: entryRetryKey, uncertain: false };
+  }
+  const intent = entryIntent; let saved;
+  try { saved = await api(intent.path, intent.body, { 'Idempotency-Key': intent.key }); } catch (error) {
+    if (!intent.uncertain && initialLocalSaveRefusal(error)) { entryIntent = null; entryRetryKey = crypto.randomUUID(); }
+    else intent.uncertain = true;
+    throw new Error(entryIntent?.uncertain ? `${error.message} ${entrySavePendingMessage}` : error.message);
+  }
+  entryIntent = null;
   selected = { ...saved, origin: 'local' };
   snapshot.entries = [selected, ...snapshot.entries.filter(row => row.origin !== selected.origin || row.id !== selected.id)];
   showSelectedEntry(); renderEntries(); releaseSave(); closeEditor({ focus: true });
@@ -904,14 +926,15 @@ $('notebook-form').addEventListener('submit', event => {
   notebookSaving = true;
   const input = $('notebook-name'), submit = $('create-notebook'), focusBeforeSave = document.activeElement;
   let confirmed = false;
-  notebookIntent ??= { name: input.value, key: crypto.randomUUID() };
+  notebookIntent ??= { name: input.value, key: crypto.randomUUID(), uncertain: false };
   const intent = notebookIntent;
   input.disabled = submit.disabled = true; $('notebook-form').setAttribute('aria-busy', 'true');
   $('notebook-error').textContent = ''; $('notebook-error').hidden = true;
   action(null, async () => {
     try {
       try { await api('/api/notebooks', { name: intent.name }, { 'Idempotency-Key': intent.key }); } catch (error) {
-        if (error.status >= 400 && error.status < 500) notebookIntent = null;
+        if (!intent.uncertain && initialLocalSaveRefusal(error)) notebookIntent = null;
+        else intent.uncertain = true;
         const message = notebookIntent ? `${error.message} Notebook creation is unconfirmed. Retry to check the same request.` : error.message;
         input.value = intent.name;
         $('notebook-error').textContent = message; $('notebook-error').hidden = false;

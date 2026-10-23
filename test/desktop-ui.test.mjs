@@ -116,13 +116,14 @@ test('entry saves lock the actual form handler until acceptance and an older ref
   nodes['entry-form'] = { elements: [...controls, disabled], setAttribute: (key, value) => attributes.set(key, value), removeAttribute: key => attributes.delete(key), addEventListener: (_event, callback) => { submit = callback; } };
   nodes['entry-list'] = { contains: () => false }; nodes['new-entry'] = focus;
   const context = {
-    $: id => nodes[id], entrySaving: false, editing: null, entryRetryKey: 'original-retry-key', selected: null, snapshot: { entries: [{ id: 'saved-note', origin: 'cloud', version: 7 }] },
+    $: id => nodes[id], entrySaving: false, entryIntent: null, entrySavePendingMessage: 'The original save is unconfirmed.', renderEntrySaveState() {}, crypto: { randomUUID: () => 'new-entry-key' }, editing: null, entryRetryKey: 'original-retry-key', selected: null, snapshot: { entries: [{ id: 'saved-note', origin: 'cloud', version: 7 }] },
     document: { activeElement: focus, querySelector: () => focus },
     action: (_button, work) => { const promise = work().catch(error => errors.push(error.message)); actions.push(promise); },
     api: (path, body, headers) => { requests.push({ path, body, headers }); return requests.length === 1 ? first.promise : second.promise; },
     updateDraftProtection() {}, showSelectedEntry() {}, renderEntries() { renders++; }, notify: message => notices.push(message),
     closeEditor: () => { assert.equal(context.entrySaving, false); closes++; }, load: () => refresh.promise,
   };
+  runInNewContext(source.slice(source.indexOf('function initialLocalSaveRefusal('), source.indexOf('async function action(')), context);
   runInNewContext(handler, context);
   const event = { preventDefault() {} };
   submit(event);
@@ -145,7 +146,7 @@ test('entry saves lock the actual form handler until acceptance and an older ref
   assert.equal(context.entrySaving, false); assert.equal(attributes.has('aria-busy'), false);
   assert.ok(controls.every(control => !control.disabled)); assert.equal(disabled.disabled, true);
   assert.equal(nodes['entry-body'].value, 'Exact submitted notes'); assert.equal(context.entryRetryKey, 'original-retry-key');
-  assert.deepEqual(errors, ['Save could not be confirmed.']);
+  assert.equal(errors.length, 1); assert.match(errors[0], /Save could not be confirmed.*original save is unconfirmed/);
 });
 
 test('historical and unrecorded result revisions are explicit without changing Listener result groups', async () => {
@@ -190,7 +191,7 @@ test('the existing entry Save and Cancel controls sit in its heading and the out
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const formStart = html.indexOf('<form id="entry-form">'), form = html.slice(formStart, html.indexOf('</form>', formStart));
   const heading = form.slice(0, form.indexOf('<label class="title-field">'));
-  assert.match(heading, /class="editor-head"/); assert.match(heading, /id="cancel-edit"/); assert.match(heading, /type="submit" class="primary">Save<\/button>/);
+  assert.match(heading, /class="editor-head"/); assert.match(heading, /id="cancel-edit"/); assert.match(heading, /type="submit" class="primary" id="entry-save" aria-describedby="entry-save-status">Save<\/button>/);
   assert.equal((form.match(/id="cancel-edit"/g) ?? []).length, 1); assert.equal((form.match(/>Save<\/button>/g) ?? []).length, 1);
   assert.match(html, /<h2 id="model-output-heading" class="sr-only"/); assert.match(html, /<h3 id="model-verdict-label"/);
   assert.match(html, /aria-labelledby="model-output-heading"/); assert.doesNotMatch(html, /Accepted local decision/);
@@ -378,6 +379,7 @@ test('native notebook creation retains failures in the dialog and a confirmed sa
     const context = { $: get, document: { activeElement: {}, body: {} }, crypto: { randomUUID: () => 'stable-notebook-key' }, formDirty: false, api: async (_path, input) => { requests++; assert.equal(input.name, 'Exact new notebook'); await pending; if (mode === 'refused') throw Object.assign(new Error('Actual create refusal.'), { status: 400 }); return {}; },
       load: async () => { if (mode === 'refresh-failed') throw new Error('Actual read failure.'); }, notify: (message, success) => notices.push({ message, success }),
       action: (_button, work) => jobs.push(work()) };
+    runInNewContext(source.slice(source.indexOf('function initialLocalSaveRefusal('), source.indexOf('async function action(')), context);
     runInNewContext(handlers, context); callbacks.get('new-notebook:click')(); assert.equal(get('notebook-dialog').open, true);
     callbacks.get('notebook-form:submit')({ preventDefault() {}, submitter: {} }); assert.equal(get('notebook-name').disabled, true); release(); await jobs[0];
     assert.equal(get('notebook-name').disabled, false); assert.equal(requests, 1);
@@ -415,7 +417,7 @@ test('a saving clean entry cannot be replaced, closed or navigated away from', a
   const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
   const boundaries = [['function showEditor(', '// Picking another entry'], ['function leaveEditor()', 'function closeEditor('], ['function closeEditor(', 'function insertTicket('], ['function switchView(', "\ndocument.querySelectorAll('[data-view]')"]];
   const guards = boundaries.map(([start, end]) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)))).join('\n');
-  const notices = [], context = { entrySaving: true, editorDirty: () => false, notify: message => notices.push(message), $() { throw new Error('A saving editor must not be replaced or hidden.'); } };
+  const notices = [], context = { entrySaving: true, entryIntent: null, editorDirty: () => false, notify: message => notices.push(message), $() { throw new Error('A saving editor must not be replaced or hidden.'); } };
   runInNewContext(guards, context);
   context.showEditor(); assert.equal(context.leaveEditor(), false); context.closeEditor(); context.switchView('activity');
   assert.equal(notices.length, 4); assert.ok(notices.every(message => message.includes('still saving')));
@@ -461,7 +463,7 @@ test('separate empty ticket insertions have distinct durable IDs even in the sam
   const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
   const insert = source.slice(source.indexOf('function insertTicket('), source.indexOf("$('insert-ticket').addEventListener"));
   let sequence = 0; const body = { value: '', focus() {} }, status = {};
-  const context = { crypto: { randomUUID: () => `unique-${++sequence}` }, ticketDraft, $: id => id === 'entry-body' ? body : status,
+  const context = { entryIntent: null, crypto: { randomUUID: () => `unique-${++sequence}` }, ticketDraft, $: id => id === 'entry-body' ? body : status,
     TICKET_FENCE: /^(```|~~~)[ \t]*flusso-(?:orders|close)[ \t]*\n[\s\S]*?^\1[ \t]*$/gm, updateDraftProtection() {}, notify() {} };
   runInNewContext(insert, context);
   context.insertTicket(); const first = body.value; assert.match(first, /ticket-unique-1/); assert.match(first, /"orders": \[\]/);
@@ -1036,6 +1038,7 @@ test('dismissed pending notebook creation cannot submit twice and its later refu
       showModal() { this.open = true; }, close() { this.open = false; } }); return nodes.get(id); };
     const context = { $: get, document: { activeElement: {}, body: {} }, crypto: { randomUUID: () => 'stable-notebook-key' }, formDirty: false, api: async () => { requests++; await pending; }, load: async () => assert.fail('A refused create must not refresh or report success.'),
       action: (_button, work) => jobs.push(work()), notify: (message, success, error) => notices.push({ message, success, error }) };
+    runInNewContext(source.slice(source.indexOf('function initialLocalSaveRefusal('), source.indexOf('async function action(')), context);
     runInNewContext(handlers, context); callbacks.get('new-notebook:click')(); const submit = () => callbacks.get('notebook-form:submit')({ preventDefault() {}, submitter: get('create-notebook') });
     submit(); if (dismiss === 'cancel') callbacks.get('cancel-notebook:click')(); else get('notebook-dialog').close();
     callbacks.get('new-notebook:click')(); submit(); assert.equal(requests, 1); assert.equal(get('notebook-name').disabled, true);
@@ -1058,6 +1061,7 @@ test('an uncertain notebook create retains its original request through dismissa
     const context = { $: get, document: { activeElement: {}, body: {} }, crypto: { randomUUID: () => `intent-${++key}` }, formDirty: false,
       api: async (path, body, headers) => { requests.push({ path, body: { ...body }, headers: { ...headers } }); if (requests.length === 1) await pending; return { id: 'committed-notebook' }; },
       load: async () => { throw new Error('Readback unavailable after confirmed save.'); }, action: (_button, work) => jobs.push(work()), notify: (message, success, error) => notices.push({ message, success, error }) };
+    runInNewContext(source.slice(source.indexOf('function initialLocalSaveRefusal('), source.indexOf('async function action(')), context);
     runInNewContext(handlers, context); const submit = () => callbacks.get('notebook-form:submit')({ preventDefault() {}, submitter: get('create-notebook') });
     callbacks.get('new-notebook:click')(); submit(); callbacks.get('cancel-notebook:click')(); reject(failure); await jobs[0];
     assert.equal(get('notebook-name').readOnly, true); assert.equal(get('notebook-name').value, 'Original requested name'); assert.match(notices[0].message, /unconfirmed/);
@@ -1107,8 +1111,9 @@ test('failed local entry save restores a disabled focused control only when focu
     doc.activeElement = button;
     for (const [id, value] of Object.entries({ 'entry-notebook': 'book', 'entry-title': 'Unsaved title', 'entry-body': 'Exact notes', 'entry-status': 'watching', 'entry-signal': '' })) nodes[id] = { value, disabled: false };
     nodes['entry-form'] = { elements: [...Object.values(nodes), button], setAttribute() {}, removeAttribute() {}, addEventListener(_event, callback) { submit = callback; } };
-    const context = { $: id => nodes[id], document: doc, entrySaving: false, editing: null, entryRetryKey: 'entry-key', updateDraftProtection() {}, action(_button, work) { job = work().catch(() => {}); }, api: () => new Promise((_resolve, refuse) => { reject = refuse; }) };
-    runInNewContext(handler, context); submit({ preventDefault() {} }); assert.equal(doc.activeElement, body);
+    const context = { $: id => nodes[id], document: doc, entrySaving: false, entryIntent: null, entrySavePendingMessage: 'The original save is unconfirmed.', renderEntrySaveState() {}, crypto: { randomUUID: () => 'new-entry-key' }, editing: null, entryRetryKey: 'entry-key', updateDraftProtection() {}, action(_button, work) { job = work().catch(() => {}); }, api: () => new Promise((_resolve, refuse) => { reject = refuse; }) };
+    runInNewContext(source.slice(source.indexOf('function initialLocalSaveRefusal('), source.indexOf('async function action(')), context);
+  runInNewContext(handler, context); submit({ preventDefault() {} }); assert.equal(doc.activeElement, body);
     if (deliberate) doc.activeElement = other;
     reject(new Error('The save was not confirmed.')); await job;
     assert.equal(doc.activeElement, deliberate ? other : button); assert.equal(restores, deliberate ? 0 : 1); assert.equal(nodes['entry-body'].value, 'Exact notes');
@@ -1126,6 +1131,7 @@ test('a refused notebook save restores its disabled trigger only if the dialog r
       addEventListener: (event, callback) => callbacks.set(`${id}:${event}`, callback), setAttribute() {}, removeAttribute() {}, showModal() { this.open = true; }, close() { this.open = false; }, focus() { doc.activeElement = this; restores++; } }); return nodes.get(id); };
     const context = { $: get, document: doc, crypto: { randomUUID: () => 'notebook-key' }, formDirty: false, action(_button, work) { job = work(); },
       api: () => new Promise((_resolve, reject) => { refuse = reject; }), notify() {} };
+    runInNewContext(source.slice(source.indexOf('function initialLocalSaveRefusal('), source.indexOf('async function action(')), context);
     runInNewContext(handlers, context); callbacks.get('new-notebook:click')(); doc.activeElement = get('create-notebook');
     callbacks.get('notebook-form:submit')({ preventDefault() {} }); assert.equal(doc.activeElement, body);
     if (state === 'deliberate') doc.activeElement = other; if (state === 'dismissed') callbacks.get('cancel-notebook:click')();
@@ -1149,4 +1155,112 @@ test('risk validation associates external error and scope descriptions while pre
   }
   assert.equal(context.renderRiskValidation(), null); assert.equal(get('max-order')['aria-describedby'], undefined);
   assert.equal(get('max-leverage')['aria-describedby'], 'max-leverage-scope'); assert.equal(get('max-leverage-error').hidden, true);
+});
+
+
+test('local entry create/edit retain the exact committed intent through lost reply and replay auth failures', async () => {
+  const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8'), { workspace, note } = await import('./helpers.mjs');
+  for (const mode of ['create', 'edit']) {
+    const w = await workspace(); try {
+      const original = mode === 'edit' ? w.store.createEntry(note(w.store)) : null, baseCount = w.store.entries().length;
+      let submit, job, saved, requestCount = 0; const requests = [], notices = [], nodes = new Map(), doc = { activeElement: {}, body: {}, querySelector: () => ({ focus() {} }) };
+      const get = id => { if (!nodes.has(id)) nodes.set(id, { id, value: ({ 'entry-notebook': w.store.notebooks()[0].id, 'entry-title': 'Exact original title', 'entry-body': 'Exact submitted research', 'entry-status': 'watching', 'entry-signal': '' })[id] ?? '', hidden: false, disabled: false, dataset: {},
+        setAttribute() {}, removeAttribute() {}, focus() {}, contains: () => false, addEventListener(_event, callback) { if (id === 'entry-form') submit = callback; } }); return nodes.get(id); };
+      get('entry-form').elements = ['entry-notebook', 'entry-title', 'entry-body', 'entry-status', 'entry-signal', 'entry-save', 'cancel-edit', 'insert-ticket', 'insert-close-ticket'].map(get);
+      const context = { $: get, document: doc, entrySaving: false, entryIntent: null, entrySavePendingMessage: 'The original save is unconfirmed.', entryRetryKey: 'stable-original-entry', editing: original, selected: null, snapshot: { entries: original ? [original] : [] }, crypto: { randomUUID: () => 'new-intent-key' },
+        updateDraftProtection() {}, showSelectedEntry() {}, renderEntries() {}, notify: message => notices.push(message), load: async () => { throw new Error('Readback failed after confirmed reply.'); }, closeEditor() { get('editor').hidden = true; },
+        action(_button, work) { job = work().catch(error => notices.push(error.message)); },
+        api: async (path, body, headers) => {
+          requests.push({ path, body: JSON.parse(JSON.stringify(body)), headers: { ...headers } }); requestCount++;
+          if (requestCount === 2 || requestCount === 3) throw Object.assign(new Error('The current session cannot read this route.'), { status: requestCount === 2 ? 401 : 404 });
+          const input = JSON.parse(JSON.stringify(body));
+          saved = mode === 'edit' ? w.store.updateEntry(original.id, input, headers['Idempotency-Key']) : w.store.createEntry(input, headers['Idempotency-Key']);
+          if (requestCount === 1) throw new TypeError('The committed reply was lost.');
+          return saved;
+        } };
+      runInNewContext(source.slice(source.indexOf('function initialLocalSaveRefusal('), source.indexOf('async function action(')), context);
+      runInNewContext(source.slice(source.indexOf('function renderEntrySaveState('), source.indexOf('function editorValues(')), context);
+      runInNewContext(source.slice(source.indexOf("$('entry-form').addEventListener('submit'"), source.indexOf('let notebookSaving')), context);
+      const fire = async () => { submit({ preventDefault() {} }); await job; };
+      await fire(); assert.equal(get('entry-body').readOnly, true, JSON.stringify({ notices, intent: context.entryIntent, requests })); assert.equal(get('entry-notebook').disabled, true); assert.equal(get('entry-save').textContent, 'Retry save');
+      get('entry-body').value = 'Programmatic changed text must not alter original retry';
+      for (let i = 0; i < 2; i++) { await fire(); assert.equal(get('entry-body').readOnly, true); assert.equal(context.entryIntent.uncertain, true); }
+      await fire(); for (const request of requests) assert.deepEqual(request, requests[0]);
+      assert.equal(context.entryIntent, null); assert.equal(get('entry-body').readOnly, false); assert.equal(w.store.entries().length, baseCount + (mode === 'create' ? 1 : 0));
+      assert.equal(w.store.entry(saved.id).version, mode === 'create' ? 1 : 2); assert.equal(w.store.entry(saved.id).body, 'Exact submitted research');
+      assert.ok(notices.some(message => /Entry saved, but the list could not refresh/.test(message))); assert.equal(w.store.all('attempt').length, 0);
+    } finally { await w.close(); }
+  }
+});
+
+test('notebook auth and route refusals after an uncertain create preserve its original identity until confirmation', async () => {
+  const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
+  const callbacks = new Map(), nodes = new Map(), requests = []; let job, key = 0;
+  const get = id => { if (!nodes.has(id)) nodes.set(id, { id, value: id === 'notebook-name' ? 'Original name' : '', hidden: false, setAttribute() {}, removeAttribute() {}, showModal() { this.open = true; }, close() { this.open = false; }, addEventListener(event, callback) { callbacks.set(`${id}:${event}`, callback); } }); return nodes.get(id); };
+  const context = { $: get, document: { activeElement: {}, body: {} }, crypto: { randomUUID: () => `key-${++key}` }, formDirty: false, notify() {}, load: async () => {}, action(_button, work) { job = work(); },
+    api: async (path, body, headers) => { requests.push({ path, body: { ...body }, headers: { ...headers } }); if (requests.length === 1) throw new SyntaxError('The committed reply was truncated.'); if (requests.length < 4) throw Object.assign(new Error('Current authentication or route refusal.'), { status: requests.length === 2 ? 401 : 404 }); return { id: 'saved-notebook' }; } };
+  runInNewContext(source.slice(source.indexOf('function initialLocalSaveRefusal('), source.indexOf('async function action(')), context);
+  runInNewContext(source.slice(source.indexOf('let notebookSaving'), source.indexOf("$('sync').addEventListener")), context);
+  callbacks.get('new-notebook:click')();
+  for (let i = 0; i < 4; i++) { callbacks.get('notebook-form:submit')({ preventDefault() {} }); await job; if (i < 3) assert.equal(get('notebook-name').readOnly, true); }
+  for (const request of requests) assert.deepEqual(request, requests[0]); assert.equal(key, 1); assert.equal(get('notebook-name').readOnly, false);
+});
+
+
+test('unconfirmed local entry stays copyable and cannot be closed or discarded even when its unchanged fields match the base', async () => {
+  const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
+  const callbacks = new Map(), nodes = new Map(), messages = [], base = { body: 'Original exact text' };
+  const get = id => { if (!nodes.has(id)) nodes.set(id, { id, value: id === 'entry-body' ? base.body : '', hidden: false, selectionStart: 3, selectionEnd: 9, close() { this.closed = true; }, addEventListener(event, callback) { callbacks.set(`${id}:${event}`, callback); } }); return nodes.get(id); };
+  const intent = { path: '/api/entries/original', body: { body: base.body }, key: 'original-key', uncertain: true };
+  const context = { $: get, entryIntent: intent, entrySaving: false, editorBase: base, localDraftDirty: () => false, notify: message => messages.push(message), editorValues: () => base };
+  runInNewContext(source.slice(source.indexOf('const entrySavePendingMessage'), source.indexOf('function editorValues(')), context);
+  runInNewContext(source.slice(source.indexOf('function editorDirty('), source.indexOf('function protectDraftOnLeave(')), context);
+  runInNewContext(source.slice(source.indexOf('function closeEditor('), source.indexOf('function insertTicket(')), context);
+  runInNewContext(source.slice(source.indexOf("$('cancel-edit').addEventListener"), source.indexOf("$('keep-writing').addEventListener")), context);
+  runInNewContext(source.slice(source.indexOf("$('discard-writing').addEventListener"), source.indexOf("$('entry-form').addEventListener('submit'")), context);
+  context.renderEntrySaveState(); assert.equal(context.editorDirty(), true); assert.equal(get('entry-body').readOnly, true); assert.equal(get('entry-body').disabled, undefined);
+  assert.match(get('entry-save-status').textContent, /may already be stored.*Retry save.*copy/); assert.equal(get('entry-save-status').hidden, false);
+  callbacks.get('cancel-edit:click')(); callbacks.get('discard-writing:click')(); context.closeEditor();
+  assert.equal(get('editor').hidden, false); assert.equal(context.entryIntent, intent); assert.equal(context.editorBase, base); assert.equal(get('entry-body').value, base.body);
+  assert.equal(get('entry-body').selectionStart, 3); assert.equal(get('entry-body').selectionEnd, 9); assert.equal(messages.length, 3);
+});
+
+test('initial local save refusals distinguish definite validation/version rejection from timeout or retry-identity conflict', async () => {
+  const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8'), context = {};
+  runInNewContext(source.slice(source.indexOf('function initialLocalSaveRefusal('), source.indexOf('async function action(')), context);
+  for (const status of [400, 401, 403, 404, 422]) assert.equal(context.initialLocalSaveRefusal({ status, message: 'Definitive refusal.' }), true);
+  assert.equal(context.initialLocalSaveRefusal({ status: 409, message: 'Entry changed. Read its latest version before editing.' }), true);
+  for (const status of [408, 500, undefined]) assert.equal(context.initialLocalSaveRefusal({ status }), false);
+  assert.equal(context.initialLocalSaveRefusal({ status: 409, message: 'Retry key was used for different content.' }), false);
+});
+
+test('notebook presentation sorts names stably without changing the source array; narrow settings order matches its DOM', async () => {
+  const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8'), css = await readFile(new URL('../public/styles.css', import.meta.url), 'utf8'), html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  const next = { notebooks: [{ name: 'Zulu', origin: 'local', id: '1' }, { name: 'Alpha', origin: 'local', id: '3' }, { name: 'Alpha', origin: 'local', id: '2' }] }, before = JSON.stringify(next);
+  const statement = source.match(/  snapshot = \{ \.\.\.next, notebooks:[^\n]+/)[0], context = { next }; runInNewContext(statement, context);
+  assert.equal(context.snapshot.notebooks.map(row => row.id).join(','), '2,3,1'); assert.equal(JSON.stringify(next), before);
+  assert.match(css, /\.listener-body:has\(>\.listener-configuration:not\(\[hidden\]\)\)\{grid-template-areas:"primary" "secondary" "config"\}/);
+  assert.ok(html.indexOf('class="review-desk"') < html.indexOf('class="listener-secondary"')); assert.ok(html.indexOf('class="listener-secondary"') < html.indexOf('id="listener-configuration"'));
+  assert.match(css, /@media\(min-width:1200px\)[\s\S]*?grid-template-areas:"primary config" "secondary config"/);
+  assert.match(css, /\.nav-button:focus-visible\{outline-offset:-3px\}/);
+  assert.match(html, /<label for="min-volume">Min 24h volume<span class="sr-only"> in USD<\/span><\/label><span class="affix">/);
+});
+
+
+test('an initial definite entry refusal unlocks correction while timeout and retry-content conflict retain the original intent', async () => {
+  const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
+  for (const [status, message, retained] of [[400, 'Invalid title.', false], [409, 'Entry changed. Read its latest version before editing.', false], [408, 'Timed out.', true], [409, 'Retry key was used for different content.', true]]) {
+    const nodes = new Map(); let submit, job, keys = 0;
+    const get = id => { if (!nodes.has(id)) nodes.set(id, { value: ({ 'entry-notebook': 'book', 'entry-title': 'Draft', 'entry-body': 'Notes', 'entry-status': 'watching', 'entry-signal': '' })[id] ?? '', disabled: false, hidden: false,
+      setAttribute() {}, removeAttribute() {}, addEventListener(_event, callback) { if (id === 'entry-form') submit = callback; } }); return nodes.get(id); };
+    get('entry-form').elements = ['entry-notebook', 'entry-title', 'entry-body', 'entry-status', 'entry-signal', 'entry-save', 'cancel-edit', 'insert-ticket', 'insert-close-ticket'].map(get);
+    const context = { $: get, entryIntent: null, entrySaving: false, editing: null, entryRetryKey: 'initial-key', document: { activeElement: {}, body: {} }, crypto: { randomUUID: () => `fresh-${++keys}` }, updateDraftProtection() {},
+      action(_button, work) { job = work().catch(() => {}); }, api: async () => { throw Object.assign(new Error(message), { status }); } };
+    runInNewContext(source.slice(source.indexOf('const entrySavePendingMessage'), source.indexOf('function editorValues(')), context);
+    runInNewContext(source.slice(source.indexOf('function initialLocalSaveRefusal('), source.indexOf('async function action(')), context);
+    runInNewContext(source.slice(source.indexOf("$('entry-form').addEventListener('submit'"), source.indexOf('let notebookSaving')), context);
+    submit({ preventDefault() {} }); await job;
+    assert.equal(get('entry-body').readOnly, retained); assert.equal(get('entry-notebook').disabled, retained); assert.equal(Boolean(context.entryIntent), retained);
+    assert.equal(context.entryRetryKey, retained ? 'initial-key' : 'fresh-1'); assert.equal(get('entry-body').value, 'Notes');
+  }
 });

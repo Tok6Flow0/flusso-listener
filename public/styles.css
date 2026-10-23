@@ -185,7 +185,7 @@ tr:last-child td{border-bottom:0}
 .listener-actions{display:flex;gap:8px;flex-wrap:wrap}
 
 .listener-body{display:grid;grid-template-columns:minmax(0,1fr);grid-template-areas:"primary" "secondary";gap:18px;align-items:start}
-.listener-body:has(>.listener-configuration:not([hidden])){grid-template-areas:"config" "primary" "secondary"}
+.listener-body:has(>.listener-configuration:not([hidden])){grid-template-areas:"primary" "secondary" "config"}
 .review-desk{grid-area:primary}
 .listener-secondary{grid-area:secondary;display:grid;gap:18px;min-width:0}
 .listener-configuration{grid-area:config;min-width:0;scroll-margin-top:20px}
@@ -371,6 +371,7 @@ tr:last-child td{border-bottom:0}
 .discard-dialog .form-actions{margin-top:24px;flex-wrap:wrap}
 .editor-fields{display:flex;gap:10px;flex-wrap:wrap}
 .editor-fields label{min-width:150px}
+#entry-save-status{margin-bottom:18px}
 .title-field{margin-bottom:18px}
 .title-field input{min-height:48px;font-size:var(--fs-title-sm);font-weight:var(--fw-semibold)}
 .entry-body-field{display:grid;grid-template-columns:minmax(0,1fr);gap:8px;margin-bottom:8px}
@@ -464,6 +465,7 @@ tr:last-child td{border-bottom:0}
   .brand span{display:none}.brand{padding:0 4px}
   .sidebar nav{display:flex;flex:1;gap:2px;overflow-x:auto}
   .nav-button{width:auto;padding:0 10px;font-size:var(--fs-body)}
+  .nav-button:focus-visible{outline-offset:-3px}
   .nav-button svg{display:none}
   .sidebar-bottom{margin:0;flex:0 0 auto}
   .account-toggle{width:auto;min-height:40px;padding:4px}
