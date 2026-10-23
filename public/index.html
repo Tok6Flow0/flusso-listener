@@ -10,7 +10,7 @@
 <section id="startup" class="notice" role="status"><span id="startup-message">Loading Journal…</span><button id="retry-initialize" type="button" hidden>Retry</button></section>
 <div class="app-shell" id="workspace" inert aria-busy="true">
   <aside class="sidebar">
-    <a class="brand" href="/"><img src="/flusso-mark.png" alt="" width="28" height="28"><span>flusso</span></a>
+    <a class="brand" href="/" aria-label="Flusso Journal home"><img src="/flusso-mark.png" alt="" width="28" height="28"><span>flusso</span></a>
     <nav aria-label="Sections">
       <button type="button" class="nav-button active" data-view="listener" aria-current="page"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 10h2.5l2-5 3 10 2-5H17"/></svg><span>Listener</span><span class="nav-dot" id="listener-dot"></span><span class="sr-only" id="listener-dot-label">Loading</span></button>
       <button type="button" class="nav-button" data-view="journal"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 3h9a2 2 0 0 1 2 2v12H6a2 2 0 0 1-2-2V4a1 1 0 0 1 1-1Z"/><path d="M4 15a2 2 0 0 1 2-2h10"/><path d="M8 7h5"/></svg><span>Journal</span></button>
@@ -56,7 +56,7 @@
         <div class="head-actions">
           <label>Notebook<select id="journal-filter"><option value="">All notebooks</option></select></label>
           <label>Listener result<select id="result-filter"></select></label>
-          <details class="notebook-tools"><summary>New notebook</summary><form id="notebook-form" class="notebook-form"><label class="sr-only" for="notebook-name">Notebook name</label><input id="notebook-name" placeholder="Notebook name" maxlength="120" required><button type="submit" class="icon-button" aria-label="Add notebook" title="Add notebook"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg></button></form></details>
+          <button id="new-notebook" type="button" aria-haspopup="dialog" aria-controls="notebook-dialog">New notebook</button>
           <button id="sync" type="button" class="icon-button" title="Sync cloud Journal" aria-label="Sync cloud Journal"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16 10a6 6 0 0 1-10.4 4.1M4 10a6 6 0 0 1 10.4-4.1"/><path d="M14.5 2.5v3.6h-3.6M5.5 17.5v-3.6h3.6"/></svg></button>
           <button id="new-entry" type="button" class="primary"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg>New entry</button>
         </div>
@@ -197,6 +197,10 @@
     </section>
   </main>
 </div>
+<dialog id="notebook-dialog" class="discard-dialog notebook-dialog" aria-labelledby="notebook-dialog-title">
+  <h2 id="notebook-dialog-title">New notebook</h2>
+  <form id="notebook-form"><label>Notebook name<input id="notebook-name" maxlength="120" required autofocus></label><p id="notebook-error" class="hint" role="alert" hidden></p><div class="form-actions"><button id="cancel-notebook" type="button">Cancel</button><button type="submit" class="primary">Create notebook</button></div></form>
+</dialog>
 <dialog id="discard-entry" class="discard-dialog" aria-labelledby="discard-entry-title" aria-describedby="discard-entry-description">
   <h2 id="discard-entry-title">Discard this draft?</h2>
   <p id="discard-entry-description">Your unsaved changes to this local entry will be lost.</p>

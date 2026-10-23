@@ -349,6 +349,9 @@ export function latestDecisions(activity = [], output = null, { limit = 5 } = {}
 // Only the same validated research result is redundant with the response desk.
 // Activity records its start clock; a synthetic summary records completion.
 export function decisionShownInDesk(row, output, published, { completed = false, failure = null } = {}) {
+  if (failure?.activityId != null && failure?.checkId != null && row.kind === 'research_check' && row.status === 'waiting' && row.reviewStatus === 'failed'
+    && row.id === failure.activityId && row.checkId === failure.checkId && row.entryId === failure.entryId && row.origin === failure.origin
+    && Number.isSafeInteger(failure.version) && failure.version > 0 && row.version === failure.version && row.reason === failure.reason) return true;
   if (failure?.checkId != null && output?.activityId != null && row.kind === 'research_check' && row.status === 'waiting' && row.reviewStatus === 'failed'
     && output?.status === 'failed' && output.checkId === failure.checkId && row.checkId === failure.checkId
     && row.id === output.activityId && row.entryId === output.entryId && row.origin === output.origin

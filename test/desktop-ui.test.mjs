@@ -104,7 +104,7 @@ test('the Journal reader shows the current check before the preserved completed 
 
 test('entry saves lock the actual form handler until acceptance and an older refresh cannot unlock a newer save', async () => {
   const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
-  const handler = source.slice(source.indexOf("$('entry-form').addEventListener('submit'"), source.indexOf("$('notebook-form').addEventListener('submit'"));
+  const handler = source.slice(source.indexOf("$('entry-form').addEventListener('submit'"), source.indexOf("$('new-notebook').addEventListener"));
   const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
   const first = deferred(), refresh = deferred(), second = deferred(), requests = [], actions = [], errors = [];
   const controls = ['entry-notebook', 'entry-title', 'entry-body', 'entry-status', 'entry-signal'].map(id => ({ id, value: ({ 'entry-notebook': 'book', 'entry-title': 'Draft', 'entry-body': 'Exact submitted notes', 'entry-status': 'watching' })[id] ?? '', disabled: false }));
@@ -318,6 +318,7 @@ test('a hidden verdict returns keyboard focus to visible process state and keyed
     context.snapshot.listener.processing = status === 'stopped' && !restored ? { stage: 'paused', message: 'The check paused after a settings change.' } : null;
     context.renderProcess();
     assert.equal(get('process-state').textContent, 'On'); assert.equal(get('process-message').hidden, true); assert.equal(get('process-message').textContent, '');
+    assert.equal(get('review-desk').dataset.state, 'ready', 'Current On styling does not inherit the historical warning tone.');
     assert.equal(get('latest-check').hidden, false); assert.equal(get('latest-check-reason').textContent, reason);
     assert.equal(get('latest-check-time').textContent, 'Finished 2026-10-23T10:03:04Z'); assert.equal(get('model-verdict-reason').textContent, 'Earlier actual model words.');
   }
@@ -350,17 +351,43 @@ test('native menu uses Electron zoom and window roles without changing the exist
   assert.ok(template[0].submenu.some(item => item.label === 'Quit Journal and stop Listener'));
 });
 
-test('output heading precedes its outcome and notebook creation lives in the existing library header disclosure', async () => {
+test('output heading precedes its outcome and the fixed library trigger opens an existing native dialog', async () => {
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   assert.ok(html.indexOf('id="model-output-heading"') < html.indexOf('id="latest-check"'));
   assert.equal((html.match(/id="model-output-heading"/g) ?? []).length, 1);
   const journal = html.slice(html.indexOf('id="view-journal"'), html.indexOf('id="view-listener"'));
   const header = journal.slice(0, journal.indexOf('</header>'));
-  assert.match(header, /<details class="notebook-tools"><summary>New notebook<\/summary><form id="notebook-form"/);
-  assert.equal((journal.match(/id="notebook-form"/g) ?? []).length, 1);
-  assert.ok(journal.indexOf('id="notebook-form"') < journal.indexOf('class="journal-layout"'));
+  assert.match(header, /<button id="new-notebook"[^>]*aria-haspopup="dialog" aria-controls="notebook-dialog"/);
+  assert.equal((html.match(/id="notebook-form"/g) ?? []).length, 1);
+  assert.match(html, /<dialog id="notebook-dialog" class="discard-dialog notebook-dialog" aria-labelledby="notebook-dialog-title">/);
+  assert.match(html, /<a class="brand" href="\/" aria-label="Flusso Journal home">/);
   const pane = journal.slice(journal.indexOf('class="entry-pane"'), journal.indexOf('<article class="entry-detail"'));
   assert.doesNotMatch(pane, /notebook-form/);
+});
+
+test('native notebook creation retains failures in the dialog and a confirmed save survives refresh failure', async () => {
+  const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
+  const handlers = source.slice(source.indexOf("$('new-notebook').addEventListener"), source.indexOf("$('sync').addEventListener"));
+  for (const mode of ['refused', 'refresh-failed', 'accepted']) {
+    const callbacks = new Map(), nodes = new Map(), jobs = [], notices = []; let requests = 0, release;
+    const pending = new Promise(resolve => { release = resolve; });
+    const get = id => { if (!nodes.has(id)) nodes.set(id, { value: id === 'notebook-name' ? 'Exact new notebook' : '', hidden: true, disabled: false,
+      addEventListener: (event, callback) => callbacks.set(`${id}:${event}`, callback), showModal() { this.open = true; }, close() { this.open = false; } }); return nodes.get(id); };
+    const context = { $: get, formDirty: false, api: async (_path, input) => { requests++; assert.equal(input.name, 'Exact new notebook'); await pending; if (mode === 'refused') throw new Error('Actual create refusal.'); return {}; },
+      load: async () => { if (mode === 'refresh-failed') throw new Error('Actual read failure.'); }, notify: (message, success) => notices.push({ message, success }),
+      action: (_button, work) => jobs.push(work()) };
+    runInNewContext(handlers, context); callbacks.get('new-notebook:click')(); assert.equal(get('notebook-dialog').open, true);
+    callbacks.get('notebook-form:submit')({ preventDefault() {}, submitter: {} }); assert.equal(get('notebook-name').disabled, true); release(); await jobs[0];
+    assert.equal(get('notebook-name').disabled, false); assert.equal(requests, 1);
+    if (mode === 'refused') {
+      assert.equal(get('notebook-dialog').open, true); assert.equal(get('notebook-name').value, 'Exact new notebook');
+      assert.equal(get('notebook-error').hidden, false); assert.equal(get('notebook-error').textContent, 'Actual create refusal.'); assert.equal(notices.length, 0);
+    } else {
+      assert.equal(get('notebook-dialog').open, false); assert.equal(get('notebook-name').value, ''); assert.match(notices[0].message, /^Notebook added/);
+      if (mode === 'refresh-failed') assert.match(notices[0].message, /list could not refresh/);
+    }
+    callbacks.get('new-notebook:click')(); callbacks.get('cancel-notebook:click')(); assert.equal(get('notebook-dialog').open, false);
+  }
 });
 
 test('research outcome vocabulary is consistent and Finished is used only with an actual terminal clock', async () => {
@@ -551,16 +578,16 @@ test('Activity metadata identifies source revisions and uses only known completi
 });
 
 test('Latest decisions offers resume only for the current research revision while retaining historical rows and ticket hints', async () => {
-  const { latestDecisions, completedModelPresentation, decisionShownInDesk, activityMetadata, activityStatus, activityReason } = await import('../public/desktop-ui.mjs');
+  const { latestDecisions, completedModelPresentation, decisionShownInDesk, latestCheckPresentation, activityMetadata, activityStatus, activityReason } = await import('../public/desktop-ui.mjs');
   const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
   const render = source.slice(source.indexOf('function renderDecisions()'), source.indexOf('/* -------------------------------------------------------------- settings */'));
   const row = { entryId: 'note', origin: 'local', kind: 'research_check', status: 'waiting', reason: 'An actual earlier model failure.', atUtc: '2026-10-23T12:00:00Z' };
   const activity = [{ ...row, id: 'prior', version: 2 }, { ...row, id: 'current', version: 3 }, { ...row, entryId: 'ticket', id: 'ticket-prior', version: 1, kind: undefined, decision: 'ticket' }];
   const node = (tag, textContent) => ({ tag, textContent, children: [], append(...children) { this.children.push(...children); } });
-  const panel = { contains: () => false }, list = { closest: () => panel }, cards = [];
+  const panel = { contains: () => false }, list = { closest: () => panel }, cards = []; let visibleIds = [];
   const context = { snapshot: { settings: { enabled: false }, listener: {}, activity, entries: [{ id: 'note', origin: 'local', version: 3 }, { id: 'ticket', origin: 'local', version: 3 }] },
-    document: {}, $: () => list, latestDecisions, completedModelPresentation, decisionShownInDesk, activityMetadata, activityStatus, activityReason,
-    decisionItems: (rows, details) => rows.map(row => ({ value: { row, ...details(row) } })), changed: () => true,
+    document: {}, $: () => list, latestDecisions, completedModelPresentation, decisionShownInDesk, latestCheckPresentation, activityMetadata, activityStatus, activityReason,
+    decisionItems: (rows, details) => { visibleIds = rows.map(row => row.id); return rows.map(row => ({ value: { row, ...details(row) } })); }, changed: () => true,
     reconcileRows: (_list, items, draw) => { for (const item of items) cards.push(draw(item.value)); },
     element: node, pill: (_label, _tone) => node('span'), sourceButton: () => node('button'), when: value => value };
   runInNewContext(render, context); context.renderDecisions();
@@ -568,6 +595,14 @@ test('Latest decisions offers resume only for the current research revision whil
   assert.equal(cards.length, 3, 'All source history remains present.');
   assert.equal(offersResume(cards[0]), false); assert.equal(offersResume(cards[1]), true);
   assert.equal(offersResume(cards[2]), true, 'Ticket behavior remains unchanged.');
+  context.snapshot.activity = activity.map(row => ({ ...row, checkId: row.id === 'current' ? 'retained-check' : 'other-check', reviewStatus: 'failed' }));
+  context.snapshot.listener = { busy: false, modelOutput: null, lastError: null, modelReview: { id: 'retained-check', status: 'failed', restored: true, reason: row.reason, sources: [{ entryId: 'note', origin: 'local', version: 3 }] } };
+  const retained = JSON.stringify(context.snapshot.activity); cards.length = 0; context.renderDecisions();
+  assert.deepEqual(visibleIds, ['prior', 'ticket-prior'], 'Only the exact restored failed check already shown in the desk is redundant.');
+  assert.equal(JSON.stringify(context.snapshot.activity), retained, 'Full Activity retains all original records.');
+  context.snapshot.activity.push({ ...context.snapshot.activity[1], id: 'another-current', entryId: 'another-note' });
+  context.snapshot.listener.modelReview.sources.push({ entryId: 'another-note', origin: 'local', version: 3 }); context.renderDecisions();
+  assert.ok(visibleIds.includes('current') && visibleIds.includes('another-current'), 'Ambiguous same-check failures remain individually available.');
 });
 
 test('account identity comes only from a connected account profile', () => {

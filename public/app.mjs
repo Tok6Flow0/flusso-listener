@@ -369,7 +369,7 @@ function renderProcess() {
   const earlier = listener.modelReview?.id != null && output?.checkId !== listener.modelReview.id;
   const terminalOutcome = Boolean(latestCheck && settings.enabled && !streamDisconnected && ['error', 'paused'].includes(state.state));
   const desk = $('review-desk');
-  desk.dataset.state = state.state; desk.dataset.live = String(view.live);
+  desk.dataset.state = terminalOutcome ? 'ready' : state.state; desk.dataset.live = String(view.live);
   setText('process-state', terminalOutcome ? 'On' : state.title);
   const stage = state.busy ? `${state.label}${state.position ? ` · ${formatCount(state.position.index)} of ${formatCount(state.position.total)}` : ''}` : '';
   setText('process-stage', stage); $('process-stage').hidden = !stage;
@@ -477,7 +477,15 @@ function renderDecisions() {
   const output = snapshot.listener.modelOutput, published = snapshot.listener.lastModelOutput;
   const all = latestDecisions(snapshot.activity, published, { limit: null });
   const completed = Boolean(completedModelPresentation(snapshot.listener, snapshot.entries));
-  const failure = snapshot.listener.lastError && snapshot.listener.modelReview?.status === 'failed' ? { checkId: snapshot.listener.modelReview.id, reason: snapshot.listener.lastError } : null;
+  const check = snapshot.listener.modelReview, shownOutcome = latestCheckPresentation(snapshot.listener);
+  const failure = shownOutcome && check?.status === 'failed' ? { checkId: check.id, reason: shownOutcome.reason } : null;
+  if (failure) {
+    const matching = all.filter(row => row.kind === 'research_check' && row.status === 'waiting' && row.reviewStatus === 'failed'
+      && typeof row.id === 'string' && typeof row.entryId === 'string' && ['local', 'cloud'].includes(row.origin)
+      && row.checkId === failure.checkId && row.reason === failure.reason && Number.isSafeInteger(row.version) && row.version > 0
+      && (!check.sources?.length || check.sources.some(source => source.entryId === row.entryId && source.origin === row.origin && source.version === row.version)));
+    if (matching.length === 1) Object.assign(failure, { activityId: matching[0].id, entryId: matching[0].entryId, origin: matching[0].origin, version: matching[0].version });
+  }
   const latest = all.filter(row => !decisionShownInDesk(row, output, published, { completed, failure })).slice(0, 5);
   const panel = $('latest-decisions').closest('section'), hidden = all.length > 0 && !latest.length;
   if (hidden && panel.contains(document.activeElement)) $('model-verdict-label').focus();
@@ -866,7 +874,18 @@ $('entry-form').addEventListener('submit', event => {
   notify('Saved.', true);
   } finally { releaseSave(); } });
 });
-$('notebook-form').addEventListener('submit', event => { event.preventDefault(); action(event.submitter, async () => { await api('/api/notebooks', { name: $('notebook-name').value }); $('notebook-name').value = ''; await load({ forms: !formDirty }); notify('Notebook added.', true); }); });
+$('new-notebook').addEventListener('click', () => { $('notebook-error').hidden = true; $('notebook-dialog').showModal(); });
+$('cancel-notebook').addEventListener('click', () => $('notebook-dialog').close());
+$('notebook-form').addEventListener('submit', event => { event.preventDefault(); action(event.submitter, async () => {
+  const input = $('notebook-name'), name = input.value; input.disabled = true;
+  $('notebook-error').textContent = ''; $('notebook-error').hidden = true;
+  try {
+    try { await api('/api/notebooks', { name }); } catch (error) { $('notebook-error').textContent = error.message; $('notebook-error').hidden = false; return; }
+    input.value = ''; $('notebook-dialog').close();
+    try { await load({ forms: !formDirty }); } catch { notify('Notebook added, but the list could not refresh. Refresh to see it.', false, true); return; }
+    notify('Notebook added.', true);
+  } finally { input.disabled = false; }
+}); });
 $('sync').addEventListener('click', event => action(event.currentTarget, async () => { const result = await api('/api/sync', {}); await load(); notify(result.complete ? 'Cloud Journal synced.' : result.reason, result.complete); }));
 
 /* ------------------------------------------------------------ connection */
