@@ -33,6 +33,7 @@ function notify(message, success = false, error = false) {
 }
 function recoverPollNotice() {
   notify.pollFailure = null;
+  $('refresh-status').hidden = true;
   if (!notify.pollMessage) return;
   if ($('notice-text').textContent === notify.pollMessage && $('notice').className === 'notice error') {
     $('notice').hidden = true; cancelAnimationFrame(notify.frame); $('notice-alert').textContent = '';
@@ -40,11 +41,14 @@ function recoverPollNotice() {
   notify.pollMessage = null;
 }
 function notifyPollFailure(message) {
+  setText('refresh-status', 'Not updating. Showing the last loaded state until Journal reconnects.'); $('refresh-status').hidden = false;
   if (notify.pollFailure === message) return;
   notify(message, false, true); notify.pollMessage = message; notify.pollFailure = message;
 }
 async function api(path, body, headers = {}) {
-  const response = await fetch(path, { method: body === undefined ? 'GET' : 'POST', headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json', 'x-flusso-csrf': csrf }), ...headers }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  let response;
+  try { response = await fetch(path, { method: body === undefined ? 'GET' : 'POST', headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json', 'x-flusso-csrf': csrf }), ...headers }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }); }
+  catch { throw new Error('Journal could not reach its local service. Keep Journal running, or reopen it to reconnect.'); }
   const value = await response.json(); if (!response.ok) throw new Error(value.error || 'That did not work. Try again.'); return value;
 }
 async function action(button, work) { if (button?.disabled) return; if (button) button.disabled = true; try { await work(); } catch (error) { notify(error.message, false, true); } finally { if (button) button.disabled = false; } }
@@ -362,7 +366,7 @@ function renderProcess() {
 
   $('output-frame').dataset.status = view.status;
   setText('model-output-heading', !settings.enabled && output ? 'Last model response' : 'Model output');
-  setText('model-output-status', listener.modelRecovery?.checkId === output?.checkId && ['failed', 'stopped'].includes(view.status) ? 'Previous review unfinished' : earlier && output ? 'Earlier response' : !settings.enabled && view.status === 'complete' ? 'Last check complete' : view.label); $('model-output-status').className = `output-status ${!settings.enabled && view.status === 'complete' ? '' : view.tone}`;
+  setText('model-output-status', earlier && output ? 'Earlier response' : !settings.enabled && view.status === 'complete' ? 'Last check complete' : view.label); $('model-output-status').className = `output-status ${!settings.enabled && view.status === 'complete' ? '' : view.tone}`;
   $('model-output-status').hidden = !output && Boolean(completed) || settings.enabled && view.accepted && !earlier || view.live || view.status === 'failed' && state.title === view.label && Boolean(listener.lastError);
   if (changed('model-output-source', output ? [output.entryId, output.origin, output.title, output.atUtc, snapshot.entries.some(row => row.id === output.entryId && row.origin === output.origin)] : null)) {
     const source = $('model-output-source');
@@ -723,8 +727,8 @@ function renderDetail() {
     mark.src = '/flusso-mark.png'; mark.alt = ''; mark.width = mark.height = 18; title.append(mark, element('h3', !row.ticket && row.listener?.status === 'observed' ? 'Completed research response' : 'Listener status')); section.append(title);
     const review = listenerResult(row);
     if (!row.ticket && row.listener?.status === 'observed' && review) {
-      const metadata = activityMetadata(row.listener, row), line = element('p', null, 'handoff-review'), at = element('time', `${metadata.clockLabel} ${when(metadata.clock, true)}`); at.dateTime = metadata.clock ?? '';
-      line.append(pill(review.label, review.tone), element('span', activityReason(row.listener)), at); section.append(line);
+      const metadata = activityMetadata(row.listener, row), line = element('div', null, 'detail-meta'), at = element('time', `${metadata.clockLabel} ${when(metadata.clock, true)}`, 'detail-facts'); at.dateTime = metadata.clock ?? '';
+      line.append(pill(review.label, review.tone), at); section.append(line, element('p', activityReason(row.listener), 'verdict-reason'));
       if (revision) section.append(element('p', revision.note, 'hint mono'));
       const focus = reviewFocusPresentation(row.listener.focus), details = element('details');
       details.append(element('summary', focus.label), element('p', focus.text, 'focus-copy')); section.append(details);

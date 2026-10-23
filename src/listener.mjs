@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { classifyEntry, modelInputCoverage, resolveResearchFocus } from './model.mjs';
 import { buildOrderRequest, readTicket, withResult } from './orders.mjs';
 import { entryInScope as inScope, ticketSetupGap } from './handoff.mjs';
+import { formatCount } from '../public/format.mjs';
 
 const MAX_READBACK_CHECKS = 10;
 
@@ -199,7 +200,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
     busy = true; state.busy = true; activeAbort = new AbortController();
     state.processing = null;
     const review = state.modelReview = { id: randomUUID(), startedAtUtc: new Date(clock()).toISOString(), status: 'checking', reason: null };
-    publish('read', 'Starting a Listener check.');
+    publish('start', 'Starting a Listener check.');
     try {
       const settings = store.settings(); state.lastError = null; state.modelFailure = null; state.modelRecovery = null;
       if (settings.source !== 'local') {
@@ -226,7 +227,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
       const shouldReview = entry => entry.id === researchEntry?.id && entry.origin === researchEntry?.origin;
       const queued = entries.filter(({ entry }) => shouldReview(entry) || (entry.status === 'watching' && store.get('checkpoint', keyOf(entry))?.version !== entry.version));
       const total = queued.length; let index = 0, researchSkip = null;
-      publish('queued', `${entries.length} selected entries; ${total} revision${total === 1 ? '' : 's'} to process${researchEntry ? "; includes latest research review" : ""}.`, null, { index, total });
+      publish('queued', `${formatCount(entries.length)} selected entr${entries.length === 1 ? 'y' : 'ies'}; ${formatCount(total)} revision${total === 1 ? '' : 's'} to process${researchEntry ? "; includes latest research review" : ""}.`, null, { index, total });
       for (const { entry, ticket } of entries) {
         if (!store.settings().enabled || activeAbort.signal.aborted) break;
         const key = keyOf(entry), checkpoint = store.get('checkpoint', key);
@@ -326,7 +327,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
       }
       else if (state.lastError && review.status === 'checking') review.status = 'failed';
       review.completedAtUtc = new Date(clock()).toISOString();
-      publish(activeAbort.signal.aborted ? 'paused' : 'idle', activeAbort.signal.aborted ? 'Check paused after a settings change or shutdown. Retained attempts keep their original delivery state.' : (state.lastError || 'Check complete. Waiting for the next scheduled check.'));
+      publish(activeAbort.signal.aborted ? 'paused' : 'idle', activeAbort.signal.aborted ? 'Check paused after a settings change or shutdown. Retained attempts keep their original delivery state.' : (state.lastError ? 'Check finished with an issue to review.' : 'Check complete. Waiting for the next scheduled check.'));
       activeAbort = null;
     }
   }
@@ -348,7 +349,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
       if (state.busy || !failure || state.lastError !== failure.message || state.modelReview?.id !== failure.checkId) return false;
       state.lastError = null; state.modelFailure = null;
       state.modelRecovery = { checkId: failure.checkId, atUtc: new Date(clock()).toISOString() };
-      publish('model_ready', 'The local model is ready again. Choose Check now or wait for the next scheduled check. Earlier failed reviews remain in Activity.');
+      publish('model_ready', `The local model is ready again. ${store.settings().enabled && !stopped ? 'Choose Check now or wait for the next scheduled check.' : 'Listener is off. Turn it on to resume checks.'} Earlier failed reviews remain in Activity.`);
       return true;
     },
     subscribe(callback) { subscribers.add(callback); return () => subscribers.delete(callback); },

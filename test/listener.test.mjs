@@ -459,6 +459,8 @@ test('public progress is visible during model work and retains its published dec
     enable(w.store); listener.start(); const entry = w.store.createEntry(note(w.store));
     const tick = listener.tick(); await started.promise;
     const during = listener.status();
+    assert.equal(during.events[0].stage, 'start');
+    assert.match(during.events.find(row => row.stage === 'queued').message, /^1 selected entry; 1 revision to process/);
     assert.equal(during.busy, true); assert.equal(during.processing.stage, 'model'); assert.equal(during.processing.entryId, entry.id);
     assert.equal(during.processing.running, true); assert.equal(w.store.all('activity')[0].status, 'processing');
     assert.deepEqual(during.events.slice(-3).map(row => row.stage), ['queued', 'read', 'model']);
@@ -575,12 +577,30 @@ test('model readiness clears only its matching availability error without a chec
     const failed = listener.status().modelOutput, history = w.store.all('activity'), settings = w.store.settings();
     assert.ok(listener.status().lastError); assert.equal(listener.modelReady(), true);
     assert.equal(listener.status().lastError, null); assert.ok(listener.status().modelRecovery);
+    assert.match(listener.status().processing.message, /Choose Check now or wait for the next scheduled check/);
     assert.deepEqual(listener.status().modelOutput, failed); assert.deepEqual(w.store.all('activity'), history);
     assert.deepEqual(w.store.settings(), settings); assert.equal(calls, 1); assert.equal(w.store.all('attempt').length, 0);
     assert.equal(listener.modelReady(), false);
     unavailable = false; await listener.tick({ reviewLatest: true });
     const unrelated = listener.status().lastError; assert.equal(listener.modelReady(), false); assert.equal(listener.status().lastError, unrelated);
     assert.equal(listener.status().modelRecovery, null); assert.equal(calls, 2);
+  } finally { await listener.stop(); await w.close(); }
+});
+
+test('model recovery while Listener is off describes the actual next step and retains the failed check', async () => {
+  const w = await workspace(); let calls = 0;
+  const listener = createListener({ store: w.store, cloud: fakeCloud(), classify: async () => { calls++; throw modelUnavailable('The local model stopped.'); }, clock: () => now });
+  try {
+    enable(w.store, { executionEnabled: false }); listener.start(); w.store.createEntry(note(w.store)); await listener.tick();
+    const failed = listener.status(), history = w.store.all('activity');
+    assert.equal(failed.events.filter(row => row.message === failed.lastError).length, 1, 'The idle event does not repeat the error.');
+    assert.equal(failed.processing.message, 'Check finished with an issue to review.');
+    enable(w.store, { enabled: false, executionEnabled: false }); listener.refresh();
+    assert.equal(listener.modelReady(), true); const recovered = listener.status();
+    assert.match(recovered.processing.message, /Listener is off. Turn it on to resume checks/);
+    assert.doesNotMatch(recovered.processing.message, /Choose Check now|wait for the next scheduled/);
+    assert.deepEqual(recovered.modelOutput, failed.modelOutput); assert.deepEqual(w.store.all('activity'), history);
+    assert.equal(w.store.settings().enabled, false); assert.equal(calls, 1); assert.equal(w.store.all('attempt').length, 0);
   } finally { await listener.stop(); await w.close(); }
 });
 

@@ -9,7 +9,7 @@ test('unchanged visible notices announce once, recover without focus theft, and 
   const functions = source.slice(source.indexOf('function notify('), source.indexOf('async function api('));
   const frames = new Map(), nodes = new Map(); let sequence = 0, scrolls = 0;
   const get = id => { if (!nodes.has(id)) nodes.set(id, { hidden: true, textContent: '', className: '', getBoundingClientRect: () => ({ top: -40, bottom: 20 }), scrollIntoView() { scrolls++; } }); return nodes.get(id); };
-  const focusedDraft = {}, context = { $: get, window: { innerHeight: 600 }, matchMedia: () => ({ matches: true }), document: { activeElement: focusedDraft, querySelector: () => ({ getBoundingClientRect: () => ({ bottom: 62 }) }) },
+  const focusedDraft = {}, context = { $: get, setText: (id, value) => { get(id).textContent = value; }, window: { innerHeight: 600 }, matchMedia: () => ({ matches: true }), document: { activeElement: focusedDraft, querySelector: () => ({ getBoundingClientRect: () => ({ bottom: 62 }) }) },
     requestAnimationFrame: callback => { frames.set(++sequence, callback); return sequence; }, cancelAnimationFrame: id => frames.delete(id), clearTimeout() {}, setTimeout: () => 1 };
   runInNewContext(functions, context);
   const flush = () => { for (const [id, callback] of frames) { frames.delete(id); callback(); } };
@@ -20,7 +20,9 @@ test('unchanged visible notices announce once, recover without focus theft, and 
   assert.equal(frames.size, 0); assert.equal(get('notice-alert').textContent, 'Status read unavailable.'); assert.equal(scrolls, 1);
   get('notice').hidden = true; context.notifyPollFailure('Status read unavailable.');
   assert.equal(get('notice').hidden, true); assert.equal(frames.size, 0, 'Dismissing an ongoing polling outage keeps it dismissed.');
+  assert.equal(get('refresh-status').hidden, false); assert.match(get('refresh-status').textContent, /Not updating.*last loaded state/);
   context.recoverPollNotice(); assert.equal(get('notice').hidden, true); assert.equal(get('notice-alert').textContent, '');
+  assert.equal(get('refresh-status').hidden, true);
   context.notifyPollFailure('Status read unavailable.'); flush(); assert.equal(scrolls, 2);
   context.notify('Different save error.', false, true); flush(); assert.equal(get('notice-alert').textContent, 'Different save error.');
   context.notifyPollFailure('Status read unavailable.'); assert.equal(frames.size, 0, 'The same polling outage does not replace a new action error.');
@@ -30,6 +32,16 @@ test('unchanged visible notices announce once, recover without focus theft, and 
   const css = await readFile(new URL('../public/styles.css', import.meta.url), 'utf8');
   assert.match(css, /\.notice\{position:relative/);
   assert.doesNotMatch(css, /\.notice\{(?:[^}]*;)?(?:top|bottom):/);
+});
+
+test('a local service outage explains recovery without exposing raw browser fetch errors', async () => {
+  const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
+  const api = source.slice(source.indexOf('async function api('), source.indexOf('async function action('));
+  const context = { csrf: 'synthetic-csrf', fetch: async () => { throw new TypeError('Failed to fetch'); } };
+  runInNewContext(api, context);
+  await assert.rejects(context.api('/api/status'), /Journal could not reach its local service.*reopen it to reconnect/);
+  context.fetch = async () => ({ ok: false, json: async () => ({ error: 'The session expired. Reopen Journal.' }) });
+  await assert.rejects(context.api('/api/status'), /The session expired/);
 });
 
 test('interface prose keeps numbers mono without making its whole sentence a data readout', async () => {
@@ -68,6 +80,7 @@ test('the Journal reader shows the current check before the preserved completed 
   assert.ok(all(check).some(node => node.textContent === 'Latest research check')); assert.ok(all(check).some(node => node.textContent === 'Actual latest failure.'));
   assert.ok(all(check).some(node => node.tag === 'time' && node.textContent === `Recorded ${recorded}/seconds · v2` && node.className === 'detail-facts'));
   assert.ok(all(live).some(node => node.textContent === 'Completed research response')); assert.ok(all(live).some(node => node.textContent === 'Preserved accepted words.'));
+  assert.ok(all(live).some(node => node.textContent === 'Preserved accepted words.' && node.className === 'verdict-reason'), 'The same published words use the Listener prose style.');
   assert.ok(all(live).some(node => node.tag === 'time' && node.textContent === `Completed ${completed}/seconds`));
   row.listener = { ...row.listener, completedAtUtc: null }; context.renderDetail();
   assert.ok(all(live).some(node => node.tag === 'time' && node.textContent === 'Recorded 2026-10-23T10:00:00Z/seconds'), 'Legacy records retain their recorded clock without an invented completion.');
@@ -255,6 +268,11 @@ test('a hidden verdict returns keyboard focus to visible process state and keyed
   context.renderProcess();
   assert.equal(get('model-output-empty').hidden, true, 'Restored completed output never says nothing has been reviewed.');
   assert.match(get('model-verdict-source').querySelector('time').textContent, /^Recorded /, 'Legacy start clocks are not invented completion clocks.');
+  context.snapshot.listener.lastModelOutput = null;
+  context.snapshot.listener.modelReview = { id: 'recovered', status: 'failed' }; context.snapshot.listener.modelRecovery = { checkId: 'recovered' };
+  context.snapshot.listener.modelOutput = { ...output, checkId: 'recovered', status: 'failed' }; context.renderProcess();
+  assert.equal(get('model-output-status').textContent, 'Needs attention', 'Recovery cannot relabel an actual failed response as stopped or unfinished.');
+  context.snapshot.listener.modelOutput.status = 'stopped'; context.renderProcess(); assert.equal(get('model-output-status').textContent, 'Review unfinished');
 
 });
 

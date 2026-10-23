@@ -12,7 +12,7 @@ import { memoryVault } from './helpers.mjs';
 
 test('CLI entry point works from a checkout path containing spaces', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'flusso listener path '));
-  try { await cp(fileURLToPath(new URL('../src', import.meta.url)), join(directory, 'src'), { recursive: true }); const result = execFileSync(process.execPath, [join(directory, 'src', 'cli.mjs'), 'help'], { encoding: 'utf8' }); assert.match(result, /Flusso Listener/); }
+  try { await cp(fileURLToPath(new URL('../src', import.meta.url)), join(directory, 'src'), { recursive: true }); await cp(fileURLToPath(new URL('../public/format.mjs', import.meta.url)), join(directory, 'public', 'format.mjs')); const result = execFileSync(process.execPath, [join(directory, 'src', 'cli.mjs'), 'help'], { encoding: 'utf8' }); assert.match(result, /Flusso Listener/); }
   finally { await rm(directory, { recursive: true, force: true }); }
 });
 test('CLI refuses missing data-dir paths before attempting to create or access a vault', () => {

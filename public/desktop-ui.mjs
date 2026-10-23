@@ -143,7 +143,7 @@ export function matchesResultFilter(entry, filter) {
   return filter === 'tickets' ? Boolean(entry.ticket) : result.group === filter;
 }
 
-const STAGES = Object.freeze({ sync: 'Read Journal', reconcile: 'Check earlier orders', queued: 'Queued', read: 'Read entry', model: 'Model review', model_ready: 'Model ready', decision: 'Decision', validate: 'Check limits', waiting: 'Waiting', submit: 'Submit', result: 'Result', error: 'Needs attention', idle: 'Idle', paused: 'Paused' });
+const STAGES = Object.freeze({ start: 'Start check', sync: 'Read Journal', reconcile: 'Check earlier orders', queued: 'Queued', read: 'Read entry', model: 'Model review', model_ready: 'Model ready', decision: 'Decision', validate: 'Check limits', waiting: 'Waiting', submit: 'Submit', result: 'Result', error: 'Needs attention', idle: 'Idle', paused: 'Paused' });
 export function processStage(stage) { return STAGES[stage] ?? 'Activity'; }
 
 // A counted position is shown only when the Listener reported both whole numbers.
