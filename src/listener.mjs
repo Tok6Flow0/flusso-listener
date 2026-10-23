@@ -125,8 +125,13 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
     return true;
   }
   function tick({ reviewLatest = false } = {}) {
-    if (stopped || busy || !store.settings().enabled) return activeTick ?? Promise.resolve();
-    activeTick = runTick({ reviewLatest }).finally(() => { activeTick = null; });
+    if (stopped || busy || activeTick) return activeTick ?? Promise.resolve();
+    if (!store.settings().enabled) { schedule(); return Promise.resolve(); }
+    // A manual check replaces the pending deadline. Every actual check owns one
+    // next interval, measured from completion, including when settings change.
+    scheduleGeneration += 1;
+    if (timer !== null) clearTimeout(timer); timer = null;
+    activeTick = runTick({ reviewLatest }).finally(() => { activeTick = null; schedule(); });
     return activeTick;
   }
   async function placeTicket({ entry, request, activity, settingsVersion, reconciled }) {
@@ -327,13 +332,13 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
   }
   function schedule() {
     const generation = ++scheduleGeneration;
-    if (timer) clearTimeout(timer); timer = null;
+    if (timer !== null) clearTimeout(timer); timer = null;
     state.running = !stopped && store.settings().enabled;
-    if (state.running) timer = setTimeout(async () => {
+    // An active check will schedule with the latest settings after it drains.
+    if (state.running && !busy && !activeTick) timer = setTimeout(() => {
       if (stopped || generation !== scheduleGeneration) return;
       timer = null;
-      await tick({ reviewLatest: true });
-      if (!stopped && generation === scheduleGeneration) schedule();
+      void tick({ reviewLatest: true });
     }, store.settings().intervalSeconds * 1000);
   }
   return {
@@ -351,7 +356,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
     refresh({ baseline = false } = {}) { if (stopped) return; activeAbort?.abort(); if (baseline) checkpointExisting(); schedule(); },
     stop() {
       stopped = true; scheduleGeneration += 1;
-      if (timer) clearTimeout(timer); timer = null;
+      if (timer !== null) clearTimeout(timer); timer = null;
       activeAbort?.abort(); state.running = false;
       // An already dispatched ticket must durably save its result or uncertainty
       // before shutdown closes SQLite. Aborting does not retry or cancel an order.

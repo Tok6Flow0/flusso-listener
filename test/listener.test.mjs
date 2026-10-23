@@ -330,6 +330,68 @@ test('an interrupted cloud check discards its late snapshot before importing or 
   } finally { release(); listener.stop(); await w.close(); }
 });
 
+test('a manual check replaces the pending timer and the next period starts only after completion', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now });
+  const w = await workspace(), started = deferred(), finish = deferred(); let classifications = 0;
+  const listener = createListener({ store: w.store, cloud: fakeCloud(), classify: async () => {
+    classifications++; if (classifications === 1) { started.resolve(); await finish.promise; }
+    return { decision: 'review', reason: 'Synthetic research.' };
+  } });
+  try {
+    enable(w.store, { intervalSeconds: 15, executionEnabled: false }); listener.start();
+    w.store.createEntry(note(w.store)); t.mock.timers.tick(10000);
+    const checking = listener.tick({ reviewLatest: true }); await started.promise;
+    assert.equal(listener.tick({ reviewLatest: true }), checking, 'A concurrent manual request joins the actual check.');
+    t.mock.timers.tick(2000); assert.equal(classifications, 1);
+    finish.resolve(); await checking;
+    assert.equal(listener.status().modelReview.completedAtUtc, new Date(now + 12000).toISOString());
+    t.mock.timers.tick(14999); await new Promise(resolve => setImmediate(resolve)); assert.equal(classifications, 1);
+    t.mock.timers.tick(1); await listener.tick(); assert.equal(classifications, 2);
+    t.mock.timers.tick(14999); await new Promise(resolve => setImmediate(resolve)); assert.equal(classifications, 2);
+    t.mock.timers.tick(1); await listener.tick(); assert.equal(classifications, 3, 'The automatic callback creates only one next deadline.');
+    assert.equal(w.store.all('attempt').length, 0);
+  } finally { finish.resolve(); await listener.stop(); await w.close(); }
+});
+
+test('a mid-check settings refresh waits for completion and uses the new interval without another timer', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const w = await workspace(), started = deferred(), finish = deferred(); let classifications = 0;
+  const listener = createListener({ store: w.store, cloud: fakeCloud(), classify: async () => {
+    classifications++; if (classifications === 1) { started.resolve(); await finish.promise; }
+    return { decision: 'review', reason: 'Synthetic research.' };
+  }, clock: () => now });
+  try {
+    enable(w.store, { intervalSeconds: 15, executionEnabled: false }); listener.start(); w.store.createEntry(note(w.store));
+    t.mock.timers.tick(15000); await started.promise;
+    enable(w.store, { intervalSeconds: 30, executionEnabled: false }); listener.refresh();
+    t.mock.timers.tick(60000); assert.equal(classifications, 1);
+    const checking = listener.tick(); finish.resolve(); await checking;
+    assert.equal(listener.status().modelReview.status, 'stopped', 'The old settings review remains aborted.');
+    t.mock.timers.tick(29999); await new Promise(resolve => setImmediate(resolve)); assert.equal(classifications, 1);
+    t.mock.timers.tick(1); await listener.tick(); assert.equal(classifications, 2);
+    t.mock.timers.tick(29999); await new Promise(resolve => setImmediate(resolve)); assert.equal(classifications, 2);
+    t.mock.timers.tick(1); await listener.tick(); assert.equal(classifications, 3);
+    assert.equal(w.store.all('attempt').length, 0);
+  } finally { finish.resolve(); await listener.stop(); await w.close(); }
+});
+
+test('disabled ticks cancel a pending deadline and neither disabled nor stopped checks rearm it', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const w = await workspace(); let classifications = 0;
+  const listener = createListener({ store: w.store, cloud: fakeCloud(), classify: async () => { classifications++; return candidate(); }, clock: () => now });
+  try {
+    enable(w.store, { intervalSeconds: 15, executionEnabled: false }); listener.start(); w.store.createEntry(note(w.store));
+    enable(w.store, { enabled: false, executionEnabled: false }); await listener.tick({ reviewLatest: true });
+    t.mock.timers.tick(60000); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(classifications, 0); assert.equal(listener.status().running, false);
+    enable(w.store, { intervalSeconds: 15, executionEnabled: false }); listener.refresh();
+    await listener.stop(); await listener.tick({ reviewLatest: true });
+    t.mock.timers.tick(60000); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(classifications, 0); assert.equal(listener.status().running, false);
+    assert.equal(w.store.all('attempt').length, 0);
+  } finally { await listener.stop(); await w.close(); }
+});
+
 test('stop drains an active scheduled classification and its old timer cannot restart the listener', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const w = await workspace(), started = deferred(), finish = deferred(); let classifications = 0;
