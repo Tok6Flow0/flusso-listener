@@ -367,12 +367,13 @@ function renderProcess() {
   const completed = completedModelPresentation(listener, snapshot.entries);
   const latestCheck = latestCheckPresentation(listener);
   const earlier = listener.modelReview?.id != null && output?.checkId !== listener.modelReview.id;
+  const terminalOutcome = Boolean(latestCheck && settings.enabled && !streamDisconnected && ['error', 'paused'].includes(state.state));
   const desk = $('review-desk');
   desk.dataset.state = state.state; desk.dataset.live = String(view.live);
-  setText('process-state', state.title);
+  setText('process-state', terminalOutcome ? 'On' : state.title);
   const stage = state.busy ? `${state.label}${state.position ? ` · ${formatCount(state.position.index)} of ${formatCount(state.position.total)}` : ''}` : '';
   setText('process-stage', stage); $('process-stage').hidden = !stage;
-  setText('process-message', state.message);
+  setText('process-message', terminalOutcome ? '' : state.message); $('process-message').hidden = terminalOutcome || !state.message;
   $('latest-check').hidden = !latestCheck;
   if (latestCheck) {
     setText('latest-check-label', latestCheck.label); setText('latest-check-reason', latestCheck.reason);
@@ -711,9 +712,11 @@ function renderDetail() {
     heading.append(element('h2', row.title), meta);
     const actions = element('div', null, 'detail-actions'), button = element('button', row.origin === 'local' ? 'Edit' : 'Copy to local'); button.type = 'button'; button.dataset.entryAction = 'edit';
     button.addEventListener('click', () => { const current = snapshot.entries.find(item => item.id === row.id && item.origin === row.origin); if (current) showEditor(current.origin === 'local' ? current : { ...current, id: null, version: null }); }); actions.append(button); head.append(heading, actions);
-    const prose = element('div', null, 'note-body'); renderMarkdown(prose, (row.body || '').replace(TICKET_FENCE, '').trim() || ' ');
+    const prose = element('div', null, 'note-body'), noteSection = element('section');
+    noteSection.append(element('h3', 'Notes', 'sr-only'), prose);
+    renderMarkdown(prose, (row.body || '').replace(TICKET_FENCE, '').trim() || ' ', { headingLevel: 4 });
     const live = element('div'); live.dataset.entryPart = 'live';
-    const check = element('div'); check.dataset.entryPart = 'check'; detail.replaceChildren(head, prose, check, live);
+    const check = element('div'); check.dataset.entryPart = 'check'; detail.replaceChildren(head, noteSection, check, live);
     if (row.signal) {
       const section = element('section', null, 'detail-section'), quality = row.signal.quality;
       section.append(element('h3', 'Structured signal'), element('p', `${quality ? quality[0].toUpperCase() + quality.slice(1) : 'Unavailable'} · ${row.signal.sourceOperationId} · ${row.signal.sourceAsOfUtc ? when(row.signal.sourceAsOfUtc) : 'no source time'}`, 'hint mono'), element('p', 'Recorded source quality; not a current venue reading.', 'hint'));
@@ -723,7 +726,7 @@ function renderDetail() {
       for (const leg of row.signal.legs) { const tr = element('tr'); [leg.asset.instrumentId, leg.side ?? '—', leg.direction ?? '—', formatQuantity(leg.quantity), leg.quantityUnit ? `${leg.quantityUnit} ${leg.quantityAsset ?? ''}` : '—', formatPrice(leg.referencePrice)].forEach((value, index) => tr.append(element('td', value, index === 3 || index === 5 ? 'num' : index === 0 ? 'mono' : ''))); tbody.append(tr); }
       table.append(tbody); wrap.append(table); section.append(wrap); detail.append(section);
     }
-    renderKeys.delete('entry-detail:kind'); renderKeys.delete('entry-detail:live'); renderKeys.delete('entry-detail:check');
+    renderKeys.delete('entry-detail:kind'); renderKeys.delete('entry-detail:live'); renderKeys.delete('entry-detail:check'); renderKeys.delete('entry-detail:response-title');
     if (editFocused) button.focus({ preventScroll: true });
   }
   const status = entryStatus(row);
@@ -739,13 +742,18 @@ function renderDetail() {
       details.append(element('summary', focus.label), element('p', focus.text, 'focus-copy')); section.append(details); slot.append(section);
     }
   }
+  const earlierResponse = Boolean(row.listenerCheck) || Number.isSafeInteger(row.listener?.version) && row.listener.version < row.version;
+  const responseTitle = !row.ticket && row.listener?.status === 'observed' ? earlierResponse ? 'Earlier response' : 'Completed research response' : 'Listener status';
+  if (changed('entry-detail:response-title', responseTitle)) {
+    const heading = detail.querySelector('[data-entry-part="response-title"]'); if (heading) heading.textContent = responseTitle;
+  }
   if (!changed('entry-detail:live', [row.handoff, row.listener, row.ticket])) return;
   const live = detail.querySelector('[data-entry-part="live"]'); live.replaceChildren();
   const revision = listenerRevisionPresentation(row);
   if (row.handoff || (!row.ticket && row.listener?.status === 'observed')) {
     const section = element('aside', null, 'detail-section handoff-section'), title = element('div', null, 'handoff-head'), mark = element('img');
-    const earlierResponse = Boolean(row.listenerCheck) || Number.isSafeInteger(row.listener?.version) && row.listener.version < row.version;
-    mark.src = '/flusso-mark.png'; mark.alt = ''; mark.width = mark.height = 18; title.append(mark, element('h3', !row.ticket && row.listener?.status === 'observed' ? earlierResponse ? 'Earlier response' : 'Completed research response' : 'Listener status')); section.append(title);
+    const heading = element('h3', responseTitle); heading.dataset.entryPart = 'response-title';
+    mark.src = '/flusso-mark.png'; mark.alt = ''; mark.width = mark.height = 18; title.append(mark, heading); section.append(title);
     const review = listenerResult(row);
     if (!row.ticket && row.listener?.status === 'observed' && review) {
       const metadata = activityMetadata(row.listener, row), line = element('div', null, 'detail-meta'), at = element('time', `${metadata.clockLabel} ${when(metadata.clock, true)}`, 'detail-facts'); at.dateTime = metadata.clock ?? '';

@@ -290,7 +290,8 @@ export function activityMetadata(row, source = null) {
   const revision = listenerRevisionPresentation({ version: source?.version, listener: row })?.label
     ?? (Number.isSafeInteger(row.version) && row.version > 0 ? `v${formatCount(row.version)}` : 'revision unknown');
   const completed = row.status === 'observed' && Number.isFinite(Date.parse(row.completedAtUtc)), finished = row.kind === 'research_check' && ['failed', 'stopped'].includes(row.reviewStatus) && Number.isFinite(Date.parse(row.completedAtUtc));
-  return { revision, clock: completed || finished ? row.completedAtUtc : row.atUtc, clockLabel: completed ? 'Completed' : finished ? 'Finished' : 'Recorded',
+  const started = row.kind === 'research_check' && row.status === 'processing' && row.activeReview === true && Number.isFinite(Date.parse(row.atUtc));
+  return { revision, clock: completed || finished ? row.completedAtUtc : row.atUtc, clockLabel: completed ? 'Completed' : finished ? 'Finished' : started ? 'Started' : 'Recorded',
     historical: Boolean(source && Number.isSafeInteger(row.version) && row.version > 0 && row.version < source.version) };
 }
 
@@ -306,8 +307,9 @@ export function completedModelPresentation(listener = {}, entries = []) {
   const scope = source?.handoff?.context?.inScope;
   const current = !source ? 'Source not loaded' : output.version !== source.version ? `Current note is v${formatCount(source.version)}` : 'Same note revision';
   const status = { watching: 'Watching note', reviewed: 'Reviewed note', closed: 'Closed note' }[source?.status];
+  const currentContext = [status, scope === false ? 'Outside selected filters' : scope === true ? 'Matches selected filters' : null].filter(Boolean);
   return { output, earlier, ...activityStatus({ status: 'observed', decision: output.decision }), reason: activityReason({ ...output, status: 'observed' }),
-    context: `${revision} · ${current}${status ? ` · ${status}` : ''}${scope === false ? ' · Outside selected filters' : scope === true ? ' · Matches selected filters' : ''}` };
+    context: `${revision} · ${current}${currentContext.length ? ` · Current: ${currentContext.join(' · ')}` : ''}` };
 }
 
 // Keep this identity across streaming/idle updates. A new clock alone is not a

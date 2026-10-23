@@ -23,6 +23,8 @@ test('rendered ISO dates and signed decimals preserve exact prose and leave sent
   globalThis.document = { createElement: element, createTextNode: textContent => ({ textContent }) };
   try {
     const heading = element('article'); renderMarkdown(heading, '# Findings'); assert.equal(heading.children[0].tag, 'h2'); assert.equal(heading.textContent, 'Findings');
+    renderMarkdown(heading, '# Findings\n\n## Evidence\n\n### Source', { headingLevel: 4 });
+    assert.deepEqual(heading.children.map(node => node.tag), ['h4', 'h4', 'h5']);
     const prose = 'Recorded 2026-10-20. At 2026-10-20T14:03:05.250Z, rates were -12.50bps, +3%, and 1,234.56.';
     const root = element('article'); renderMarkdown(root, prose); assert.equal(root.textContent, prose);
     const walk = node => [node, ...(node.children ?? []).flatMap(walk)];

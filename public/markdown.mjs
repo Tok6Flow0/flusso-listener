@@ -49,7 +49,7 @@ function inline(parent, text) {
   }
   plain(parent, text.slice(last));
 }
-export function renderMarkdown(parent, markdown) {
+export function renderMarkdown(parent, markdown, { headingLevel = 2 } = {}) {
   parent.replaceChildren();
   for (const block of parseMarkdown(markdown)) {
     if (block.type === 'table') {
@@ -58,7 +58,7 @@ export function renderMarkdown(parent, markdown) {
       const body = document.createElement('tbody'); for (const row of block.rows) { const line = document.createElement('tr'); for (const cell of row) { const td = document.createElement('td'); if (/^[+\-−]?[$€£]?\d[\d,._\s]*(?:[KMBT]|%|bps)?$/i.test(cell.trim())) td.className = 'numeric'; inline(td, cell); line.append(td); } body.append(line); } table.append(body); wrap.append(table); parent.append(wrap); continue;
     }
     if (block.type === 'code') { const wrap = document.createElement('div'); wrap.className = 'code-scroll'; const pre = document.createElement('pre'); pre.textContent = block.text; wrap.append(pre); parent.append(wrap); continue; }
-    const node = document.createElement(block.type);
+    const node = document.createElement(/^h[23]$/.test(block.type) ? `h${Math.min(6, headingLevel + Number(block.type[1]) - 2)}` : block.type);
     if (block.items) for (const item of block.items) { const li = document.createElement('li'); if (item.value != null) li.value = item.value; inline(li, item.text); node.append(li); }
     else inline(node, block.text);
     parent.append(node);

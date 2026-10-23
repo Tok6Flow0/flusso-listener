@@ -332,9 +332,9 @@ tr:last-child td{border-bottom:0}
 .note-body p,.note-body ul,.note-body ol,.note-body .code-scroll,.note-body .table-scroll{margin:0 0 16px}
 .note-body ul,.note-body ol{padding-left:22px}
 .note-body li+li{margin-top:4px}
-.note-body h2{font:var(--fw-semibold) var(--fs-title-sm)/var(--lh-snug) var(--font-sans);margin:26px 0 10px;color:var(--c-ink)}
-.note-body h3{font-family:var(--font-sans);margin:20px 0 8px;color:var(--c-ink)}
-.note-body>h2:first-child,.note-body>h3:first-child{margin-top:0}
+.note-body h2,.note-body h4{font:var(--fw-semibold) var(--fs-title-sm)/var(--lh-snug) var(--font-sans);margin:26px 0 10px;color:var(--c-ink)}
+.note-body h3,.note-body h5{font:var(--fw-semibold) var(--fs-body-lg)/var(--lh-snug) var(--font-sans);margin:20px 0 8px;color:var(--c-ink)}
+.note-body>h2:first-child,.note-body>h3:first-child,.note-body>h4:first-child,.note-body>h5:first-child{margin-top:0}
 .note-body strong{font-weight:var(--fw-semibold);color:var(--c-ink)}
 .note-body code{background:var(--c-paper-sand);padding:1px 4px;border-radius:4px}
 .note-body .mono{font-size:var(--fs-body-lg)}

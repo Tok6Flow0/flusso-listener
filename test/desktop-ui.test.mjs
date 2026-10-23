@@ -64,7 +64,7 @@ test('the Journal reader shows the current check before the preserved completed 
   const render = source.slice(source.indexOf('function renderDetail('), source.indexOf('// The editor takes'));
   const make = (tag, textContent = '', className = '') => ({ tag, textContent, className, dataset: {}, children: [], setAttribute() {}, addEventListener() {},
     append(...children) { this.children.push(...children); }, replaceChildren(...children) { this.children = children; },
-    querySelector(selector) { const field = selector.includes('ticket-kind') ? 'ticket-kind' : selector.includes('"check"') ? 'check' : selector.includes('"live"') ? 'live' : null;
+    querySelector(selector) { const field = /\[data-entry-part="([^"]+)"\]/.exec(selector)?.[1] ?? null;
       const find = node => field && node.dataset.entryPart === field || !field && node.dataset.entryAction ? node : node.children.map(find).find(Boolean); return this.children.map(find).find(Boolean) ?? null; }, focus() {} });
   const detail = make('article'), keys = new Map(), recorded = '2026-10-23T10:01:05Z', completed = '2026-10-23T10:00:04Z';
   const row = { id: 'note', origin: 'local', title: 'Real research', body: 'Original note prose.', version: 2, status: 'reviewed',
@@ -72,11 +72,12 @@ test('the Journal reader shows the current check before the preserved completed 
     listenerCheck: { kind: 'research_check', status: 'waiting', reviewStatus: 'failed', version: 2, reason: 'Actual latest failure.', atUtc: recorded },
     handoff: { reason: 'The Listener is off. This note was already here when the Listener turned on.', context: { listenerEnabled: false } } };
   const context = { ...ui, selected: row, snapshot: { entries: [row] }, $: () => detail, element: make, pill: (text, tone) => make('span', text, tone),
-    document: { activeElement: {}, createTextNode: text => make(null, text) }, renderMarkdown: (node, text) => { node.textContent = text; }, notebookName: () => 'Research', renderKeys: keys,
+    document: { activeElement: {}, createTextNode: text => make(null, text) }, renderMarkdown: (node, text, options) => { assert.equal(options.headingLevel, 4); node.textContent = text; }, notebookName: () => 'Research', renderKeys: keys,
     changed: (key, value) => { const next = JSON.stringify(value); if (keys.get(key) === next) return false; keys.set(key, next); return true; },
     formatCount: String, when: (value, seconds) => `${value}/${seconds ? 'seconds' : 'minutes'}`, TICKET_FENCE: /never-match/g };
   runInNewContext(render, context); context.renderDetail();
   const check = detail.children.find(node => node.dataset.entryPart === 'check'), live = detail.children.find(node => node.dataset.entryPart === 'live');
+  assert.equal(detail.children[1].tag, 'section'); assert.equal(detail.children[1].children[0].tag, 'h3'); assert.equal(detail.children[1].children[0].textContent, 'Notes');
   assert.ok(detail.children.indexOf(check) < detail.children.indexOf(live));
   const all = node => [node, ...node.children.flatMap(all)];
   assert.ok(all(check).some(node => node.textContent === 'Latest research check')); assert.ok(all(check).some(node => node.textContent === 'Actual latest failure.'));
@@ -90,6 +91,15 @@ test('the Journal reader shows the current check before the preserved completed 
   assert.ok(all(live).some(node => node.tag === 'time' && node.textContent === `Completed ${completed}/seconds`));
   row.listener = { ...row.listener, completedAtUtc: null }; context.renderDetail();
   assert.ok(all(live).some(node => node.tag === 'time' && node.textContent === 'Recorded 2026-10-23T10:00:00Z/seconds'), 'Legacy records retain their recorded clock without an invented completion.');
+  row.listener = { ...row.listener, version: row.version }; row.listenerCheck = null; context.renderDetail();
+  const acceptedProse = all(live).find(node => node.className === 'verdict-reason'), noteProse = all(detail).find(node => node.className === 'note-body');
+  assert.equal(detail.querySelector('[data-entry-part="response-title"]').textContent, 'Completed research response');
+  row.listenerCheck = { kind: 'research_check', status: 'processing', activeReview: true, version: row.version, atUtc: recorded, reason: 'The local model is reading this note.' }; context.renderDetail();
+  assert.equal(detail.querySelector('[data-entry-part="response-title"]').textContent, 'Earlier response');
+  assert.equal(all(live).find(node => node.className === 'verdict-reason'), acceptedProse); assert.equal(all(detail).find(node => node.className === 'note-body'), noteProse);
+  row.listenerCheck = { ...row.listenerCheck, status: 'waiting', reviewStatus: 'failed', completedAtUtc: recorded, reason: 'A later actual failure.' }; context.renderDetail();
+  assert.equal(detail.querySelector('[data-entry-part="response-title"]').textContent, 'Earlier response');
+  assert.equal(all(live).find(node => node.className === 'verdict-reason'), acceptedProse); assert.equal(all(detail).find(node => node.className === 'note-body'), noteProse);
 });
 
 test('entry saves lock the actual form handler until acceptance and an older refresh cannot unlock a newer save', async () => {
@@ -300,6 +310,20 @@ test('a hidden verdict returns keyboard focus to visible process state and keyed
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   assert.ok(html.indexOf('id="latest-check"') < html.indexOf('id="model-verdict"'), 'The latest outcome precedes the retained earlier response, including while Off.');
   assert.equal(context.snapshot.listener.lastError, undefined, 'A historical failure is not invented as an active model error.');
+  for (const [status, restored] of [['failed', false], ['failed', true], ['stopped', false], ['stopped', true], ['skipped', false]]) {
+    context.snapshot.settings.enabled = true;
+    const reason = `Exact ${status} outcome.`;
+    context.snapshot.listener.modelReview = { id: `terminal-${status}`, status, restored, reason, completedAtUtc: '2026-10-23T10:03:04Z' };
+    context.snapshot.listener.lastError = status === 'failed' && !restored ? reason : null;
+    context.snapshot.listener.processing = status === 'stopped' && !restored ? { stage: 'paused', message: 'The check paused after a settings change.' } : null;
+    context.renderProcess();
+    assert.equal(get('process-state').textContent, 'On'); assert.equal(get('process-message').hidden, true); assert.equal(get('process-message').textContent, '');
+    assert.equal(get('latest-check').hidden, false); assert.equal(get('latest-check-reason').textContent, reason);
+    assert.equal(get('latest-check-time').textContent, 'Finished 2026-10-23T10:03:04Z'); assert.equal(get('model-verdict-reason').textContent, 'Earlier actual model words.');
+  }
+  context.snapshot.listener.busy = true; context.snapshot.listener.modelReview = { id: 'new-running-check', status: 'running' }; context.snapshot.listener.lastError = null;
+  context.snapshot.listener.processing = { stage: 'model', message: 'The local model is reading this note.' }; context.renderProcess();
+  assert.equal(get('process-state').textContent, 'Reading'); assert.equal(get('latest-check').hidden, true);
 
 });
 
@@ -346,6 +370,8 @@ test('research outcome vocabulary is consistent and Finished is used only with a
   assert.equal(latestCheckPresentation({ modelReview: { status: 'failed', completedAtUtc: failure.completedAtUtc } }).label, 'Check failed');
   assert.equal(activityMetadata(failure).clockLabel, 'Finished'); assert.equal(activityMetadata(failure).clock, failure.completedAtUtc);
   assert.equal(activityMetadata({ ...failure, completedAtUtc: null }).clockLabel, 'Recorded'); assert.equal(activityMetadata({ ...failure, completedAtUtc: null }).clock, failure.atUtc);
+  const running = { ...failure, status: 'processing', reviewStatus: null, completedAtUtc: null, activeReview: true };
+  assert.equal(activityMetadata(running).clockLabel, 'Started'); assert.equal(activityMetadata({ ...running, activeReview: false }).clockLabel, 'Recorded');
   assert.match(completionAnnouncement(modelOutputPresentation({ status: 'failed' }), { status: 'failed' }, null, 'Actual model failure.').message, /^Check failed\. Actual model failure\./);
 });
 
@@ -421,11 +447,11 @@ test('completed responses distinguish earlier checks, known revisions and canoni
   const source = { id: 'source', origin: 'local', version: 1, handoff: { context: { inScope: true } } };
   const listener = { lastModelOutput: published, modelReview: { id: 8, status: 'not_run', reason: 'No model was run.' } };
   const earlier = completedModelPresentation(listener, [source]);
-  assert.equal(earlier.earlier, true); assert.equal(earlier.reason, published.reason); assert.match(earlier.context, /v1 · Same note revision · Matches selected filters/);
+  assert.equal(earlier.earlier, true); assert.equal(earlier.reason, published.reason); assert.match(earlier.context, /v1 · Same note revision · Current: Matches selected filters/);
   const changed = completedModelPresentation({ lastModelOutput: published }, [{ ...source, version: 2, handoff: { context: { inScope: false } } }]);
-  assert.equal(changed.earlier, true); assert.match(changed.context, /v1 · Current note is v2 · Outside selected filters/);
+  assert.equal(changed.earlier, true); assert.match(changed.context, /v1 · Current note is v2 · Current: Outside selected filters/);
   const closed = completedModelPresentation(listener, [{ ...source, status: 'closed', version: 2 }]);
-  assert.match(closed.context, /Current note is v2 · Closed note · Matches selected filters/);
+  assert.match(closed.context, /Current note is v2 · Current: Closed note · Matches selected filters/);
   assert.match(completedModelPresentation(listener, []).context, /Source not loaded/);
   assert.match(completedModelPresentation({ lastModelOutput: { ...published, version: null } }, [source]).context, /revision unknown/);
   assert.equal(processingPresentation(listener, true).title, 'No model run');
