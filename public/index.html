@@ -81,8 +81,8 @@
       </header>
       <div class="connect-hint" id="connect-hint" hidden><span>Connect Flusso for the cloud Journal and auto-trade. Local notes work without it.</span><button id="connect" type="button">Connect</button></div>
       <div class="listener-toolbar">
-        <dl class="watch-summary" id="watch-summary"></dl>
-        <div class="listener-actions"><button id="check-now" type="button">Check now</button><button id="configure-listener" type="button" class="primary" aria-expanded="false" aria-controls="listener-configuration"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h7M15 6h1M4 14h1M9 14h7"/><circle cx="13" cy="6" r="2"/><circle cx="7" cy="14" r="2"/></svg>Configure</button></div>
+        <dl class="watch-summary" id="watch-summary" tabindex="0" aria-label="Listener configuration summary"></dl>
+        <div class="listener-actions"><button id="check-now" type="button" aria-describedby="last-check">Check now</button><button id="configure-listener" type="button" class="primary" aria-expanded="false" aria-controls="listener-configuration"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h7M15 6h1M4 14h1M9 14h7"/><circle cx="13" cy="6" r="2"/><circle cx="7" cy="14" r="2"/></svg>Configure</button></div>
       </div>
       <div class="listener-body">
         <section class="review-desk" id="review-desk" data-state="off" aria-labelledby="model-output-heading">

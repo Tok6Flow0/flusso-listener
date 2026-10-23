@@ -140,6 +140,15 @@ test('a published decision appears once when model start and completion timestam
   assert.equal(latestDecisions([otherEntry, otherOrigin], output).length, 3);
 });
 
+
+test('recent decisions keep a newer paused check above an older published response', async () => {
+  const { latestDecisions } = await import('../public/desktop-ui.mjs');
+  const published = { entryId: 'note-a', origin: 'local', decision: 'review', reason: 'Needs context.', atUtc: '2026-10-22T17:20:10Z' };
+  const paused = { entryId: 'note-a', origin: 'local', status: 'waiting', reason: 'Paused before a decision.', atUtc: '2026-10-22T17:20:45Z' };
+  const unknownClock = { entryId: 'note-b', status: 'waiting', atUtc: null };
+  assert.deepEqual(latestDecisions([unknownClock, paused], published), [paused, { ...published, status: 'observed' }, unknownClock]);
+});
+
 test('receipt details preserve explicit order and close refusal codes without inventing an explanation', async () => {
   const { receiptDetails } = await import('../public/desktop-ui.mjs');
   for (const identity of [{ instrumentId: 'kraken:BTCUSD' }, { positionId: 'owned-position' }]) {

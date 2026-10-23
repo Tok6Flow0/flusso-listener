@@ -437,15 +437,16 @@ tr:last-child td{border-bottom:0}
   .account-toggle{width:auto;min-height:40px;padding:4px}
   .account-copy,.account-chevron{display:none}
   .account-menu{position:fixed;top:62px;bottom:auto;right:12px;left:auto;max-height:calc(100dvh - 80px)}
-  .notice{top:68px}
+  .notice{top:auto;bottom:20px}
+  body:has(#editor:not([hidden])) .notice{bottom:88px}
   main{padding:20px 16px 40px}
   h1{font-size:var(--fs-display-sm)}
   .journal-layout{grid-template-columns:minmax(0,1fr);min-height:0}
   .entry-pane{border-right:0;border-bottom:1px solid var(--c-line)}
   .entry-list{max-height:300px}
-  .entry-detail{padding:20px 18px 26px}
+  .entry-detail{padding:20px 18px 26px;scroll-margin-top:80px}
   .detail-title>h2{font-size:var(--fs-title-lg)}
-  .editor{padding:20px 18px 0}
+  .editor{padding:20px 18px 0;scroll-margin-top:80px}
   .editor .form-actions{margin:16px -18px 0;padding:12px 18px}
   .field-grid{grid-template-columns:minmax(0,1fr)}
   .card{padding:18px}

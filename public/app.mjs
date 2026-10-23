@@ -24,7 +24,7 @@ async function api(path, body, headers = {}) {
   const value = await response.json(); if (!response.ok) throw new Error(value.error || 'That did not work. Try again.'); return value;
 }
 async function action(button, work) { if (button?.disabled) return; if (button) button.disabled = true; try { await work(); } catch (error) { notify(error.message); } finally { if (button) button.disabled = false; } }
-function when(value) { const date = new Date(value); return Number.isFinite(date.getTime()) ? date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'; }
+function when(value, seconds = false) { const date = new Date(value); return Number.isFinite(date.getTime()) ? date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', ...(seconds ? { second: '2-digit' } : {}) }) : '—'; }
 function timeOf(value) { const date = new Date(value); return Number.isFinite(date.getTime()) ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'; }
 function changed(key, value) { const next = JSON.stringify(value); if (renderKeys.get(key) === next) return false; renderKeys.set(key, next); return true; }
 // Writes only real changes, so live regions announce a state once rather than on every token.
@@ -181,7 +181,7 @@ function renderStatus() {
   $('listener-dot-label').textContent = !settings.enabled ? 'Off' : listener.lastError ? 'Needs attention' : listener.busy ? 'Reading' : 'On';
   // The schedule lives here; the review desk owns state, errors and the next action.
   const interval = intervalLabel(settings.intervalSeconds), parts = [];
-  if (!settings.enabled) parts.push('Not checking');
+  if (!settings.enabled) parts.push('Turn Listener on to check notes');
   else {
     if (interval) parts.push(`Checks every ${interval}`);
     parts.push(listener.lastCheckedAtUtc ? `Last checked ${when(listener.lastCheckedAtUtc)}` : 'Not checked yet');
@@ -192,6 +192,7 @@ function renderStatus() {
   const pending = snapshot.attempts.filter(row => ['pending', 'unknown'].includes(row.status)).length;
   $('activity-count').hidden = !pending; $('activity-count').textContent = formatCount(pending);
   $('check-now').disabled = !settings.enabled || Boolean(listener.busy);
+  $('check-now').title = !settings.enabled ? 'Turn Listener on to check notes' : listener.busy ? 'A check is already running' : 'Review the newest selected note';
   $('check-now').textContent = listener.busy ? 'Checking…' : 'Check now';
   renderWatchSummary();
 }
@@ -308,7 +309,7 @@ function renderDecisions() {
   if (!changed('decisions', [latest, snapshot.settings.enabled, current])) return;
   $('latest-decisions').replaceChildren(...latest.map(row => {
     const item = element('article', null, 'decision-row'), top = element('div', null, 'decision-top'), source = element('div', null, 'decision-source'), status = activityStatus(row);
-    const time = element('time', when(row.atUtc)); time.dateTime = row.atUtc;
+    const time = element('time', when(row.atUtc, true)); time.dateTime = row.atUtc;
     top.append(pill(status.label, status.tone), time); source.append(sourceButton(row));
     item.append(top, source);
     const shownInDesk = current && row.entryId === current.entryId && row.origin === current.origin && row.decision === current.decision && row.reason === current.reason;
@@ -365,7 +366,15 @@ $('enabled').addEventListener('change', event => { event.stopPropagation(); acti
 $('execution').addEventListener('change', event => { event.stopPropagation(); action(null, () => saveSettings($('execution').checked ? 'Auto-trade on.' : 'Auto-trade off.')); });
 $('enabled').addEventListener('input', event => event.stopPropagation());
 $('execution').addEventListener('input', event => event.stopPropagation());
-$('check-now').addEventListener('click', event => action(event.currentTarget, async () => { await api('/api/check', {}); await load(); if (!snapshot.settings.enabled) notify('Turn the Listener on first.'); }));
+$('check-now').addEventListener('click', async event => {
+  await action(event.currentTarget, async () => {
+    if (!snapshot.settings.enabled) { notify('Turn the Listener on first.'); return; }
+    await api('/api/check', {}); await load();
+  });
+  // A check can finish after the owner switches off. Restore that current state
+  // after the shared action helper releases its temporary button lock.
+  renderStatus();
+});
 $('ticket-example').textContent = '```flusso-orders\n' + JSON.stringify(TICKET_EXAMPLE, null, 2) + '\n```';
 
 /* --------------------------------------------------------------- journal */
