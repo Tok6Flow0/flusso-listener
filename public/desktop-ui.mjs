@@ -91,6 +91,7 @@ export function entryReadingCore(entry, book = '') {
 const RESULT = { submitted: ['submitted', 'pos'], partial: ['partly submitted', 'warn'], blocked: ['refused', 'neg'], unknown: ['unconfirmed', 'warn'], pending: ['submitting', 'info'], sending: ['submitting', 'info'], processing: ['reviewing', 'info'], review: ['not submitted', 'warn'], waiting: ['waiting', 'warn'], resolved: ['owner resolved', ''] };
 const DECISION = { candidate: ['flagged', 'info'], review: ['review suggested', 'info'], ignore: ['no action', ''], ticket: ['ticket', 'info'] };
 export function activityStatus(row = {}) {
+  if (row.kind === 'research_check' && row.status === 'waiting') return { label: row.reviewStatus === 'failed' ? 'needs attention' : 'review unfinished', tone: 'warn' };
   if (row.status === 'processing' && row.decision !== 'ticket' && row.activeReview !== true) return { label: 'review unfinished', tone: 'warn' };
   const [label, tone] = RESULT[row.status] ?? (row.status === 'observed' ? DECISION[row.decision] : null) ?? [text(row.status) || 'noted', ''];
   return { label, tone };
@@ -111,6 +112,7 @@ const LISTENER_RESULT = {
 export function listenerResult(entry) {
   if (!entry?.ticket && !entry?.listener) return null;
   if (!entry.ticket && entry.listener?.status === 'processing' && entry.listener.activeReview !== true) return { ...activityStatus(entry.listener), group: 'open' };
+  if (!entry.ticket && entry.listener?.kind === 'research_check' && entry.listener.status === 'waiting') return { ...activityStatus(entry.listener), group: 'open' };
   if (!entry.ticket && entry.listener?.status === 'observed') {
     const result = activityStatus(entry.listener);
     return { ...result, group: 'decided' };
@@ -215,7 +217,7 @@ export function streamedReason(source) {
   }
 }
 
-const OUTPUT_STATUS = { streaming: ['Streaming', 'info'], complete: ['Complete', ''], failed: ['Failed', 'warn'], stopped: ['Stopped', 'warn'] };
+const OUTPUT_STATUS = { streaming: ['Streaming', 'info'], complete: ['Complete', ''], failed: ['Needs attention', 'warn'], stopped: ['Review unfinished', 'warn'] };
 // The streamed text is kept exactly as received. Until that same run completes and
 // the Listener publishes its validated decision, only the model's own reason words
 // are lifted out of it, as a draft that is never labelled or styled as a decision.
@@ -244,14 +246,24 @@ export function modelOutputPresentation(output, published = null, { disconnected
   const note =output.status === 'streaming' ? (disconnected ? 'Reconnecting. Showing the last output received; nothing is accepted until the response completes.' : 'Format check pending. This is the model’s partial response, not a completed decision.')
     : ['failed', 'stopped'].includes(output.status) ? (hasText ? 'Partial output shown. It was not accepted as a decision.' : 'No output was received. Nothing was accepted.')
       : output.status === 'complete' && !accepted ? 'The response completed, but no accepted local decision matches it.' : null;
-  const empty = hasText ? null : output.status === 'streaming' ? 'Waiting for the model’s first response token.' : 'The model returned no response.';
+  const empty = hasText ? null : output.status === 'streaming' ? 'Waiting for the model’s first response token.' : 'No model response was received.';
   return { status: output.status, label: disconnected && output.status === 'streaming' ? 'Reconnecting' : label, tone, live, accepted, verdict, draft, draftLabel, note, empty };
 }
 
-export function modelCoverageLabel(coverage) {
+export function modelCoverageLabel(coverage, { received = false } = {}) {
   if (!coverage || coverage.unit !== 'UTF-16' || !Number.isSafeInteger(coverage.bodyUnits) || !Number.isSafeInteger(coverage.totalBodyUnits)
     || coverage.bodyUnits < 0 || coverage.totalBodyUnits < coverage.bodyUnits) return 'Review coverage unavailable';
-  return coverage.bodyTruncated ? `Excerpt only: first ${formatCount(coverage.bodyUnits)} of ${formatCount(coverage.totalBodyUnits)} characters. The rest was not sent to the model.` : `Full note body supplied · ${formatCount(coverage.bodyUnits)} characters`;
+  return coverage.bodyTruncated
+    ? received ? `Excerpt only: first ${formatCount(coverage.bodyUnits)} of ${formatCount(coverage.totalBodyUnits)} characters. The rest was not sent to the model.`
+      : `Prepared excerpt: first ${formatCount(coverage.bodyUnits)} of ${formatCount(coverage.totalBodyUnits)} characters. Remaining text is excluded from this review.`
+    : `${received ? 'Full note body supplied' : 'Prepared note body'} · ${formatCount(coverage.bodyUnits)} characters`;
+}
+
+export function activityMetadata(row, source = null) {
+  const revision = listenerRevisionPresentation({ version: source?.version, listener: row })?.label
+    ?? (Number.isSafeInteger(row.version) && row.version > 0 ? `v${formatCount(row.version)}` : 'revision unknown');
+  const completed = row.status === 'observed' && Number.isFinite(Date.parse(row.completedAtUtc));
+  return { revision, clock: completed ? row.completedAtUtc : row.atUtc, clockLabel: completed ? 'Completed' : 'Recorded' };
 }
 
 // lastModelOutput is written only after the model response and settings pass the
@@ -260,7 +272,7 @@ export function completedModelPresentation(listener = {}, entries = []) {
   const output = listener.lastModelOutput;
   if (!output || !['review', 'ignore', 'candidate'].includes(output.decision) || !Number.isFinite(Date.parse(output.atUtc))) return null;
   const source = entries.find(row => row.id === output.entryId && row.origin === output.origin);
-  const earlier = !listener.modelOutput || listener.modelReview?.id != null && output.checkId !== listener.modelReview.id
+  const earlier = listener.modelReview?.id != null && output.checkId !== listener.modelReview.id
     || listener.modelOutput?.status === 'streaming' || source?.version !== output.version || source?.handoff?.context?.inScope === false;
   const revision = Number.isSafeInteger(output.version) && output.version > 0 ? `v${formatCount(output.version)}` : 'revision unknown';
   const scope = source?.handoff?.context?.inScope;

@@ -126,9 +126,10 @@ test('a hidden verdict returns keyboard focus to visible process state and keyed
   runInNewContext(render, context); context.renderProcess();
   assert.equal(document.activeElement, get('process-state')); assert.equal(get('process-state').textContent, 'Reading');
   assert.equal(get('model-verdict').hidden, true); assert.equal(document.activeElement.focusOptions, undefined, 'The browser may reveal the newly focused visible state.');
-  const output = { entryId: 'research', origin: 'local', title: 'Source research', version: 2, atUtc: '2026-10-23T10:00:00Z', status: 'streaming', text: '{"decision":"review","reason":"Public model' };
+  const output = { entryId: 'research', origin: 'local', title: 'Source research', version: 2, coverage: { bodyUnits: 2000, totalBodyUnits: 2400, bodyTruncated: true, unit: 'UTF-16' }, atUtc: '2026-10-23T10:00:00Z', status: 'streaming', text: '{"decision":"review","reason":"Public model' };
   context.snapshot.entries = [{ id: output.entryId, origin: output.origin, version: output.version }]; context.snapshot.listener.modelOutput = output;
   context.renderProcess();
+  assert.match(get('model-input-coverage').textContent, /^Excerpt only:/, 'Actual public output proves the request progressed beyond preparation.');
   const metadata = get('model-output-source'), button = metadata.children[1]; button.focus();
   assert.equal(metadata.children[0].textContent, 'Source note'); assert.equal(metadata.children[2].textContent, `Check started ${output.atUtc}`); assert.equal(metadata.children[2].dateTime, output.atUtc);
   output.text += ' wording.'; context.renderProcess();
@@ -165,6 +166,8 @@ test('a hidden verdict returns keyboard focus to visible process state and keyed
   context.snapshot.listener.busy = true; context.snapshot.listener.modelReview = { id: 3, status: 'running' };
   context.snapshot.listener.modelOutput = { ...context.snapshot.listener.modelOutput, checkId: 3, status: 'streaming', text: '' };
   context.renderProcess(); assert.equal(document.activeElement, get('process-state'));
+  assert.match(get('model-input-coverage').textContent, /^Prepared excerpt:/);
+  assert.doesNotMatch(get('model-input-coverage').textContent, /supplied|sent to the model/);
   assert.equal(get('model-output').hidden, true); assert.equal(document.activeElement.focusOptions, undefined);
   acceptedSource.focus(); context.snapshot.listener.lastModelOutput = { ...context.snapshot.listener.lastModelOutput, entryId: 'different-source', title: 'Different source' };
   context.renderProcess();
@@ -215,8 +218,9 @@ test('completed responses distinguish earlier checks, known revisions and canoni
   assert.match(completedModelPresentation(listener, []).context, /Source not loaded/);
   assert.match(completedModelPresentation({ lastModelOutput: { ...published, version: null } }, [source]).context, /revision unknown/);
   assert.equal(processingPresentation(listener, true).title, 'No model run');
-  assert.match(modelCoverageLabel({ bodyUnits: 2000, totalBodyUnits: 2100, bodyTruncated: true, unit: 'UTF-16' }), /first 2,000 of 2,100 characters\. The rest was not sent to the model\./);
-  assert.match(modelCoverageLabel({ bodyUnits: 40, totalBodyUnits: 40, bodyTruncated: false, unit: 'UTF-16' }), /Full note body supplied · 40 characters/);
+  assert.match(modelCoverageLabel({ bodyUnits: 2000, totalBodyUnits: 2100, bodyTruncated: true, unit: 'UTF-16' }, { received: true }), /first 2,000 of 2,100 characters\. The rest was not sent to the model\./);
+  assert.match(modelCoverageLabel({ bodyUnits: 40, totalBodyUnits: 40, bodyTruncated: false, unit: 'UTF-16' }, { received: true }), /Full note body supplied · 40 characters/);
+  assert.equal(completedModelPresentation({ lastModelOutput: published }, [source]).earlier, false, 'Restoring the latest accepted result alone is not a newer attempt.');
   assert.equal(modelCoverageLabel(null), 'Review coverage unavailable');
   const output = { ...published, text: '{}', status: 'complete', atUtc: '2026-10-23T11:59:59Z' };
   assert.equal(modelOutputPresentation(output, { ...published, version: 2 }).accepted, false);
@@ -237,7 +241,7 @@ test('only the exact displayed completed check is redundant during a later strea
 });
 
 test('inactive durable research progress says unfinished while the actual active review and ticket states retain their labels', async () => {
-  const { activityStatus, listenerResult } = await import('../public/desktop-ui.mjs');
+  const { activityStatus, listenerResult, modelOutputPresentation } = await import('../public/desktop-ui.mjs');
   const progress = { kind: 'research_check', status: 'processing' };
   assert.equal(activityStatus({ ...progress, activeReview: false }).label, 'review unfinished');
   assert.equal(activityStatus(progress).label, 'review unfinished');
@@ -248,6 +252,21 @@ test('inactive durable research progress says unfinished while the actual active
   assert.equal(listenerResult({ ticket: null, listener: { ...progress, activeReview: true } }).label, 'reviewing');
   assert.equal(activityStatus({ status: 'processing', decision: 'ticket' }).label, 'reviewing');
   assert.equal(activityStatus({ status: 'unknown', kind: 'orders' }).label, 'unconfirmed');
+  assert.equal(activityStatus({ kind: 'research_check', status: 'waiting', reviewStatus: 'failed' }).label, 'needs attention');
+  assert.equal(activityStatus({ kind: 'research_check', status: 'waiting', reviewStatus: 'stopped' }).label, 'review unfinished');
+  assert.equal(activityStatus({ kind: 'orders', decision: 'ticket', status: 'waiting' }).label, 'waiting');
+  assert.equal(modelOutputPresentation({ status: 'failed' }).label.toLowerCase(), 'needs attention');
+  assert.equal(modelOutputPresentation({ status: 'stopped' }).label.toLowerCase(), 'review unfinished');
+});
+
+test('Activity metadata identifies source revisions and uses only known completion clocks', async () => {
+  const { activityMetadata } = await import('../public/desktop-ui.mjs');
+  const row = { version: 1, status: 'observed', atUtc: '2026-10-23T12:00:00Z', completedAtUtc: '2026-10-23T12:01:00Z' };
+  assert.deepEqual(activityMetadata(row, { version: 3 }), { revision: 'prior v1', clock: row.completedAtUtc, clockLabel: 'Completed' });
+  assert.deepEqual(activityMetadata({ ...row, completedAtUtc: undefined }, { version: 1 }), { revision: 'v1', clock: row.atUtc, clockLabel: 'Recorded' });
+  assert.deepEqual(activityMetadata({ ...row, status: 'waiting' }, { version: 3 }), { revision: 'prior v1', clock: row.atUtc, clockLabel: 'Recorded' });
+  assert.equal(activityMetadata({ ...row, version: undefined }).revision, 'revision unknown');
+  assert.equal(activityMetadata({ ...row, completedAtUtc: 'invalid' }).clockLabel, 'Recorded');
 });
 
 test('account identity comes only from a connected account profile', () => {

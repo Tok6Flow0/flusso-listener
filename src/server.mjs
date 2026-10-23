@@ -176,7 +176,7 @@ function annotate(entries, activity, store, now, listenerState = {}) {
     const ticket = readTicket(entry.body);
     const key = `${entry.origin}:${entry.id}`, row = (ticket === null ? acceptedResearch.get(key) : null) ?? latest.get(key);
     const handoff = describeEntryHandoff({ entry, settings, ticket, activity: row, attempts: attempts.get(`${entry.origin}:${entry.id}:${entry.version}`), checkpoint: store.get('checkpoint', `${entry.origin}:${entry.id}`), now });
-    return { ...entry, ticket, handoff, listener: row ? { decision: row.decision ?? null, status: row.status, reason: row.reason ?? null, atUtc: row.atUtc, version: row.version ?? null, ...(row.kind === 'research_check' ? { kind: row.kind, activeReview: Boolean(row.checkId != null && listenerState.busy && row.checkId === listenerState.modelReview?.id) } : {}) } : null };
+    return { ...entry, ticket, handoff, listener: row ? { decision: row.decision ?? null, status: row.status, reason: row.reason ?? null, atUtc: row.atUtc, version: row.version ?? null, ...(row.kind === 'research_check' ? { kind: row.kind, reviewStatus: row.reviewStatus ?? null, activeReview: Boolean(row.checkId != null && listenerState.busy && row.checkId === listenerState.modelReview?.id) } : {}) } : null };
   });
 }
 function same(left, right) { if (typeof left !== 'string') return false; const a = Buffer.from(left), b = Buffer.from(right); return a.length === b.length && timingSafeEqual(a, b); }

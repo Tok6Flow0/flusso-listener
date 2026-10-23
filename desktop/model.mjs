@@ -33,7 +33,7 @@ export function createDesktopModel({ directory, runtimeDirectory, existingModelP
     child = spawn(executable, ['--model', modelPath, '--host', '127.0.0.1', '--port', String(port), '--api-key-file', keyFile, '--ctx-size', '4096', '--parallel', '1', '--jinja', '--no-webui', '--log-disable'], { shell: false, stdio: 'ignore', windowsHide: true, cwd: runtimeDirectory, env });
     let failed = false;
     child.once('error', () => { failed = true; });
-    child.once('exit', () => { failed = true; endpoint = undefined; if (!stopping) publish({ state: 'error', message: 'The local model stopped. Set it up again to restart it; your notes are preserved.' }); });
+    child.once('exit', () => { failed = true; endpoint = undefined; if (!stopping) publish({ state: 'error', message: 'The local model stopped. Retry to restart it; your notes are preserved.' }); });
     const readyBy = Date.now() + 90000;
     try {
       while (Date.now() < readyBy && !failed && !stopping) {
@@ -82,7 +82,10 @@ export function createDesktopModel({ directory, runtimeDirectory, existingModelP
     status: () => ({ ...state }), initialize: () => ensure(false), setup: () => ensure(true), stop,
     modelStatus: async () => ({ available: Boolean(endpoint), installed: state.state === 'ready', model: MODEL }),
     async classify({ entry, instructions = '', signal, onOutput }) {
-      if (!endpoint || state.state !== 'ready') throw new Error('Set up the desktop local model first. The research review could not start.');
+      if (!endpoint || state.state !== 'ready') throw new Error(lifetime.signal.aborted ? 'The local model has stopped. Reopen Journal to start it again.'
+        : state.state === 'error' ? state.message
+          : state.state === 'installing' ? 'The local model is still starting. The research review could not start yet.'
+            : 'Set up the desktop local model first. The research review could not start.');
       const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }, redirect: 'error', signal: AbortSignal.any([lifetime.signal, ...(signal ? [signal] : []), AbortSignal.timeout(90000)]), body: JSON.stringify({ model: 'qwen3-1.7b', stream: true, temperature: 0, max_tokens: 256, chat_template_kwargs: { enable_thinking: false }, response_format: { type: 'json_schema', json_schema: { name: 'classification', strict: true, schema: decisionSchema } }, messages: classificationMessages(entry, instructions) }) });
       if (!response.ok) throw new Error('The desktop local model is unavailable.');
       return readClassificationStream(response, { protocol: 'openai', onOutput });

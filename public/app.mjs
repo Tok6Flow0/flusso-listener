@@ -1,6 +1,6 @@
 import { formatCount, formatPrice, formatQuantity, formatPercentLabel, formatMoney, formatPercent } from './format.mjs';
 import { renderMarkdown } from './markdown.mjs';
-import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, entryCardPresentation, entryReadingCore, activityStatus, listenerResult, listenerRevisionPresentation, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions, decisionShownInDesk, decisionRowKeys, receiptDetails, modelOutputPresentation, completedModelPresentation, modelCoverageLabel, completionAnnouncement, localDraftDirty, intervalLabel, settingsSwitchBody, ticketDraft } from './desktop-ui.mjs';
+import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, entryCardPresentation, entryReadingCore, activityStatus, activityMetadata, listenerResult, listenerRevisionPresentation, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions, decisionShownInDesk, decisionRowKeys, receiptDetails, modelOutputPresentation, completedModelPresentation, modelCoverageLabel, completionAnnouncement, localDraftDirty, intervalLabel, settingsSwitchBody, ticketDraft } from './desktop-ui.mjs';
 
 const $ = id => document.getElementById(id);
 let csrf, snapshot, selected = null, editing = null, entryRetryKey = crypto.randomUUID();
@@ -336,7 +336,7 @@ function renderProcess() {
   // A new stream has its own draft. The last completed reason remains readable
   // in the same DOM node, labelled with its own source, revision and completion.
   const draft = view.draft !== null;
-  setText('model-input-coverage', output ? modelCoverageLabel(output.coverage) : '');
+  setText('model-input-coverage', output ? modelCoverageLabel(output.coverage, { received: Boolean(output.text) || view.accepted }) : '');
   $('model-input-coverage').hidden = !output || view.accepted;
   const announcement = listener.busy || earlier && !listener.lastError ? null : completionAnnouncement(view, output, lastCompletionKey, listener.lastError);
   if (listener.busy || (!view.accepted && !['failed', 'stopped'].includes(view.status) && !listener.lastError)) {
@@ -372,7 +372,7 @@ function renderProcess() {
     $('model-verdict-label').className = `verdict-label ${completed.tone}`;
     growText($('model-verdict-reason'), completed.reason);
     setText('model-verdict-context', completed.context);
-    setText('model-verdict-coverage', modelCoverageLabel(completed.output.coverage));
+    setText('model-verdict-coverage', modelCoverageLabel(completed.output.coverage, { received: true }));
     const source = completed.output;
     const metadata = $('model-verdict-source');
     if (changed('model-verdict-source', [source.entryId, source.origin, source.title, snapshot.entries.some(row => row.id === source.entryId && row.origin === source.origin)])) {
@@ -418,16 +418,14 @@ function renderDecisions() {
   panel.hidden = hidden;
   const items = decisionItems(latest, row => {
     const source = snapshot.entries.find(entry => entry.id === row.entryId && entry.origin === row.origin);
-    const revision = listenerRevisionPresentation({ version: source?.version, listener: row })?.label
-      ?? (Number.isSafeInteger(row.version) && row.version > 0 ? `v${formatCount(row.version)}` : 'revision unknown');
-    return { enabled: snapshot.settings.enabled, revision };
+    return { enabled: snapshot.settings.enabled, ...activityMetadata(row, source) };
   });
   if (!changed('decisions', items)) return;
   reconcileRows($('latest-decisions'), items.length ? items : [{ key: 'empty', value: null }], value => {
     if (!value) return element('p', 'No decisions yet. Local model responses and order results appear here after a check.', 'empty');
-    const { row, enabled, revision } = value;
+    const { row, enabled, revision, clock, clockLabel } = value;
     const item = element('article', null, 'decision-row'), top = element('div', null, 'decision-top'), source = element('div', null, 'decision-source'), status = activityStatus(row);
-    const time = element('time', when(row.atUtc, true)); time.dateTime = row.atUtc;
+    const time = element('time', `${clockLabel} ${when(clock, true)}`); time.dateTime = clock;
     top.append(pill(status.label, status.tone), element('span', revision, 'hint mono'), time); source.append(sourceButton(row));
     item.append(top, source);
     item.append(element('p', row.reason || 'Processing this entry.', 'decision-excerpt'));
@@ -799,10 +797,10 @@ $('account-disconnect').addEventListener('click', () => changeConnection(false))
 function renderActivity() {
   const rows = latestDecisions(snapshot.activity, snapshot.listener.lastModelOutput, { limit: null });
   const attempts = new Map(snapshot.attempts.map(row => [row.id, row]));
-  const items = decisionItems(rows, row => ({ attempt: row.attemptId ? attempts.get(row.attemptId) : null }));
+  const items = decisionItems(rows, row => ({ attempt: row.attemptId ? attempts.get(row.attemptId) : null, ...activityMetadata(row, snapshot.entries.find(entry => entry.id === row.entryId && entry.origin === row.origin)) }));
   if (!rows.length) items.push({ key: 'empty', value: { enabled: snapshot.settings.enabled } });
   if (!changed('activity', items)) return;
-  reconcileRows($('activity-list'), items, ({ row, attempt, enabled }) => {
+  reconcileRows($('activity-list'), items, ({ row, attempt, enabled, revision, clock, clockLabel }) => {
     if (!row) {
       const empty = element('div', null, 'empty-art'), mark = element('img'), open = element('button', 'Open Listener'); open.type = 'button';
       mark.src = '/flusso-mark.png'; mark.alt = ''; mark.width = mark.height = 40;
@@ -812,9 +810,9 @@ function renderActivity() {
     }
     const card = element('article', null, 'activity-card'), head = element('div', null, 'activity-head'), status = activityStatus(row);
     // Seconds, as in Latest decisions: checks can run several times a minute.
-    const time = element('time', when(row.atUtc, true)); time.dateTime = row.atUtc;
+    const time = element('time', `${clockLabel} ${when(clock, true)}`); time.dateTime = clock;
     card.dataset.tone = status.tone;
-    head.append(pill(status.label, status.tone), time);
+    head.append(pill(status.label, status.tone), element('span', revision, 'hint mono'), time);
     const title = element('h2'); title.append(sourceButton(row));
     card.append(head, title, element('p', row.reason, 'activity-reason'));
     if (attempt) {

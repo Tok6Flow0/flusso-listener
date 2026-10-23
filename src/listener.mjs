@@ -265,27 +265,25 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
         }
         catch (error) {
           state.modelOutput.status = review.status = activeAbort.signal.aborted ? 'stopped' : 'failed'; changed();
-          if (activeAbort.signal.aborted) { store.put('activity', activity.id, { ...activity, status: 'waiting', reason: 'Model review paused before a decision. This note will be checked again when selected and the Listener is on.' }); break; }
+          if (activeAbort.signal.aborted) { store.put('activity', activity.id, { ...activity, status: 'waiting', reviewStatus: 'stopped', reason: 'Model review paused before a decision. This note will be checked again when selected and the Listener is on.' }); break; }
           // Left unchecked so it is read again once the model is available.
           state.lastError = error?.message?.includes('local model') || error?.message?.includes('classification') ? error.message : 'The local model could not read a note.';
-          store.put('activity', activity.id, { ...activity, status: 'waiting', reason: state.lastError });
+          store.put('activity', activity.id, { ...activity, status: 'waiting', reviewStatus: 'failed', reason: state.lastError });
           publish('error', state.lastError, entry, { index, total });
           continue;
         }
         const latestSettings = store.settings();
         if (activeAbort.signal.aborted || latestSettings.version !== settingsVersion || !latestSettings.enabled || !inScope(entry, latestSettings)) {
           state.modelOutput.status = review.status = 'stopped'; changed();
-          store.put('activity', activity.id, { ...activity, status: 'waiting', reason: 'Listener settings changed before the model decision was accepted. This note will be checked again when selected and the Listener is on.' });
+          store.put('activity', activity.id, { ...activity, status: 'waiting', reviewStatus: 'stopped', reason: 'Listener settings changed before the model decision was accepted. This note will be checked again when selected and the Listener is on.' });
           break;
         }
         const completedAtUtc = new Date(clock()).toISOString();
         const accepted = { ...activity, id: resultId, kind: 'research', decision: decision.decision, reason: decision.reason, status: 'observed', completedAtUtc, coverage };
-        store.put('activity', resultId, accepted);
+        store.completeResearchResult(accepted, activity.id);
         state.modelOutput.status = 'complete';
         review.status = 'complete';
         state.lastModelOutput = { ...accepted, activityId: resultId, startedAtUtc: atUtc, atUtc: completedAtUtc, completionKnown: true };
-        // Only this exact check's successfully stored result supersedes progress.
-        store.delete('activity', activity.id);
         publish('decision', decision.reason || `Model decision: ${decision.decision}.`, entry, { decision: decision.decision, index, total });
         publish('result', 'Research review complete. No order was requested for this note.', entry, { status: 'observed', index, total });
         store.put('checkpoint', key, { version: entry.version, state: 'observed', atUtc });
@@ -307,7 +305,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
         if (unfinished) {
           try {
             const progress = store.get('activity', state.modelOutput.activityId);
-            if (progress?.checkId === review.id) store.put('activity', progress.id, { ...progress, status: 'waiting', reason: state.lastError });
+            if (progress?.checkId === review.id) store.put('activity', progress.id, { ...progress, status: 'waiting', reviewStatus: 'failed', reason: state.lastError });
           } catch { /* A failed store cannot promise a durable error row; live state remains terminal. */ }
         }
         publish('error', state.lastError);

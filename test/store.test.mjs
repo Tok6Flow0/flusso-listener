@@ -4,6 +4,7 @@ import { readFile, symlink, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 import { openStore } from '../src/store.mjs';
 import { journalInput, signalSnapshot, settingsInput } from '../src/schema.mjs';
 import { workspace, note, signal, memoryVault } from './helpers.mjs';
@@ -52,6 +53,26 @@ test('source signal claim is durable and independent of note revision', async ()
     assert.equal(w.store.claimAttempt({ id: 'second', signalIdentity: 'same-source', version: 2 }), false);
     assert.equal(w.store.all('attempt').length, 1);
   } finally { await w.close(); }
+});
+
+test('completed research and removal of its exact progress are atomic even if SQLite refuses the delete', async () => {
+  const w = await workspace(); let observer;
+  try {
+    const progress = { id: 'research-progress', kind: 'research_check', entryId: 'research-entry', origin: 'local', version: 1, checkId: 'new-check', status: 'processing' };
+    const previous = { ...progress, id: 'accepted-research', kind: 'research', checkId: 'previous-check', status: 'observed', decision: 'review', reason: 'Previous actual reason.' };
+    const accepted = { ...previous, checkId: progress.checkId, reason: 'New actual reason.', completedAtUtc: '2026-10-23T12:00:00Z' };
+    w.store.put('activity', previous.id, previous); w.store.put('activity', progress.id, progress);
+    assert.throws(() => w.store.completeResearchResult({ ...accepted, checkId: 'different-check' }, progress.id), /Research progress changed/);
+    observer = new DatabaseSync(join(w.directory, 'journal.db'));
+    observer.exec("CREATE TRIGGER refuse_research_delete BEFORE DELETE ON records WHEN OLD.kind='activity' AND OLD.id='research-progress' BEGIN SELECT RAISE(ABORT,'Synthetic progress delete refusal'); END;");
+    assert.throws(() => w.store.completeResearchResult(accepted, progress.id), /Synthetic progress delete refusal/);
+    assert.deepEqual(w.store.get('activity', previous.id), previous, 'The accepted write rolls back with the failed cleanup.');
+    assert.deepEqual(w.store.get('activity', progress.id), progress);
+    observer.exec('DROP TRIGGER refuse_research_delete');
+    assert.deepEqual(w.store.completeResearchResult(accepted, progress.id), accepted);
+    assert.deepEqual(w.store.get('activity', accepted.id), accepted); assert.equal(w.store.get('activity', progress.id), null);
+    assert.equal(w.store.all('activity').length, 1); assert.equal(w.store.all('attempt').length, 0);
+  } finally { observer?.close(); await w.close(); }
 });
 test('typed Journal schema rejects unknown instructions, invalid units and missing source clocks', () => {
   assert.throws(() => journalInput({ notebookId: 'bad', title: 'x', body: '' }), /notebook/);

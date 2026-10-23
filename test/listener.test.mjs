@@ -520,8 +520,8 @@ test('failed repeat reviews preserve durable accepted research through SQLite re
 
 test('a durable research write failure terminalizes the current stream and retains the previous completed response', async () => {
   const w = await workspace(); let calls = 0, failNext = false, executions = 0;
-  const originalPut = w.store.put;
-  w.store.put = (kind, id, value) => { if (failNext && kind === 'activity' && value.kind === 'research' && value.status === 'observed') { failNext = false; throw new Error('Synthetic SQLite write refusal.'); } return originalPut(kind, id, value); };
+  const originalComplete = w.store.completeResearchResult;
+  w.store.completeResearchResult = (...args) => { if (failNext) { failNext = false; throw new Error('Synthetic SQLite transaction refusal.'); } return originalComplete(...args); };
   const listener = createListener({ store: w.store, cloud: fakeCloud({ submitOrders: async () => { executions++; } }), clock: () => now,
     classify: async ({ onOutput }) => { calls++; onOutput(`actual response ${calls}`); return { decision: 'review', reason: `Completed ${calls}` }; } });
   try {
@@ -529,6 +529,7 @@ test('a durable research write failure terminalizes the current stream and retai
     await listener.tick({ reviewLatest: true }); const previous = listener.status().lastModelOutput;
     failNext = true; await listener.tick({ reviewLatest: true });
     const state = listener.status(); assert.equal(state.busy, false); assert.equal(state.modelOutput.status, 'failed'); assert.equal(state.modelReview.status, 'failed');
+    assert.equal(w.store.all('activity').find(row => row.kind === 'research_check').reviewStatus, 'failed');
     assert.deepEqual(state.lastModelOutput, previous); assert.match(state.lastError, /could not finish/); assert.equal(executions, 0);
   } finally { await listener.stop(); await w.close(); }
 });

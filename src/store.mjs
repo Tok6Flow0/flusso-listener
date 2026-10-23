@@ -94,6 +94,16 @@ export async function openStore({ directory, vault, encryptionKey, clock = () =>
       put('signal-attempt', attempt.signalIdentity, { attemptId: attempt.id, atUtc: attempt.atUtc });
       put('attempt', attempt.id, attempt); return true;
     }); },
+    completeResearchResult(accepted, progressId) { return transaction(() => {
+      const progress = get('activity', progressId);
+      if (!progress || progress.kind !== 'research_check' || accepted.kind !== 'research' || accepted.status !== 'observed'
+        || progressId === accepted.id || !accepted.checkId || ['entryId', 'origin', 'version', 'checkId'].some(field => progress[field] !== accepted[field])) {
+        throw new InputError('Research progress changed before its result could be saved.', 409);
+      }
+      put('activity', accepted.id, accepted);
+      db.prepare('DELETE FROM records WHERE kind=? AND id=?').run('activity', progressId);
+      return accepted;
+    }); },
     close() { db.close(); key.fill(0); },
   };
 }

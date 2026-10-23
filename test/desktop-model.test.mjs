@@ -31,7 +31,11 @@ test('existing-model mode refuses symlinked weights instead of relaxing verifica
     await writeFile(target, 'synthetic'); await symlink(target, existingModelPath);
     model = createDesktopModel({ directory: join(directory, 'isolated'), runtimeDirectory: directory, existingModelPath });
     assert.equal((await model.initialize()).state, 'error');
+    const failure = model.status().message;
+    await assert.rejects(model.classify({ entry: { body: 'Synthetic research.' } }), error => { assert.equal(error.message, failure); assert.doesNotMatch(error.message, /Set up the desktop local model first/); return true; });
     assert.deepEqual(await readdir(join(directory, 'isolated', 'models')), []);
     assert.equal(await readFile(target, 'utf8'), 'synthetic');
+    await model.stop();
+    await assert.rejects(model.classify({ entry: { body: 'Synthetic research.' } }), /The local model has stopped/);
   } finally { await model?.stop(); await rm(directory, { recursive: true, force: true }); }
 });
