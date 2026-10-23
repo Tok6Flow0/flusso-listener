@@ -214,7 +214,10 @@ async function initializeDesktop() {
   window.addEventListener('pagehide', () => unsubscribe(), { once: true });
   desktopStatus = await desktop.status(); renderDesktop();
 }
-$('account-toggle').addEventListener('click', () => { const open = $('account-menu').hidden; $('account-menu').hidden = !open; $('account-toggle').setAttribute('aria-expanded', String(open)); });
+$('account-toggle').addEventListener('click', event => {
+  const menu = $('account-menu'), open = menu.hidden; menu.hidden = !open; $('account-toggle').setAttribute('aria-expanded', String(open));
+  if (open && event.detail === 0) [...menu.querySelectorAll('button, a[href], input, [tabindex="0"]')].find(node => !node.disabled && !node.closest('[hidden]'))?.focus();
+});
 document.addEventListener('click', event => { if (!$('account-area').contains(event.target)) closeAccountMenu(); });
 document.addEventListener('keydown', event => { if (event.key === 'Escape' && !$('account-menu').hidden) closeAccountMenu({ focus: true }); });
 $('account-settings').addEventListener('click', event => { if (desktop) { event.preventDefault(); nativeAction('openAccountSettings'); } closeAccountMenu(); });
@@ -254,6 +257,7 @@ async function load({ forms = false } = {}) {
     $('journal-filter').replaceChildren(new Option('All notebooks', ''), ...notebookOptions.map(([origin, id, name]) => new Option(origin === 'cloud' ? `${name} · cloud` : name, `${origin}:${id}`)));
     $('journal-filter').value = selectedFilter;
   }
+  if (!$('editor').hidden) refreshEntryNotebooks();
   if (changed('entries', [snapshot.entries, notebookOptions])) renderEntries();
   renderActivity();
   renderProcess(); renderDecisions();
@@ -791,6 +795,17 @@ function renderDetail() {
   }
 }
 // The editor takes the reading pane's place, so the list stays in view while writing.
+function refreshEntryNotebooks() {
+  const select = $('entry-notebook'), selectedId = select.value;
+  const notebooks = snapshot.notebooks.filter(item => item.origin === 'local'), ids = new Set(notebooks.map(item => item.id));
+  for (const option of [...select.options]) if (!ids.has(option.value)) select.removeChild(option);
+  notebooks.forEach((item, index) => {
+    const option = [...select.options].find(row => row.value === item.id) ?? new Option(item.name, item.id);
+    if (option.textContent !== item.name) option.textContent = item.name;
+    if (select.options[index] !== option) select.insertBefore(option, select.options[index] ?? null);
+  });
+  if (ids.has(selectedId)) select.value = selectedId;
+}
 function showEditor(row = null) {
   if (entrySaving) { notify('This entry is still saving. Wait for the result before opening another entry.'); return; }
   if (editorDirty()) { keepDraftVisible(); return; }
@@ -874,18 +889,28 @@ $('entry-form').addEventListener('submit', event => {
   notify('Saved.', true);
   } finally { releaseSave(); } });
 });
-$('new-notebook').addEventListener('click', () => { $('notebook-error').hidden = true; $('notebook-dialog').showModal(); });
+let notebookSaving = false;
+$('new-notebook').addEventListener('click', () => { if (!notebookSaving) $('notebook-error').hidden = true; $('notebook-dialog').showModal(); });
 $('cancel-notebook').addEventListener('click', () => $('notebook-dialog').close());
-$('notebook-form').addEventListener('submit', event => { event.preventDefault(); action(event.submitter, async () => {
-  const input = $('notebook-name'), name = input.value; input.disabled = true;
+$('notebook-form').addEventListener('submit', event => {
+  event.preventDefault(); if (notebookSaving) return;
+  notebookSaving = true;
+  const input = $('notebook-name'), name = input.value, submit = $('create-notebook');
+  input.disabled = submit.disabled = true; $('notebook-form').setAttribute('aria-busy', 'true');
   $('notebook-error').textContent = ''; $('notebook-error').hidden = true;
-  try {
-    try { await api('/api/notebooks', { name }); } catch (error) { $('notebook-error').textContent = error.message; $('notebook-error').hidden = false; return; }
-    input.value = ''; $('notebook-dialog').close();
-    try { await load({ forms: !formDirty }); } catch { notify('Notebook added, but the list could not refresh. Refresh to see it.', false, true); return; }
-    notify('Notebook added.', true);
-  } finally { input.disabled = false; }
-}); });
+  action(null, async () => {
+    try {
+      try { await api('/api/notebooks', { name }); } catch (error) {
+        $('notebook-error').textContent = error.message; $('notebook-error').hidden = false;
+        if (!$('notebook-dialog').open) notify(error.message, false, true);
+        return;
+      }
+      input.value = ''; $('notebook-dialog').close();
+      try { await load({ forms: !formDirty }); } catch { notify('Notebook added, but the list could not refresh. Refresh to see it.', false, true); return; }
+      notify('Notebook added.', true);
+    } finally { notebookSaving = false; input.disabled = submit.disabled = false; $('notebook-form').removeAttribute('aria-busy'); }
+  });
+});
 $('sync').addEventListener('click', event => action(event.currentTarget, async () => { const result = await api('/api/sync', {}); await load(); notify(result.complete ? 'Cloud Journal synced.' : result.reason, result.complete); }));
 
 /* ------------------------------------------------------------ connection */
@@ -921,7 +946,7 @@ function renderActivity() {
     }
     const card = element('article', null, 'activity-card'), head = element('div', null, 'activity-head'), status = activityStatus(row, { historical });
     // Seconds, as in Latest decisions: checks can run several times a minute.
-    const time = element('time', `${clockLabel} ${when(clock, true)}`); time.dateTime = clock;
+    const time = element('time', null, 'mono'); time.textContent = `${clockLabel} ${when(clock, true)}`; time.dateTime = clock;
     card.dataset.tone = status.tone;
     const summary = element('div', null, 'activity-status'); summary.append(pill(status.label, status.tone), element('span', revision, 'hint mono'));
     head.append(summary, time);

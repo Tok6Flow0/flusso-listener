@@ -18,6 +18,7 @@
     </nav>
     <div class="sidebar-bottom">
       <div class="account-area" id="account-area">
+        <button id="account-toggle" class="account-toggle" type="button" aria-expanded="false" aria-controls="account-menu"><span id="account-avatar" class="account-avatar" aria-hidden="true">F</span><span class="account-copy"><strong id="account-name">Local workspace</strong><span id="account-detail">On this computer</span></span><svg class="account-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 12 4-4 4 4"/></svg></button>
         <section class="account-menu" id="account-menu" aria-label="Account and settings" hidden>
           <div class="menu-group">
             <button id="account-connect" type="button">Connect Flusso</button>
@@ -36,13 +37,12 @@
             <p class="menu-version"><span id="app-mode">Desktop app</span> <span id="app-version" class="mono"></span></p>
           </div>
         </section>
-        <button id="account-toggle" class="account-toggle" type="button" aria-expanded="false" aria-controls="account-menu"><span id="account-avatar" class="account-avatar" aria-hidden="true">F</span><span class="account-copy"><strong id="account-name">Local workspace</strong><span id="account-detail">On this computer</span></span><svg class="account-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 12 4-4 4 4"/></svg></button>
       </div>
     </div>
   </aside>
   <main>
     <span id="notice-status" class="sr-only" role="status" aria-atomic="true"></span><span id="notice-alert" class="sr-only" role="alert" aria-atomic="true"></span>
-    <div id="notice" class="notice" hidden><span id="notice-text"></span><button id="dismiss-notice" type="button" class="notice-close" aria-label="Dismiss message">×</button></div>
+    <div id="notice" class="notice" hidden><span id="notice-text" aria-hidden="true"></span><button id="dismiss-notice" type="button" class="notice-close" aria-label="Dismiss message">×</button></div>
     <p id="refresh-status" class="status-line warn" hidden></p>
     <section class="model-setup" id="model-setup" aria-labelledby="model-setup-title" hidden>
       <img class="setup-mark" src="/flusso-mark.png" alt="" width="36" height="36">
@@ -143,7 +143,7 @@
         <div class="configuration-head"><h2 id="configuration-heading">Listener settings</h2><button id="close-configuration" type="button" class="ghost">Close</button></div>
         <form id="settings-form" class="settings">
           <section class="card">
-            <h2>Watch</h2>
+            <h3>Watch</h3>
             <div class="field-grid">
               <fieldset class="segmented"><legend>Source</legend>
                 <label><input type="radio" name="source" value="local"><span>Local</span></label>
@@ -160,7 +160,7 @@
             </details>
           </section>
           <section class="card trade-card">
-            <div class="card-head"><h2>Auto-trade</h2><label class="switch"><input id="execution" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span class="sr-only">Auto-trade</span></label></div>
+            <div class="card-head"><h3>Auto-trade</h3><label class="switch"><input id="execution" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span class="sr-only">Auto-trade</span></label></div>
             <p class="hint">Any <code>flusso-orders</code> or <code>flusso-close</code> ticket from the notebooks you pick, written within the window below and not yet acted on, is submitted or refused, even if it arrived while the app was closed. Included with Flusso Automate and Pro; each order counts toward your plan’s daily connected-order allowance. Set maximums per order, per ticket and for leverage before enabling auto-trade.</p>
             <div id="execution-draft-warning" class="hint" role="status" hidden><p>Save your changes before turning Auto-trade on. Switches use saved settings.</p><button type="submit">Save changes</button></div>
             <div class="field-grid">
@@ -178,7 +178,7 @@
             <details><summary>Ticket format</summary><div class="code-scroll"><pre id="ticket-example"></pre></div><p class="hint">Format example, not current market data. This JSON alone is not an executable ticket. Quantity is in venue contracts. Use instrument ids from Flusso market facts. Your limits above tighten each order’s own conditions.</p></details>
           </section>
           <section class="card" id="model-card">
-            <h2>Local model</h2>
+            <h3>Local model</h3>
             <p id="model-state" class="hint">Checking…</p>
             <button id="setup-model-panel" type="button" hidden>Set up</button>
             <div class="code-scroll" id="model-manual-command"><code>ollama pull qwen3:1.7b</code></div>
@@ -199,7 +199,7 @@
 </div>
 <dialog id="notebook-dialog" class="discard-dialog notebook-dialog" aria-labelledby="notebook-dialog-title">
   <h2 id="notebook-dialog-title">New notebook</h2>
-  <form id="notebook-form"><label>Notebook name<input id="notebook-name" maxlength="120" required autofocus></label><p id="notebook-error" class="hint" role="alert" hidden></p><div class="form-actions"><button id="cancel-notebook" type="button">Cancel</button><button type="submit" class="primary">Create notebook</button></div></form>
+  <form id="notebook-form"><label>Notebook name<input id="notebook-name" maxlength="120" required autofocus></label><p id="notebook-error" class="hint" role="alert" hidden></p><div class="form-actions"><button id="cancel-notebook" type="button">Cancel</button><button id="create-notebook" type="submit" class="primary">Create notebook</button></div></form>
 </dialog>
 <dialog id="discard-entry" class="discard-dialog" aria-labelledby="discard-entry-title" aria-describedby="discard-entry-description">
   <h2 id="discard-entry-title">Discard this draft?</h2>

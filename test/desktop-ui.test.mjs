@@ -196,7 +196,7 @@ test('the existing entry Save and Cancel controls sit in its heading and the out
   assert.match(html, /Local model response · format checked/);
   assert.ok(html.indexOf('id="model-raw-toggle"') < html.indexOf('id="model-verdict"'), 'Current raw controls precede the separately attributed earlier response.');
   assert.ok(html.indexOf('id="model-output-note"') < html.indexOf('id="model-verdict"'));
-  const native = html.slice(html.indexOf('id="native-controls"'), html.indexOf('<button id="account-toggle"'));
+  const native = html.slice(html.indexOf('id="native-controls"'), html.indexOf('</section>', html.indexOf('id="native-controls"')));
   assert.match(native, /Closing this window keeps the Listener running/); assert.match(native, /Quit Journal and stop Listener/);
   assert.ok(html.indexOf('<details class="ops-log">') < html.indexOf('<section class="decisions-panel"'), 'Operations remains before the changing preview panel.');
 });
@@ -367,12 +367,12 @@ test('output heading precedes its outcome and the fixed library trigger opens an
 
 test('native notebook creation retains failures in the dialog and a confirmed save survives refresh failure', async () => {
   const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
-  const handlers = source.slice(source.indexOf("$('new-notebook').addEventListener"), source.indexOf("$('sync').addEventListener"));
+  const handlers = source.slice(source.indexOf('let notebookSaving'), source.indexOf("$('sync').addEventListener"));
   for (const mode of ['refused', 'refresh-failed', 'accepted']) {
     const callbacks = new Map(), nodes = new Map(), jobs = [], notices = []; let requests = 0, release;
     const pending = new Promise(resolve => { release = resolve; });
     const get = id => { if (!nodes.has(id)) nodes.set(id, { value: id === 'notebook-name' ? 'Exact new notebook' : '', hidden: true, disabled: false,
-      addEventListener: (event, callback) => callbacks.set(`${id}:${event}`, callback), showModal() { this.open = true; }, close() { this.open = false; } }); return nodes.get(id); };
+      addEventListener: (event, callback) => callbacks.set(`${id}:${event}`, callback), setAttribute(name, value) { this[name] = value; }, removeAttribute(name) { delete this[name]; }, showModal() { this.open = true; }, close() { this.open = false; } }); return nodes.get(id); };
     const context = { $: get, formDirty: false, api: async (_path, input) => { requests++; assert.equal(input.name, 'Exact new notebook'); await pending; if (mode === 'refused') throw new Error('Actual create refusal.'); return {}; },
       load: async () => { if (mode === 'refresh-failed') throw new Error('Actual read failure.'); }, notify: (message, success) => notices.push({ message, success }),
       action: (_button, work) => jobs.push(work()) };
@@ -960,4 +960,84 @@ test('completed model reviews and owner-resolved uncertainty are not unsubmitted
   const resolved = { ticket: { ticket: {} }, listener: { status: 'resolved' } };
   assert.equal(matchesResultFilter(resolved, 'resolved'), true);
   assert.equal(matchesResultFilter(resolved, 'refused'), false);
+});
+
+
+test('new local notebooks become selectable in an open editor without replacing its option, draft or caret', async () => {
+  const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
+  const helper = source.slice(source.indexOf('function refreshEntryNotebooks('), source.indexOf('function showEditor('));
+  const first = { value: 'original', textContent: 'Original notebook' }, select = { value: 'original', options: [first],
+    insertBefore(node, before) { const old = this.options.indexOf(node); if (old >= 0) this.options.splice(old, 1); const index = this.options.indexOf(before); this.options.splice(index < 0 ? this.options.length : index, 0, node); },
+    removeChild(node) { this.options.splice(this.options.indexOf(node), 1); } };
+  const body = { value: 'Unsaved exact text', selectionStart: 8, selectionEnd: 13 }, base = { body: 'Saved text' };
+  const context = { $: id => id === 'entry-notebook' ? select : body, snapshot: { notebooks: [{ id: 'original', origin: 'local', name: 'Renamed notebook' }, { id: 'new', origin: 'local', name: 'Newly created' }, { id: 'cloud', origin: 'cloud', name: 'Cloud' }] },
+    Option: function(textContent, value) { Object.assign(this, { textContent, value }); }, editorBase: base, entryRetryKey: 'stable-retry', document: { activeElement: body } };
+  runInNewContext(helper, context); assert.equal(typeof context.refreshEntryNotebooks, 'function'); context.refreshEntryNotebooks();
+  assert.equal(select.options[0], first); assert.equal(first.textContent, 'Renamed notebook'); assert.equal(select.value, 'original');
+  assert.deepEqual(select.options.map(row => row.value), ['original', 'new']);
+  assert.equal(context.editorBase, base); assert.equal(context.entryRetryKey, 'stable-retry'); assert.equal(context.document.activeElement, body);
+  assert.deepEqual(body, { value: 'Unsaved exact text', selectionStart: 8, selectionEnd: 13 });
+  const options = [...select.options]; context.refreshEntryNotebooks(); assert.deepEqual(select.options, options);
+  select.value = 'new'; context.refreshEntryNotebooks(); assert.equal(select.value, 'new');
+  const load = source.slice(source.indexOf('async function load('), source.indexOf('function renderStatus('));
+  assert.match(load, /if \(!\$\('editor'\)\.hidden\) refreshEntryNotebooks\(\)/);
+});
+
+test('workspace disclosure follows its trigger in keyboard order and keyboard opening focuses its first usable control', async () => {
+  const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  assert.ok(html.indexOf('id="account-toggle"') < html.indexOf('id="account-menu"'));
+  const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
+  const handlers = source.slice(source.indexOf("$('account-toggle').addEventListener('click'"), source.indexOf("$('account-settings').addEventListener"));
+  const callbacks = new Map(); let focused = 'toggle'; const hidden = { disabled: false, closest: () => true, focus() { focused = 'hidden'; } }, disabled = { disabled: true, closest: () => null, focus() { focused = 'disabled'; } }, control = { disabled: false, closest: () => null, focus() { focused = 'first'; } };
+  const toggle = { addEventListener: (event, callback) => callbacks.set(`toggle:${event}`, callback), setAttribute(name, value) { this[name] = value; } }, menu = { hidden: true, querySelectorAll: () => [hidden, disabled, control] }, area = { contains: target => target === toggle || target === control };
+  const context = { $: id => ({ 'account-toggle': toggle, 'account-menu': menu, 'account-area': area })[id], document: { addEventListener: (event, callback) => callbacks.set(`document:${event}`, callback) }, closeAccountMenu({ focus = false } = {}) { menu.hidden = true; toggle['aria-expanded'] = 'false'; if (focus) focused = 'toggle'; } };
+  runInNewContext(handlers, context); callbacks.get('toggle:click')({ detail: 1 }); assert.equal(menu.hidden, false); assert.equal(focused, 'toggle', 'Pointer opening retains pointer focus.');
+  callbacks.get('toggle:click')({ detail: 1 }); callbacks.get('toggle:click')({ detail: 0 }); assert.equal(focused, 'first'); assert.equal(toggle['aria-expanded'], 'true');
+  callbacks.get('document:keydown')({ key: 'Escape' }); assert.equal(menu.hidden, true); assert.equal(focused, 'toggle');
+  callbacks.get('toggle:click')({ detail: 0 }); callbacks.get('document:click')({ target: {} }); assert.equal(menu.hidden, true);
+});
+
+test('notices have one exposed message source and settings subsection headings nest below their title', async () => {
+  const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  assert.match(html, /<span id="notice-text" aria-hidden="true"><\/span>/);
+  assert.match(html, /id="notice-status"[^>]*role="status"/); assert.match(html, /id="notice-alert"[^>]*role="alert"/);
+  assert.match(html, /<button id="dismiss-notice"[^>]*aria-label="Dismiss message"/);
+  const settings = html.slice(html.indexOf('id="listener-configuration"'), html.indexOf('</form>', html.indexOf('id="listener-configuration"')));
+  assert.equal((settings.match(/<h2/g) ?? []).length, 1);
+  for (const title of ['Watch', 'Auto-trade', 'Local model']) assert.ok(settings.includes(`<h3>${title}</h3>`));
+});
+
+test('Activity timestamps use a single data text node with the actual clock label and seconds', async () => {
+  const ui = await import('../public/desktop-ui.mjs'), source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
+  const fn = source.slice(source.indexOf('function renderActivity('), source.indexOf('// EventSource reconnects', source.indexOf('function renderActivity(')));
+  const make = (tag, content, className) => ({ tag, textContent: content ?? '', className, children: [], dataset: {}, append(...children) { this.children.push(...children); } });
+  const row = { id: 'result', origin: 'local', entryId: 'note', status: 'observed', decision: 'review', version: 2, reason: 'Real result', atUtc: '2026-10-23T10:00:00Z', completedAtUtc: '2026-10-23T10:00:04Z' };
+  let card;
+  const context = { ...ui, snapshot: { activity: [row], listener: {}, attempts: [], entries: [{ id: 'note', origin: 'local', version: 2 }], settings: {} }, $: () => ({}),
+    decisionItems: rows => rows.map(row => ({ value: { row, ...ui.activityMetadata(row, { version: 2 }) } })), changed: () => true, reconcileRows: (_list, items, render) => { card = render(items[0].value); },
+    element: make, pill: (text, tone) => make('span', text, tone), sourceButton: () => make('button', 'Source note'), when: (clock, seconds) => `${clock}/${seconds ? 'seconds' : 'minutes'}` };
+  runInNewContext(fn, context); context.renderActivity(); const time = card.children[0].children.find(node => node.tag === 'time');
+  assert.equal(time.textContent, 'Completed 2026-10-23T10:00:04Z/seconds'); assert.equal(time.className, 'mono'); assert.equal(time.children.length, 0); assert.equal(time.dateTime, row.completedAtUtc);
+});
+
+
+test('dismissed pending notebook creation cannot submit twice and its later refusal remains visible', async () => {
+  const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
+  const handlers = source.slice(source.indexOf('let notebookSaving'), source.indexOf("$('sync').addEventListener"));
+  for (const dismiss of ['cancel', 'escape']) {
+    const callbacks = new Map(), nodes = new Map(), jobs = [], notices = []; let requests = 0, reject;
+    const pending = new Promise((_resolve, refuse) => { reject = refuse; });
+    const get = id => { if (!nodes.has(id)) nodes.set(id, { value: id === 'notebook-name' ? 'Retained name' : '', hidden: true, disabled: false,
+      addEventListener: (event, callback) => callbacks.set(`${id}:${event}`, callback), setAttribute(name, value) { this[name] = value; }, removeAttribute(name) { delete this[name]; },
+      showModal() { this.open = true; }, close() { this.open = false; } }); return nodes.get(id); };
+    const context = { $: get, formDirty: false, api: async () => { requests++; await pending; }, load: async () => assert.fail('A refused create must not refresh or report success.'),
+      action: (_button, work) => jobs.push(work()), notify: (message, success, error) => notices.push({ message, success, error }) };
+    runInNewContext(handlers, context); callbacks.get('new-notebook:click')(); const submit = () => callbacks.get('notebook-form:submit')({ preventDefault() {}, submitter: get('create-notebook') });
+    submit(); if (dismiss === 'cancel') callbacks.get('cancel-notebook:click')(); else get('notebook-dialog').close();
+    callbacks.get('new-notebook:click')(); submit(); assert.equal(requests, 1); assert.equal(get('notebook-name').disabled, true);
+    get('notebook-dialog').close(); reject(new Error('The actual create request was refused.')); await jobs[0];
+    assert.equal(get('notebook-dialog').open, false); assert.equal(get('notebook-name').value, 'Retained name'); assert.equal(get('notebook-name').disabled, false); assert.equal(get('create-notebook').disabled, false);
+    assert.deepEqual(notices, [{ message: 'The actual create request was refused.', success: false, error: true }]);
+    assert.equal(requests, 1); callbacks.get('new-notebook:click')(); assert.equal(get('notebook-name').value, 'Retained name');
+  }
 });
