@@ -211,7 +211,7 @@ export function modelOutputPresentation(output, published = null, { disconnected
   return { status: output.status, label: disconnected && output.status === 'streaming' ? 'Reconnecting' : label, tone, live, accepted, verdict, draft, draftLabel, note, empty };
 }
 
-export function latestDecisions(activity = [], output = null) {
+export function latestDecisions(activity = [], output = null, { limit = 5 } = {}) {
   const rows = [...activity];
   // Activity clocks the model's start; its published output clocks completion.
   // Keep every retained revision and suppress only its duplicate output summary.
@@ -222,7 +222,8 @@ export function latestDecisions(activity = [], output = null) {
   // A later paused or refused check must remain above an earlier published answer.
   const clock = row => { const value = Date.parse(row.atUtc); return Number.isFinite(value) ? value : -Infinity; };
   const unconfirmed = row => ['pending', 'unknown'].includes(row.status);
-  return rows.sort((a, b) => Number(unconfirmed(b)) - Number(unconfirmed(a)) || clock(b) - clock(a)).slice(0, 5);
+  rows.sort((a, b) => Number(unconfirmed(b)) - Number(unconfirmed(a)) || clock(b) - clock(a));
+  return limit === null ? rows : rows.slice(0, limit);
 }
 
 // The API accepts a complete versioned settings body. A switch must carry only

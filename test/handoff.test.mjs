@@ -48,6 +48,24 @@ test('handoff explains reviewed research, startup baseline, malformed/stale tick
   } finally { await w.close(); }
 });
 
+test('a startup ticket explanation distinguishes the saved revision from a later corrected revision', async () => {
+  const w = await workspace();
+  try {
+    enable(w.store);
+    const entry = w.store.createEntry(note(w.store, { body: '```flusso-orders\ninvalid\n```' }));
+    const checkpoint = { version: entry.version, state: 'baseline' };
+    const describe = candidate => describeEntryHandoff({ entry: candidate, settings: w.store.settings(), checkpoint, now });
+    const baseline = describe(entry);
+    assert.equal(baseline.code, 'baselined');
+    assert.match(baseline.reason, /skips this saved ticket revision/);
+    assert.match(baseline.reason, /new revision.*checked/);
+    assert.match(baseline.reason, /previously decided tickets are never replayed/);
+    assert.equal(describe({ ...entry, version: entry.version + 1 }).code, 'malformed_ticket');
+    assert.equal(describe({ ...entry, version: entry.version + 1, body: ticket() }).code, 'awaiting_check');
+    assert.deepEqual(checkpoint, { version: entry.version, state: 'baseline' });
+  } finally { await w.close(); }
+});
+
 test('existing private status response adds handoff diagnostics without checking or submitting entries', async () => {
   const w = await workspace(); let actions = 0, app;
   try {

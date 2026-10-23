@@ -231,3 +231,19 @@ test('unconfirmed order results remain visible above five newer research decisio
   assert.equal(result.length, 5); assert.deepEqual(result.slice(0, 2), [pending, old]);
   assert.deepEqual(result.slice(2).map(row => row.entryId), ['note-6', 'note-5', 'note-4']);
 });
+
+test('full Activity includes the preview without truncating retained history or hiding unconfirmed results', async () => {
+  const { latestDecisions } = await import('../public/desktop-ui.mjs');
+  const unknown = { entryId: 'old-ticket', status: 'unknown', atUtc: '2026-10-22T15:00:00Z' };
+  const history = Array.from({ length: 8 }, (_, index) => ({ entryId: `note-${index}`, origin: 'local', status: 'observed', decision: 'review', reason: `Reason ${index}.`, atUtc: `2026-10-22T16:0${index}:00Z` }));
+  const output = { entryId: 'latest-note', origin: 'local', decision: 'review', reason: 'Newest published reason.', atUtc: '2026-10-22T17:00:00Z' };
+  const original = [unknown, ...history], before = structuredClone(original);
+  const full = latestDecisions(original, output, { limit: null });
+  assert.equal(full.length, 10);
+  assert.equal(full[0], unknown);
+  assert.deepEqual(full[1], { ...output, status: 'observed' });
+  assert.deepEqual(latestDecisions(original, output), full.slice(0, 5));
+  assert.deepEqual(original, before);
+  assert.equal(latestDecisions([...original, { ...output, status: 'observed' }], output, { limit: null }).length, 10);
+  assert.deepEqual(latestDecisions([], output, { limit: null }), [{ ...output, status: 'observed' }]);
+});

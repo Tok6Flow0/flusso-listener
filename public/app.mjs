@@ -181,7 +181,7 @@ async function load({ forms = false } = {}) {
     $('journal-filter').value = selectedFilter;
   }
   if (changed('entries', snapshot.entries)) renderEntries();
-  if (changed('activity', [snapshot.activity, snapshot.attempts, snapshot.settings.enabled])) renderActivity();
+  renderActivity();
   renderProcess(); renderDecisions();
   if (forms || !formDirty) fillSettings();
 }
@@ -576,7 +576,7 @@ function renderDetail() {
       line.append(pill(outcome.label, outcome.tone), document.createTextNode(row.listener ? ` ${when(row.listener.atUtc)}${row.listener.reason ? ` · ${row.listener.reason}` : ''}` : ' The listener has not acted on this ticket yet.'));
       section.append(line);
     }
-    if (row.ticket.error) section.append(element('p', row.ticket.error, 'hint'), element('p', 'Fix this ticket before the Listener can act on it.', 'hint'));
+    if (row.ticket.error) section.append(element('p', row.ticket.error, 'hint'), element('p', 'Correct the ticket and save a new revision before it can be checked.', 'hint'));
     else section.append(row.ticket.kind === 'close' ? positionsTable(row.ticket.ticket.positionIds) : ordersTable(row.ticket.ticket.orders));
     detail.append(section);
   }
@@ -656,8 +656,10 @@ $('account-disconnect').addEventListener('click', () => changeConnection(false))
 
 /* -------------------------------------------------------------- activity */
 function renderActivity() {
+  if (!changed('activity', [snapshot.activity, snapshot.attempts, snapshot.settings.enabled, snapshot.listener.lastModelOutput])) return;
+  const rows = latestDecisions(snapshot.activity, snapshot.listener.lastModelOutput, { limit: null });
   const attempts = new Map(snapshot.attempts.map(row => [row.id, row]));
-  $('activity-list').replaceChildren(...snapshot.activity.map(row => {
+  $('activity-list').replaceChildren(...rows.map(row => {
     const card = element('article', null, 'activity-card'), head = element('div', null, 'activity-head'), status = activityStatus(row), attempt = row.attemptId ? attempts.get(row.attemptId) : null;
     // Seconds, as in Latest decisions: checks can run several times a minute.
     const time = element('time', when(row.atUtc, true)); time.dateTime = row.atUtc;
@@ -680,7 +682,7 @@ function renderActivity() {
     }
     return card;
   }));
-  if (!snapshot.activity.length) {
+  if (!rows.length) {
     const empty = element('div', null, 'empty-art'), mark = element('img'), open = element('button', 'Open Listener'); open.type = 'button';
     mark.src = '/flusso-mark.png'; mark.alt = ''; mark.width = mark.height = 40;
     open.addEventListener('click', () => switchView('listener'));
@@ -701,7 +703,7 @@ function streamListener() {
     if (!snapshot || listener.sequence < (snapshot.listener.sequence ?? 0)) return;
     const finished = snapshot.listener.busy && !listener.busy;
     snapshot.listener = listener;
-    renderStatus(); renderProcess(); renderDecisions();
+    renderStatus(); renderProcess(); renderDecisions(); renderActivity();
     if (finished) load().catch(error => notify(error.message, false, true));
   };
 }

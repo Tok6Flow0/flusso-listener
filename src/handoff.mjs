@@ -52,7 +52,7 @@ export function describeEntryHandoff({ entry, settings, checkpoint = null, activ
     : `This entry is ${entry.status}; only watching entries can supply an action ticket.${kind === 'research' ? ` ${research}` : ''}`);
   if (currentCheckpoint?.state === 'baseline') return result('baselined', kind === 'research'
     ? `This note was already here when the Listener turned on. The newest selected research note is reviewed each period while it is on. ${research}`
-    : 'This ticket was already here when the Listener turned on and will not be replayed.');
+    : 'The Listener skips this saved ticket revision, recorded as existing when it turned on. Edit and save a new revision to have the ticket checked; previously decided tickets are never replayed.');
   if (!settings.enabled) return result('listener_off', 'The Listener is off; no entry is checked or submitted.');
   if (ticket === null) return result('research_only', research);
   if (ticket.error) return result('malformed_ticket', ticket.error);

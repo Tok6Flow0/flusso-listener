@@ -134,7 +134,7 @@ main{min-width:0;width:100%;max-width:1320px;margin:0 auto;padding:30px 40px 56p
 .view:not([hidden]){animation:rise .28s cubic-bezier(.2,.7,.2,1)}
 .view-head{display:flex;align-items:center;justify-content:space-between;gap:12px 16px;flex-wrap:wrap;margin-bottom:22px;min-height:40px}
 .title-block{display:grid;gap:6px;min-width:0}
-.head-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.head-actions{display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap}
 .head-actions select{width:auto;min-width:160px;max-width:240px}
 .status-line{color:var(--c-ink-4);font-size:var(--fs-body-sm);overflow-wrap:anywhere}
 .status-line.warn{color:var(--c-warn-deep)}
