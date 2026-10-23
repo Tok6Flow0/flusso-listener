@@ -34,8 +34,16 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
     && typeof row.reason === 'string' && Number.isFinite(Date.parse(row.completedAtUtc ?? row.atUtc)))
     .sort((a, b) => (b.completedAtUtc ?? b.atUtc).localeCompare(a.completedAtUtc ?? a.atUtc))[0];
   const restored = completed ? { ...completed, activityId: completed.id, startedAtUtc: completed.atUtc, atUtc: completed.completedAtUtc ?? completed.atUtc, completionKnown: Boolean(completed.completedAtUtc) } : null;
-  const state = { running: false, busy: false, lastCheckedAtUtc: null, lastError: null, cloudComplete: null, cloudReason: null,
-    processing: null, events: [], lastModelOutput: restored, modelOutput: null, modelReview: null, modelFailure: null, modelRecovery: null, sequence: 0 };
+  const receipt = store.get('sync', 'last-check');
+  const savedCheck = receipt?.id && Number.isFinite(Date.parse(receipt.startedAtUtc)) ? receipt : null;
+  const progress = store.all('activity').filter(row => row.kind === 'research_check' && row.checkId && Number.isFinite(Date.parse(row.atUtc)))
+    .sort((a, b) => b.atUtc.localeCompare(a.atUtc))[0];
+  // Legacy activity proves a recorded review, not a whole-check completion.
+  const legacy = progress && (!completed || Date.parse(progress.atUtc) >= Date.parse(completed.completedAtUtc ?? completed.atUtc)) ? progress : completed;
+  const previousReview = savedCheck ? { ...savedCheck, status: savedCheck.outcome ?? savedCheck.status, restored: true, ...(!savedCheck.completedAtUtc ? { status: 'stopped', reason: 'The previous check did not record completion.' } : {}) }
+    : legacy ? { id: legacy.checkId, startedAtUtc: legacy.atUtc, completedAtUtc: legacy.completedAtUtc ?? null, status: legacy.status === 'observed' ? 'complete' : legacy.reviewStatus === 'failed' ? 'failed' : 'stopped', reason: legacy.status === 'observed' || legacy.reviewStatus === 'failed' ? legacy.reason ?? null : 'A previous review did not record a completed response.', restored: true, restoredFromActivity: true } : null;
+  const state = { running: false, busy: false, lastCheckedAtUtc: Number.isFinite(Date.parse(savedCheck?.lastCheckedAtUtc)) ? savedCheck.lastCheckedAtUtc : null, lastError: null, cloudComplete: null, cloudReason: null,
+    processing: null, events: [], lastModelOutput: restored, modelOutput: null, modelReview: previousReview, modelFailure: null, modelRecovery: null, sequence: 0 };
   const subscribers = new Set();
   function changed() {
     state.sequence += 1;
@@ -203,6 +211,8 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
     publish('start', 'Starting a Listener check.');
     try {
       const settings = store.settings(); state.lastError = null; state.modelFailure = null; state.modelRecovery = null;
+      Object.assign(review, { settingsVersion: settings.version, accountId: settings.accountId, source: settings.source, sources: [] });
+      store.put('sync', 'last-check', { ...review, lastCheckedAtUtc: state.lastCheckedAtUtc });
       if (settings.source !== 'local') {
         publish('sync', 'Reading the selected cloud Journal notebooks.');
         const snapshot = await cloud.readJournal({ notebookIds: settings.notebookIds });
@@ -258,6 +268,8 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
         store.put('activity', activity.id, { ...activity, status: 'processing', reason: 'The local model is reading this note.' });
         publish('model', 'The local model is reading the note and preparing its response.', entry, { index, total });
         review.status = 'running'; review.reason = null;
+        review.sources.push({ entryId: entry.id, origin: entry.origin, version: entry.version });
+        store.put('sync', 'last-check', { ...review, lastCheckedAtUtc: state.lastCheckedAtUtc });
         const coverage = modelInputCoverage(entry);
         state.modelOutput = { entryId: entry.id, title: entry.title, origin: entry.origin, version: entry.version, activityId: activity.id, checkId: review.id, coverage, focus: activity.focus, atUtc, text: '', status: 'streaming' };
         changed();
@@ -302,7 +314,6 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
             : reviewLatest && !researchEntry ? 'No eligible research note is available for this check. No model was run.' : 'No research revision required model review in this check.');
         publish('waiting', review.reason);
       }
-      state.lastCheckedAtUtc = new Date(clock()).toISOString();
     } catch {
       state.modelFailure = null;
       const unfinished = state.modelOutput?.checkId === review.id && state.modelOutput.status === 'streaming';
@@ -327,6 +338,10 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
       }
       else if (state.lastError && review.status === 'checking') review.status = 'failed';
       review.completedAtUtc = new Date(clock()).toISOString();
+      review.reason ??= state.lastError ?? (review.status === 'stopped' ? 'The last check paused before it finished.' : null);
+      state.lastCheckedAtUtc = review.completedAtUtc;
+      try { store.put('sync', 'last-check', { ...review, outcome: state.lastError ? 'failed' : review.status, lastCheckedAtUtc: state.lastCheckedAtUtc }); }
+      catch { state.lastError ||= 'The check finished, but its last-check record could not be saved. Earlier records were preserved.'; publish('error', state.lastError); }
       publish(activeAbort.signal.aborted ? 'paused' : 'idle', activeAbort.signal.aborted ? 'Check paused after a settings change or shutdown. Retained attempts keep their original delivery state.' : (state.lastError ? 'Check finished with an issue to review.' : 'Check complete. Waiting for the next scheduled check.'));
       activeAbort = null;
     }

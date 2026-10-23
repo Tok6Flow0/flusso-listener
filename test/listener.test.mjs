@@ -627,10 +627,16 @@ test('failed repeat reviews preserve durable accepted research through SQLite re
     assert.deepEqual(listener.status().modelOutput.focus, resolveResearchFocus('Check the exact recorded source timestamps.'));
     assert.equal(listener.status().modelOutput.status, 'failed');
     assert.ok(store.all('activity').some(row => row.kind === 'research_check' && row.status === 'waiting' && row.reason.includes('local model stopped')));
-    await listener.stop(); listener = null; store.close(); store = null;
+    const lastCheck = listener.status().modelReview; await listener.stop(); listener = null; store.close(); store = null;
     store = await openStore({ directory, vault, clock: () => new Date(now).toISOString() });
     listener = createListener({ store, cloud, classify: noModel, clock: () => now });
     const restored = listener.status();
+    assert.equal(restored.lastCheckedAtUtc, lastCheck.completedAtUtc); assert.equal(restored.modelReview.id, lastCheck.id);
+    assert.equal(restored.modelReview.status, 'failed'); assert.equal(restored.busy, false); assert.equal(restored.running, false);
+    assert.deepEqual(restored.modelReview.sources, [{ entryId: entry.id, origin: 'local', version: entry.version }]);
+    assert.equal(restored.modelReview.accountId, store.settings().accountId);
+    const { completedModelPresentation } = await import('../public/desktop-ui.mjs');
+    assert.equal(completedModelPresentation(restored, [entry]).earlier, true, 'A newer failed check keeps the accepted response labelled Earlier after actual SQLite reopen.');
     assert.equal(restored.modelOutput, null, 'No raw response is invented after reopening.');
     assert.deepEqual(restored.lastModelOutput, accepted); assert.equal(restored.lastModelOutput.version, entry.version);
     assert.notEqual(restored.lastModelOutput.focus.text, store.settings().instructions, 'A current setting never retrofits the saved accepted focus.');
@@ -638,6 +644,59 @@ test('failed repeat reviews preserve durable accepted research through SQLite re
     assert.equal(store.all('activity').length, 2); assert.deepEqual(store.get('attempt', retainedAttempt.id), retainedAttempt);
     assert.equal(store.claimAttempt({ ...retainedAttempt, id: 'copy' }), false); assert.equal(submissions, 0);
   } finally { await listener?.stop(); store?.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('last-check receipts restore no-model and interrupted checks without reviving work or inventing completion', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'flusso-last-check-')), vault = memoryVault(); let store, listener, calls = 0;
+  try {
+    store = await openStore({ directory, vault }); enable(store, { executionEnabled: false });
+    listener = createListener({ store, cloud: fakeCloud(), classify: async () => { calls++; return candidate(); }, clock: () => now });
+    listener.start(); await listener.tick({ reviewLatest: true });
+    const checked = listener.status(); assert.equal(checked.modelReview.status, 'not_run');
+    await listener.stop(); listener = null; store.close(); store = await openStore({ directory, vault });
+    listener = createListener({ store, cloud: fakeCloud(), classify: noModel });
+    assert.equal(listener.status().modelReview.id, checked.modelReview.id); assert.equal(listener.status().modelReview.status, 'not_run');
+    assert.equal(listener.status().lastCheckedAtUtc, checked.lastCheckedAtUtc); assert.match(listener.status().modelReview.reason, /No eligible research note/);
+    await listener.stop(); listener = null;
+    const started = { id: 'interrupted-real-check', startedAtUtc: new Date(now + 15000).toISOString(), status: 'running', reason: null,
+      settingsVersion: store.settings().version, accountId: store.settings().accountId, source: 'local', sources: [{ entryId: 'recorded-note', origin: 'local', version: 2 }], lastCheckedAtUtc: checked.lastCheckedAtUtc };
+    store.put('sync', 'last-check', started); store.close(); store = await openStore({ directory, vault });
+    listener = createListener({ store, cloud: fakeCloud(), classify: noModel }); const restored = listener.status();
+    assert.equal(restored.modelReview.status, 'stopped'); assert.match(restored.modelReview.reason, /did not record completion/);
+    assert.equal(restored.modelReview.completedAtUtc, undefined); assert.equal(restored.lastCheckedAtUtc, checked.lastCheckedAtUtc);
+    assert.equal(restored.busy, false); assert.equal(restored.running, false); assert.equal(restored.modelOutput, null);
+    assert.deepEqual(store.get('sync', 'last-check'), started, 'Reading an interrupted receipt does not rewrite another writer.');
+    assert.equal(store.all('attempt').length, 0); assert.equal(calls, 0);
+  } finally { await listener?.stop(); store?.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('legacy review records expose their actual recorded clock and later failure without inventing a completed check', async () => {
+  const w = await workspace(); let listener;
+  try {
+    const entry = w.store.createEntry(note(w.store));
+    const accepted = { id: 'legacy-accepted', kind: 'research', checkId: 'accepted-check', entryId: entry.id, origin: 'local', version: entry.version, status: 'observed', decision: 'review', reason: 'Actual older answer.', atUtc: new Date(now).toISOString(), completedAtUtc: new Date(now + 100).toISOString() };
+    const failed = { ...accepted, id: 'legacy-progress', kind: 'research_check', checkId: 'later-check', status: 'waiting', reviewStatus: 'failed', reason: 'The local model stopped.', atUtc: new Date(now + 1000).toISOString() }; delete failed.completedAtUtc;
+    w.store.put('activity', accepted.id, accepted); w.store.put('activity', failed.id, failed);
+    listener = createListener({ store: w.store, cloud: fakeCloud(), classify: noModel }); const restored = listener.status();
+    assert.equal(restored.lastCheckedAtUtc, null); assert.equal(restored.modelReview.startedAtUtc, failed.atUtc);
+    assert.equal(restored.modelReview.restoredFromActivity, true); assert.equal(restored.modelReview.status, 'failed');
+    const { completedModelPresentation } = await import('../public/desktop-ui.mjs');
+    assert.equal(completedModelPresentation(restored, [entry]).earlier, true);
+    assert.deepEqual(w.store.get('activity', failed.id), failed); assert.equal(w.store.get('sync', 'last-check'), null);
+    assert.equal(restored.busy, false); assert.equal(w.store.all('attempt').length, 0);
+  } finally { await listener?.stop(); await w.close(); }
+});
+
+test('a refused initial check receipt fails closed before any model call or ticket attempt', async () => {
+  const w = await workspace(); let calls = 0; const put = w.store.put;
+  const listener = createListener({ store: w.store, cloud: fakeCloud(), classify: async () => { calls++; return candidate(); }, clock: () => now });
+  try {
+    enable(w.store); listener.start(); w.store.createEntry(note(w.store, { body: ticket({ id: 'receipt-refusal' }) }));
+    w.store.put = (kind, id, value) => { if (kind === 'sync' && id === 'last-check') throw new Error('Synthetic record refusal.'); return put(kind, id, value); };
+    await listener.tick({ reviewLatest: true });
+    assert.equal(listener.status().modelReview.status, 'failed'); assert.match(listener.status().lastError, /could not finish/);
+    assert.equal(listener.status().busy, false); assert.equal(calls, 0); assert.equal(w.store.all('attempt').length, 0);
+  } finally { w.store.put = put; await listener.stop(); await w.close(); }
 });
 
 test('a durable research write failure terminalizes the current stream and retains the previous completed response', async () => {

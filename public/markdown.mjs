@@ -33,7 +33,7 @@ export function parseMarkdown(markdown) {
   flush(); return blocks;
 }
 function plain(parent, text) {
-  for (const part of text.split(/([+\-−]?\d[\d,.]*(?:%|bps)?)/g)) {
+  for (const part of text.split(/(\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?)?|[+\-−]?\d+(?:[,.]\d+)*(?:%|bps)?)/g)) {
     if (!part) continue;
     if (/^[+\-−]?\d/.test(part)) { const span = document.createElement('span'); span.className = 'mono'; span.textContent = part; parent.append(span); }
     else parent.append(document.createTextNode(part));

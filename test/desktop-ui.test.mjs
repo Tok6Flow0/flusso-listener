@@ -69,7 +69,8 @@ test('the Journal reader shows the current check before the preserved completed 
   const detail = make('article'), keys = new Map(), recorded = '2026-10-23T10:01:05Z', completed = '2026-10-23T10:00:04Z';
   const row = { id: 'note', origin: 'local', title: 'Real research', body: 'Original note prose.', version: 2, status: 'reviewed',
     listener: { status: 'observed', decision: 'review', reason: 'Preserved accepted words.', version: 1, atUtc: '2026-10-23T10:00:00Z', completedAtUtc: completed },
-    listenerCheck: { kind: 'research_check', status: 'waiting', reviewStatus: 'failed', version: 2, reason: 'Actual latest failure.', atUtc: recorded } };
+    listenerCheck: { kind: 'research_check', status: 'waiting', reviewStatus: 'failed', version: 2, reason: 'Actual latest failure.', atUtc: recorded },
+    handoff: { reason: 'The Listener is off. This note was already here when the Listener turned on.', context: { listenerEnabled: false } } };
   const context = { ...ui, selected: row, snapshot: { entries: [row] }, $: () => detail, element: make, pill: (text, tone) => make('span', text, tone),
     document: { activeElement: {}, createTextNode: text => make(null, text) }, renderMarkdown: (node, text) => { node.textContent = text; }, notebookName: () => 'Research', renderKeys: keys,
     changed: (key, value) => { const next = JSON.stringify(value); if (keys.get(key) === next) return false; keys.set(key, next); return true; },
@@ -82,6 +83,9 @@ test('the Journal reader shows the current check before the preserved completed 
   assert.ok(all(check).some(node => node.tag === 'time' && node.textContent === `Recorded ${recorded}/seconds · v2` && node.className === 'detail-facts'));
   assert.ok(all(live).some(node => node.textContent === 'Completed research response')); assert.ok(all(live).some(node => node.textContent === 'Preserved accepted words.'));
   assert.ok(all(live).some(node => node.textContent === 'Preserved accepted words.' && node.className === 'verdict-reason'), 'The same published words use the Listener prose style.');
+  assert.ok(all(live).some(node => node.textContent === 'Listener is off.'));
+  const disclosure = all(live).find(node => node.tag === 'details' && node.children[0]?.textContent === 'Review details');
+  assert.ok(disclosure); assert.ok(all(disclosure).some(node => node.textContent === row.handoff.reason), 'Secondary historical context stays inside a compact disclosure.');
   assert.ok(all(live).some(node => node.tag === 'time' && node.textContent === `Completed ${completed}/seconds`));
   row.listener = { ...row.listener, completedAtUtc: null }; context.renderDetail();
   assert.ok(all(live).some(node => node.tag === 'time' && node.textContent === 'Recorded 2026-10-23T10:00:00Z/seconds'), 'Legacy records retain their recorded clock without an invented completion.');
@@ -419,7 +423,8 @@ test('legacy empty reasons remain unavailable and saved review focus never comes
   assert.equal(reviewFocusPresentation({ kind: 'default', text: 'Saved default goal.' }, { prepared: true }).label, 'Prepared focus: Default research review');
   const entry = { version: 3, listener: { status: 'observed', decision: 'review', version: 2, reason: 'Prior accepted reason.' }, listenerCheck: { kind: 'research_check', status: 'waiting', reviewStatus: 'failed', version: 3 } };
   const card = entryCardPresentation(entry);
-  assert.equal(card.outcome.label, 'review suggested · prior v2'); assert.equal(card.check.label, 'needs attention');
+  assert.equal(card.outcome.label, 'Earlier response: review suggested · prior v2'); assert.equal(card.check.label, 'Latest check: needs attention');
+  assert.equal(card.outcome.tone, '', 'The retained answer is secondary to the latest failed check.');
   assert.equal(matchesResultFilter(entry, 'decided'), true, 'The failed current check does not replace accepted review/filter truth.');
 });
 

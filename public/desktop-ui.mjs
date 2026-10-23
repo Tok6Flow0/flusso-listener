@@ -61,11 +61,12 @@ export function entryStatus(entry) {
 // Periodic review annotations update their own status regions, not the note.
 export function entryCardPresentation(entry, { book = '', time = '', selected = false } = {}) {
   const ticket = entryStatus(entry), result = listenerResult(entry), revision = listenerRevisionPresentation(entry);
+  const check = !entry.ticket && entry.listener?.status === 'observed' && entry.listenerCheck ? activityStatus(entry.listenerCheck) : null;
   return {
     id: entry.id, origin: entry.origin, title: entry.title, status: entry.status,
     book, time, selected,
-    outcome: entry.ticket?.error ? ticket : result && { label: `${result.label}${revision ? ` · ${revision.label}` : ''}`, tone: result.tone },
-    check: !entry.ticket && entry.listener?.status === 'observed' && entry.listenerCheck ? activityStatus(entry.listenerCheck) : null,
+    outcome: entry.ticket?.error ? ticket : result && { label: `${check ? 'Earlier response: ' : ''}${result.label}${revision ? ` · ${revision.label}` : ''}`, tone: check ? '' : result.tone },
+    check: check && { ...check, label: `Latest check: ${check.label}` },
   };
 }
 
@@ -163,6 +164,8 @@ export function processingPresentation(listener = {}, enabled = false, { disconn
   if (!enabled) return { state: 'off', title: 'Off', label: 'Listener off', message: 'Turn on the Listener to run a check.', tone: '', busy: false, position: null };
   if (listener.lastError) return { state: 'error', title: 'Needs attention', label: 'Needs attention', message: text(listener.lastError), tone: 'warn', busy: false, position: null };
   if (listener.modelRecovery) return { state: 'ready', title: 'Model ready', label: 'Model ready', message: text(current?.message), tone: '', busy: false, position: null };
+  if (listener.modelReview?.restored && listener.modelReview.status === 'failed') return { state: 'error', title: 'Last check failed', label: 'Last check failed', message: text(listener.modelReview.reason), tone: 'warn', busy: false, position: null };
+  if (listener.modelReview?.restored && listener.modelReview.status === 'stopped') return { state: 'paused', title: 'Review unfinished', label: 'Review unfinished', message: text(listener.modelReview.reason), tone: 'warn', busy: false, position: null };
   if (current?.stage === 'paused') return { state: 'paused', title: 'Paused', label: 'Paused', message: text(current.message) || 'The last check paused before it finished.', tone: 'warn', busy: false, position: null };
   if (listener.modelReview?.status === 'not_run') return { state: 'ready', title: 'No model run', label: 'No model run', message: text(listener.modelReview.reason), tone: '', busy: false, position: null };
   if (listener.modelReview?.status === 'skipped') return { state: 'paused', title: 'Review skipped', label: 'Review skipped', message: text(listener.modelReview.reason), tone: 'warn', busy: false, position: null };

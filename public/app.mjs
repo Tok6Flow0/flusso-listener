@@ -267,10 +267,11 @@ function renderStatus() {
   $('listener-dot-label').textContent = streamDisconnected ? 'Reconnecting' : !settings.enabled ? 'Off' : listener.lastError ? 'Needs attention' : listener.busy ? 'Reading' : 'On';
   // The schedule lives here; the review desk owns state, errors and the next action.
   const interval = intervalLabel(settings.intervalSeconds), parts = [];
-  if (!settings.enabled) parts.push(listener.lastCheckedAtUtc ? `Last checked ${when(listener.lastCheckedAtUtc)}` : 'Not checked yet');
+  const lastCheck = listener.lastCheckedAtUtc ? `Last checked ${when(listener.lastCheckedAtUtc, true)}` : listener.modelReview?.startedAtUtc ? `Last review recorded ${when(listener.modelReview.startedAtUtc, true)} · check completion unavailable` : 'Not checked yet';
+  if (!settings.enabled) parts.push(lastCheck);
   else {
     if (interval) parts.push(`Checks ${interval} after the previous check finishes`);
-    parts.push(listener.lastCheckedAtUtc ? `Last checked ${when(listener.lastCheckedAtUtc)}` : 'Not checked yet');
+    parts.push(lastCheck);
     if (listener.cloudComplete === false) parts.push('Cloud read incomplete');
   }
   setText('last-check', parts.join(' · '));
@@ -637,8 +638,8 @@ function renderEntries() {
     if (row.book) meta.append(element('span', row.book, 'meta-book'));
     const tags = element('span', null, 'tags');
     tags.append(element('span', row.status, `entry-state ${row.status}`));
-    if (row.outcome) tags.append(pill(row.outcome.label, row.outcome.tone));
     if (row.check) tags.append(pill(row.check.label, row.check.tone));
+    if (row.outcome) tags.append(pill(row.outcome.label, row.outcome.tone));
     if (row.origin === 'cloud') tags.append(pill('cloud'));
     button.append(element('strong', row.title), meta, tags);
     button.addEventListener('click', () => { const current = snapshot.entries.find(item => item.id === row.id && item.origin === row.origin); if (current) openEntry(current); }); return button;
@@ -738,11 +739,15 @@ function renderDetail() {
     if (!row.ticket && row.listener?.status === 'observed' && review) {
       const metadata = activityMetadata(row.listener, row), line = element('div', null, 'detail-meta'), at = element('time', `${metadata.clockLabel} ${when(metadata.clock, true)}`, 'detail-facts'); at.dateTime = metadata.clock ?? '';
       line.append(pill(review.label, review.tone), at); section.append(line, element('p', activityReason(row.listener), 'verdict-reason'));
-      if (revision) section.append(element('p', revision.note, 'hint interface-numbers'));
+      if (row.handoff?.context?.listenerEnabled === false) section.append(element('p', 'Listener is off.', 'hint'));
       const focus = reviewFocusPresentation(row.listener.focus), details = element('details');
-      details.append(element('summary', focus.label), element('p', focus.text, 'focus-copy')); section.append(details);
+      details.append(element('summary', 'Review details'));
+      if (revision) details.append(element('p', revision.note, 'hint interface-numbers'));
+      details.append(element('p', focus.label, 'hint'), element('p', focus.text, 'focus-copy'));
+      if (row.handoff) details.append(element('p', row.handoff.reason, 'hint'));
+      section.append(details);
     }
-    if (row.handoff) section.append(element('p', row.handoff.reason, 'hint'));
+    else if (row.handoff) section.append(element('p', row.handoff.reason, 'hint'));
     live.append(section);
   }
   if (row.ticket) {
