@@ -428,6 +428,17 @@ test('legacy empty reasons remain unavailable and saved review focus never comes
   assert.equal(matchesResultFilter(entry, 'decided'), true, 'The failed current check does not replace accepted review/filter truth.');
 });
 
+test('long entry result labels retain their full current/prior meaning and wrap only inside entry tags', async () => {
+  const { entryCardPresentation } = await import('../public/desktop-ui.mjs');
+  const card = entryCardPresentation({ version: 2147483647, listener: { version: 2147483646, status: 'observed', decision: 'review', reason: 'Saved response.' }, listenerCheck: { kind: 'research_check', status: 'waiting', reviewStatus: 'failed', version: 2147483647 } });
+  assert.equal(card.check.label, 'Latest check: needs attention');
+  assert.equal(card.outcome.label, 'Earlier response: review suggested · prior v2,147,483,646');
+  const css = await readFile(new URL('../public/styles.css', import.meta.url), 'utf8');
+  const entryRule = css.match(/\.entry-card \.tags \.pill\{([^}]+)\}/)?.[1];
+  for (const declaration of ['max-width:100%', 'white-space:normal', 'overflow-wrap:anywhere', 'line-height:var(--lh-normal)']) assert.ok(entryRule.includes(declaration));
+  assert.match(css.match(/\.pill\{[^}]+\}/)?.[0], /white-space:nowrap/, 'Pills outside entry cards preserve their existing behavior.');
+});
+
 test('inactive durable research progress says unfinished while the actual active review and ticket states retain their labels', async () => {
   const { activityStatus, listenerResult, modelOutputPresentation } = await import('../public/desktop-ui.mjs');
   const progress = { kind: 'research_check', status: 'processing' };

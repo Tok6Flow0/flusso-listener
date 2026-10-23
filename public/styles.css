@@ -305,6 +305,7 @@ tr:last-child td{border-bottom:0}
 .meta-book::before{content:"·";margin-right:8px}
 .tags{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .tags .pill{min-height:20px;padding:0 6px;font-size:var(--fs-caption)}
+.entry-card .tags .pill{max-width:100%;white-space:normal;overflow-wrap:anywhere;line-height:var(--lh-normal)}
 .entry-state{font:var(--fw-regular) var(--fs-caption)/1 var(--font-mono);text-transform:uppercase;letter-spacing:var(--ls-label);color:var(--c-ink-5)}
 .entry-state.watching{color:var(--c-info)}
 .list-empty{display:grid;justify-items:center;gap:6px}
