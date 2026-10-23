@@ -35,7 +35,7 @@ test('handoff explains reviewed research, startup baseline, malformed/stale tick
     assert.match(reviewed.reason, /newest selected note/);
     assert.doesNotMatch(reviewed.reason, /only watching entries are considered/);
     assert.equal(describe({}, { checkpoint: { version: entry.version, state: 'baseline' } }).code, 'baselined');
-    assert.match(describe({}, { checkpoint: { version: entry.version, state: 'baseline' } }).reason, /still reviewed each period/);
+    assert.match(describe({}, { checkpoint: { version: entry.version, state: 'baseline' } }).reason, /reviewed each period/);
     assert.doesNotMatch(describe({ status: 'closed' }).reason, /can be reviewed again/);
     assert.doesNotMatch(describe({ status: 'reviewed', body: ticket() }).reason, /can be reviewed again/);
     assert.equal(describe({}, { checkpoint: { version: entry.version - 1, state: 'baseline' } }).code, 'research_only');

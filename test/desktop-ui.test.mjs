@@ -161,3 +161,16 @@ test('receipt details preserve explicit order and close refusal codes without in
   assert.equal(receiptDetails({ riskCode: 'A'.repeat(80) }).riskCode.length, 80);
   assert.deepEqual(receiptDetails({ message: { secret: 'not a message' }, detail: 'unknown data' }), { message: '', riskCode: null });
 });
+
+test('immediate switches keep saved risk values and reject unrelated fields', async () => {
+  const { settingsSwitchBody } = await import('../public/desktop-ui.mjs');
+  const { DEFAULT_SETTINGS, settingsInput } = await import('../src/schema.mjs');
+  const saved = { ...DEFAULT_SETTINGS, version: 7, listenerId: 'private-local-id', risk: { ...DEFAULT_SETTINGS.risk, maxOrderUsd: 25 } };
+  const off = settingsSwitchBody({ ...saved, enabled: true }, 'enabled', false);
+  assert.equal(off.enabled, false); assert.equal(off.risk.maxOrderUsd, 25);
+  assert.equal(off.version, 7); assert.equal('listenerId' in off, false);
+  assert.equal(settingsInput(off).enabled, false);
+  assert.equal(saved.enabled, false); assert.equal(saved.risk.maxOrderUsd, 25);
+  assert.throws(() => settingsSwitchBody(saved, 'risk', {}), /Invalid/);
+  assert.throws(() => settingsSwitchBody(saved, 'enabled', 'false'), /Invalid/);
+});

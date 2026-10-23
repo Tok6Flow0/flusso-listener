@@ -64,9 +64,10 @@
         <article class="entry-detail" id="entry-detail" tabindex="-1" aria-label="Selected entry"><div class="empty-art"><img src="/flusso-mark.png" alt="" width="40" height="40"><p>Pick an entry or write a new one.</p></div></article>
         <section id="editor" class="editor" aria-labelledby="editor-title" hidden>
           <form id="entry-form">
-            <div class="editor-head"><h2 id="editor-title">New entry</h2><div class="editor-fields"><label>Notebook<select id="entry-notebook" required></select></label><label>Status<select id="entry-status"><option value="watching">Watching</option><option value="reviewed">Reviewed</option><option value="closed">Closed</option></select></label></div></div>
+            <div class="editor-head"><h2 id="editor-title">New entry</h2></div>
             <label class="title-field">Title<input id="entry-title" maxlength="200" required placeholder="What is this note about?"></label>
-            <div class="entry-body-field"><div class="label-row"><label for="entry-body">Text</label><div class="ticket-tools"><button id="insert-ticket" type="button" class="chip-button">Add order ticket</button><button id="insert-close-ticket" type="button" class="chip-button">Add close ticket</button></div></div><textarea id="entry-body" rows="14" maxlength="20000" placeholder="Write in Markdown. Research notes never place orders; only an explicit ticket can."></textarea></div>
+            <div class="entry-body-field"><div class="label-row"><label for="entry-body">Notes</label><div class="ticket-tools"><button id="insert-ticket" type="button" class="chip-button">Add order ticket</button><button id="insert-close-ticket" type="button" class="chip-button">Add close ticket</button></div></div><textarea id="entry-body" rows="14" maxlength="20000" placeholder="Write in Markdown. Research notes never place orders; only an explicit ticket can."></textarea></div>
+            <div class="editor-fields"><label>Status<select id="entry-status"><option value="watching">Watching</option><option value="reviewed">Reviewed</option><option value="closed">Closed</option></select></label><label>Notebook<select id="entry-notebook" required></select></label></div>
             <details><summary>Structured signal</summary><label class="sr-only" for="entry-signal">Signal JSON</label><textarea id="entry-signal" class="mono" rows="7" placeholder="product.journal_signal.v1"></textarea></details>
             <div class="form-actions"><span class="hint">Save to this computer.</span><button id="cancel-edit" type="button" class="ghost">Cancel</button><button type="submit" class="primary">Save</button></div>
           </form>
@@ -162,6 +163,7 @@
             <button id="setup-model-panel" type="button" hidden>Set up</button>
             <div class="code-scroll" id="model-manual-command"><code>ollama pull qwen3:1.7b</code></div>
           </section>
+          <p id="settings-draft-hint" class="hint" role="status" hidden>Unsaved changes. Switches use saved settings. Save these changes before turning Auto-trade on.</p>
           <div class="form-actions"><button id="save-settings" type="submit" class="primary">Saved</button></div>
         </form>
         </section>

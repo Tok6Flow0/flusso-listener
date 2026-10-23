@@ -1,6 +1,6 @@
 import { formatCount, formatPrice, formatQuantity, formatPercentLabel, formatMoney, formatPercent } from './format.mjs';
 import { renderMarkdown } from './markdown.mjs';
-import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, activityStatus, listenerResult, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions, receiptDetails, modelOutputPresentation, intervalLabel } from './desktop-ui.mjs';
+import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, activityStatus, listenerResult, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions, receiptDetails, modelOutputPresentation, intervalLabel, settingsSwitchBody } from './desktop-ui.mjs';
 
 const $ = id => document.getElementById(id);
 let csrf, snapshot, selected = null, editing = null, entryRetryKey = crypto.randomUUID();
@@ -267,7 +267,7 @@ function renderProcess() {
   setText('model-output-status', !settings.enabled && view.status === 'complete' ? 'Last check complete' : view.label); $('model-output-status').className = `output-status ${view.tone}`;
   if (changed('model-output-source', output ? [output.entryId, output.origin, output.title, output.atUtc, snapshot.entries.some(row => row.id === output.entryId && row.origin === output.origin)] : null)) {
     const source = $('model-output-source');
-    if (output) { const time = element('time', when(output.atUtc)); time.dateTime = output.atUtc; source.replaceChildren(sourceButton(output, output.title || 'Journal entry'), time); }
+    if (output) { const time = element('time', when(output.atUtc, true)); time.dateTime = output.atUtc; source.replaceChildren(sourceButton(output, output.title || 'Journal entry'), time); }
     else source.replaceChildren();
     source.hidden = !output;
   }
@@ -342,7 +342,7 @@ function fillSettings() {
   }));
   if (!snapshot.notebooks.length) $('watch-notebooks').append(element('span', 'No notebooks yet.', 'hint'));
   renderAccountChoice();
-  formDirty = false; $('save-settings').disabled = true; $('save-settings').textContent = 'Saved';
+  formDirty = false; $('settings-draft-hint').hidden = true; $('save-settings').disabled = true; $('save-settings').textContent = 'Saved';
 }
 function ensureOption(select, value, label) { if (![...select.options].some(option => option.value === String(value))) select.append(new Option(label, String(value))); }
 function amount(id) { const raw = $(id).value.trim(); if (!raw) return null; const value = Number(raw); if (!Number.isFinite(value) || value <= 0) throw new Error('Limits must be positive numbers, or left blank.'); return value; }
@@ -359,13 +359,35 @@ function settingsBody(overrides = {}) {
 }
 async function saveSettings(message) {
   try { await api('/api/settings', settingsBody()); await load({ forms: true }); notify(message, true); }
-  catch (error) { await load({ forms: true }).catch(() => {}); throw error; }
+  catch (error) { await load().catch(() => {}); throw error; }
 }
-$('settings-form').addEventListener('input', () => { formDirty = true; $('save-settings').disabled = false; $('save-settings').textContent = 'Save'; });
+$('settings-form').addEventListener('input', () => { formDirty = true; $('settings-draft-hint').hidden = false; $('save-settings').disabled = false; $('save-settings').textContent = 'Save'; });
 $('settings-form').addEventListener('submit', event => { event.preventDefault(); action(event.submitter, () => saveSettings('Saved.')); });
-// Switches act immediately, like any other switch.
-$('enabled').addEventListener('change', event => { event.stopPropagation(); action(null, () => saveSettings($('enabled').checked ? 'Listener on. The newest selected research note will be reviewed each period.' : 'Listener off.')); });
-$('execution').addEventListener('change', event => { event.stopPropagation(); action(null, () => saveSettings($('execution').checked ? 'Auto-trade on.' : 'Auto-trade off.')); });
+// Immediate switches use saved settings only; an unsaved risk draft is never
+// silently applied or discarded. Off remains available even with a dirty form.
+async function saveSwitch(id, field, message) {
+  const value = $(id).checked;
+  if (field === 'executionEnabled' && value && formDirty) {
+    $(id).checked = snapshot.settings.executionEnabled;
+    notify('Save your changes before turning Auto-trade on. Switches use saved settings.'); return;
+  }
+  $('enabled').disabled = $('execution').disabled = true;
+  try {
+    snapshot.settings = await api('/api/settings', settingsSwitchBody(snapshot.settings, field, value));
+    try { await load(); }
+    catch { notify(`${message} Settings saved, but the view could not refresh. Refresh to check the latest activity.`); return; }
+    notify(message, true);
+  } catch (error) { await load().catch(() => {}); throw error; }
+  finally {
+    $('enabled').checked = snapshot.settings.enabled;
+    $('enabled-label').textContent = snapshot.settings.enabled ? 'On' : 'Off';
+    $('execution').checked = snapshot.settings.executionEnabled;
+    $('enabled').disabled = $('execution').disabled = false;
+    renderStatus(); renderProcess();
+  }
+}
+$('enabled').addEventListener('change', event => { event.stopPropagation(); action(null, () => saveSwitch('enabled', 'enabled', $('enabled').checked ? 'Listener on. The newest selected research note will be reviewed each period.' : 'Listener off.')); });
+$('execution').addEventListener('change', event => { event.stopPropagation(); action(null, () => saveSwitch('execution', 'executionEnabled', $('execution').checked ? 'Auto-trade on.' : 'Auto-trade off.')); });
 $('enabled').addEventListener('input', event => event.stopPropagation());
 $('execution').addEventListener('input', event => event.stopPropagation());
 $('check-now').addEventListener('click', async event => {

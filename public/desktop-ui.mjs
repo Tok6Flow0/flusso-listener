@@ -164,3 +164,11 @@ export function latestDecisions(activity = [], output = null) {
   const clock = row => { const value = Date.parse(row.atUtc); return Number.isFinite(value) ? value : -Infinity; };
   return rows.sort((a, b) => clock(b) - clock(a)).slice(0, 5);
 }
+
+// The API accepts a complete versioned settings body. A switch must carry only
+// the last saved values, never fields from the still-unsaved configuration form.
+export function settingsSwitchBody(settings, field, value) {
+  if (!['enabled', 'executionEnabled'].includes(field) || typeof value !== 'boolean') throw new Error('Invalid settings switch.');
+  const keys = ['version', 'enabled', 'executionEnabled', 'source', 'notebookIds', 'section', 'instructions', 'intervalSeconds', 'maxSignalAgeSeconds', 'maxTicketsPerDay', 'writeBack', 'accountId', 'risk'];
+  return { ...Object.fromEntries(keys.map(key => [key, settings[key]])), [field]: value };
+}
