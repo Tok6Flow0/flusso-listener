@@ -40,6 +40,33 @@ test('authorized local Journal save/readback and version conflict flow use the s
   } finally { await w.close(); }
 });
 
+test('a lost local edit reply replays the exact saved revision without overwriting a newer edit', async () => {
+  const w = await appFixture(); try {
+    await w.unlock();
+    const original = w.store.createEntry(note(w.store)), other = w.store.createEntry(note(w.store, { title: 'Other research' }));
+    const input = { ...note(w.store), body: 'Exact submitted research edit.', version: original.version };
+    const headers = { 'Idempotency-Key': 'lost-edit-reply' };
+    const committed = await w.post('/api/entries/' + original.id, input, headers);
+    assert.equal(committed.status, 200); await committed.arrayBuffer(); // The client lost this committed reply.
+    const saved = w.store.entry(original.id); assert.equal(saved.version, 2);
+    const replay = await w.post('/api/entries/' + original.id, input, headers);
+    assert.equal(replay.status, 200); assert.equal((await replay.json()).body, input.body);
+    const later = w.store.updateEntry(original.id, { ...input, body: 'A later independent edit.', version: saved.version });
+    const repeated = await w.post('/api/entries/' + original.id, input, headers);
+    assert.equal(repeated.status, 200); const reply = await repeated.json();
+    assert.equal(reply.version, saved.version); assert.equal(reply.body, saved.body);
+    assert.deepEqual(w.store.entry(original.id), later, 'Replaying the reply does not reapply the old edit.');
+    assert.equal((await w.post('/api/entries/' + original.id, { ...input, body: 'Different content.' }, headers)).status, 409);
+    assert.equal((await w.post('/api/entries/' + original.id, { ...input, version: later.version }, headers)).status, 409);
+    assert.equal((await w.post('/api/entries/' + other.id, { ...input, version: other.version }, headers)).status, 409);
+    assert.equal((await w.post('/api/entries', note(w.store), headers)).status, 409, 'A create cannot reuse an edit retry key.');
+    const createHeaders = { 'Idempotency-Key': 'create-only-key' };
+    assert.equal((await w.post('/api/entries', note(w.store), createHeaders)).status, 201);
+    assert.equal((await w.post('/api/entries/' + other.id, { ...input, version: other.version }, createHeaders)).status, 409);
+    assert.equal(w.store.entry(other.id).version, 1); assert.equal(w.store.all('attempt').length, 0);
+  } finally { await w.close(); }
+});
+
 test('save replies carry canonical ticket validation and the actual historical result revision', async () => {
   let submissions = 0;
   const w = await appFixture({ submitOrders: async () => { submissions++; throw new Error('No execution is authorized.'); } }); try {

@@ -32,6 +32,28 @@ test('optimistic edits preserve an omitted structured snapshot and clear only ex
     assert.equal(third.signal, null);
   } finally { await w.close(); }
 });
+test('local edit and its encrypted retry reply commit atomically; internal edits do not add retry records', async () => {
+  const w = await workspace(); let observer;
+  try {
+    const original = w.store.createEntry(note(w.store)), retriesBefore = w.store.all('retry').length;
+    const input = { ...note(w.store), body: 'Private edited research reply.', version: original.version };
+    observer = new DatabaseSync(join(w.directory, 'journal.db'));
+    observer.exec("CREATE TRIGGER refuse_edit_retry BEFORE INSERT ON records WHEN NEW.kind='retry' AND NEW.id='atomic-edit-key' BEGIN SELECT RAISE(ABORT,'Synthetic retry write refusal'); END;");
+    assert.throws(() => w.store.updateEntry(original.id, input, 'atomic-edit-key'), /Synthetic retry write refusal/);
+    assert.deepEqual(w.store.entry(original.id), original); assert.equal(w.store.get('retry', 'atomic-edit-key'), null);
+    observer.exec('DROP TRIGGER refuse_edit_retry');
+    const saved = w.store.updateEntry(original.id, input, 'atomic-edit-key');
+    assert.deepEqual(w.store.updateEntry(original.id, input, 'atomic-edit-key'), saved);
+    assert.equal(w.store.all('retry').length, retriesBefore + 1);
+    const later = w.store.updateEntry(original.id, { ...input, body: 'Internal result annotation.', version: saved.version });
+    assert.equal(w.store.all('retry').length, retriesBefore + 1, 'Internal optimistic writes keep their existing behavior.');
+    assert.deepEqual(w.store.updateEntry(original.id, input, 'atomic-edit-key'), saved);
+    assert.deepEqual(w.store.entry(original.id), later);
+    const bytes = await readFile(join(w.directory, 'journal.db'));
+    assert.equal(bytes.includes(Buffer.from(input.body)), false, 'The retained reply uses existing record encryption.');
+    assert.equal(w.store.all('attempt').length, 0);
+  } finally { observer?.close(); await w.close(); }
+});
 test('missing OS encryption key never replaces or destroys an existing Journal', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'flusso-vault-test-')), vault = memoryVault();
   try {

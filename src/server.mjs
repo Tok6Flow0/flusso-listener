@@ -141,7 +141,7 @@ export async function startServer({ store, cloud, listener, port = 0, open = ope
       }
       if (url.pathname === '/api/notebooks' && request.method === 'POST') { object(input, ['name']); return reply(201, store.createNotebook(input.name)); }
       if (url.pathname === '/api/entries' && request.method === 'POST') return reply(201, annotate([store.createEntry(input, request.headers['idempotency-key'] ?? randomUUID())], store.all('activity'), store, clock(), listener.status())[0]);
-      if (/^\/api\/entries\/[a-f\d-]+$/i.test(url.pathname) && request.method === 'POST') return reply(200, annotate([store.updateEntry(url.pathname.split('/').at(-1), input)], store.all('activity'), store, clock(), listener.status())[0]);
+      if (/^\/api\/entries\/[a-f\d-]+$/i.test(url.pathname) && request.method === 'POST') return reply(200, annotate([store.updateEntry(url.pathname.split('/').at(-1), input, request.headers['idempotency-key'] ?? null)], store.all('activity'), store, clock(), listener.status())[0]);
       return reply(404, { error: 'Route not found.' });
     } catch (error) {
       const status = error instanceof InputError ? error.status : error.name === 'CloudError' ? 400 : 500;

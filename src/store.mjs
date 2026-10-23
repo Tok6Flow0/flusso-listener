@@ -78,12 +78,27 @@ export async function openStore({ directory, vault, encryptionKey, clock = () =>
       const entry = { ...newEntry(validated, clock()), origin: 'local' }, entryKey = `local:${entry.id}`;
       put('entry', entryKey, entry); put('retry', retryKey, { digest, entryKey }); return entry;
     }); },
-    updateEntry(id, input) { return transaction(() => {
-      const old = get('entry', `local:${id}`); if (!old) throw new InputError('Local entry not found.', 404);
-      const validated = journalInput(input, { update: true }); if (old.version !== validated.version) throw new InputError('Entry changed. Read its latest version before editing.', 409);
+    updateEntry(id, input, retryKey = null) { return transaction(() => {
+      const validated = journalInput(input, { update: true }), entryKey = `local:${id}`;
+      let digest;
+      if (retryKey !== null) {
+        text(retryKey, 200, 'retry key');
+        digest = createHash('sha256').update(JSON.stringify({ operation: 'updateEntry', id, input: validated })).digest('hex');
+        const retry = get('retry', retryKey);
+        if (retry) {
+          if (retry.operation !== 'updateEntry' || retry.entryKey !== entryKey || retry.digest !== digest) throw new InputError('Retry key was used for different content.', 409);
+          // Replay the original committed reply; never apply an old edit again or
+          // substitute a later revision whose content this request did not save.
+          return retry.entry;
+        }
+      }
+      const old = get('entry', entryKey); if (!old) throw new InputError('Local entry not found.', 404);
+      if (old.version !== validated.version) throw new InputError('Entry changed. Read its latest version before editing.', 409);
       if (!get('notebook', `local:${validated.notebookId}`)) throw new InputError('Local notebook not found.', 404);
       const entry = { ...old, ...validated, signal: 'signal' in validated ? validated.signal : old.signal, version: old.version + 1, updatedAtUtc: clock() };
-      put('entry', `local:${id}`, entry); return entry;
+      put('entry', entryKey, entry);
+      if (retryKey !== null) put('retry', retryKey, { operation: 'updateEntry', digest, entryKey, entry });
+      return entry;
     }); },
     importCloud({ notebooks, entries }) { return transaction(() => {
       for (const notebook of notebooks) put('notebook', `cloud:${notebook.id}`, { ...notebook, origin: 'cloud' });
