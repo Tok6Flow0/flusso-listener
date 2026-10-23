@@ -360,7 +360,10 @@ function renderOutputText(output) {
 function growText(node, value) {
   const current = node.textContent;
   if (value === current) return;
-  if (current && value.startsWith(current)) node.append(value.slice(current.length)); else node.textContent = value;
+  if (current && value.startsWith(current)) {
+    const addition = element('span', value.slice(current.length), 'interface-numbers');
+    node.append(...addition.childNodes);
+  } else interfaceText(node, value);
 }
 
 let lastCompletionKey = null, completionFrame = null;
@@ -402,7 +405,7 @@ function renderProcess() {
   $('model-output-status').hidden = !output && Boolean(completed) || settings.enabled && view.accepted && !earlier || view.live || view.status === 'failed' && state.title === view.label && Boolean(listener.lastError) || Boolean(latestCheck && output?.checkId === listener.modelReview?.id && ['failed', 'stopped'].includes(view.status));
   if (changed('model-output-source', output ? [output.entryId, output.origin, output.title, output.atUtc, snapshot.entries.some(row => row.id === output.entryId && row.origin === output.origin)] : null)) {
     const source = $('model-output-source');
-    if (output) { const time = element('time'); interfaceText(time, `Check started ${when(output.atUtc, true)}`); time.dateTime = output.atUtc; source.replaceChildren(element('span', 'Source note', 'hint'), sourceButton(output, output.title || 'Journal entry'), time); }
+    if (output) { const time = element('time', `Check started ${when(output.atUtc, true)}`); time.dateTime = output.atUtc; source.replaceChildren(element('span', 'Source note', 'hint'), sourceButton(output, output.title || 'Journal entry'), time); }
     else source.replaceChildren();
   }
   // A new stream has its own draft. The last completed reason remains readable
