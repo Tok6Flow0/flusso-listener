@@ -30,11 +30,15 @@ function notify(message, success = false, error = false, { reveal: showError = t
   $('notice-text').textContent = message; notice.hidden = false; notice.className = className;
   cancelAnimationFrame(notify.frame); $('notice-status').textContent = ''; $('notice-alert').textContent = '';
   notify.frame = requestAnimationFrame(() => { $(error ? 'notice-alert' : 'notice-status').textContent = message; });
-  clearTimeout(notify.timer); if (success) notify.timer = setTimeout(() => { $('notice').hidden = true; }, 5000);
+  clearTimeout(notify.timer); if (success) notify.timer = setTimeout(dismissNotice, 5000);
   if (error && showError) {
     const bounds = notice.getBoundingClientRect(), top = matchMedia('(max-width:760px)').matches ? document.querySelector('.sidebar').getBoundingClientRect().bottom : 0;
     if (bounds.top < top || bounds.bottom > window.innerHeight) notice.scrollIntoView({ block: 'start', behavior: 'auto' });
   }
+}
+function dismissNotice() {
+  clearTimeout(notify.timer); cancelAnimationFrame(notify.frame); $('notice').hidden = true;
+  $('notice-status').textContent = ''; $('notice-alert').textContent = '';
 }
 function recoverPollNotice() {
   notify.pollFailure = null;
@@ -101,7 +105,7 @@ function setText(id, value) {
 }
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 function reveal(node, block = 'start') { node.scrollIntoView({ behavior: reducedMotion.matches ? 'auto' : 'smooth', block }); }
-$('dismiss-notice').addEventListener('click', () => { clearTimeout(notify.timer); $('notice').hidden = true; });
+$('dismiss-notice').addEventListener('click', dismissNotice);
 
 /* ------------------------------------------------------------ appearance */
 function applyTheme(mode = themeMode) {
@@ -218,6 +222,7 @@ $('account-toggle').addEventListener('click', event => {
   const menu = $('account-menu'), open = menu.hidden; menu.hidden = !open; $('account-toggle').setAttribute('aria-expanded', String(open));
   if (open && event.detail === 0) [...menu.querySelectorAll('button, a[href], input, [tabindex="0"]')].find(node => !node.disabled && !node.closest('[hidden]'))?.focus();
 });
+$('account-area').addEventListener('focusout', event => { if (!$('account-area').contains(event.relatedTarget)) closeAccountMenu(); });
 document.addEventListener('click', event => { if (!$('account-area').contains(event.target)) closeAccountMenu(); });
 document.addEventListener('keydown', event => { if (event.key === 'Escape' && !$('account-menu').hidden) closeAccountMenu({ focus: true }); });
 $('account-settings').addEventListener('click', event => { if (desktop) { event.preventDefault(); nativeAction('openAccountSettings'); } closeAccountMenu(); });
@@ -867,13 +872,15 @@ $('keep-writing').addEventListener('click', () => $('discard-entry').close());
 $('discard-writing').addEventListener('click', () => { $('discard-entry').close(); closeEditor({ focus: true }); });
 $('entry-form').addEventListener('submit', event => {
   event.preventDefault(); if (entrySaving) return;
+  const focusBeforeSave = document.activeElement;
   const form = $('entry-form'), controls = [...form.elements].filter(control => 'disabled' in control).map(control => [control, control.disabled]);
   entrySaving = true; form.setAttribute('aria-busy', 'true'); controls.forEach(([control]) => { control.disabled = true; }); updateDraftProtection();
   let released = false;
-  const releaseSave = () => {
+  const releaseSave = ({ restoreFocus = false } = {}) => {
     if (released) return; released = true;
     controls.forEach(([control, disabled]) => { control.disabled = disabled; });
     form.removeAttribute('aria-busy'); entrySaving = false; updateDraftProtection();
+    if (restoreFocus && document.activeElement === document.body && focusBeforeSave?.isConnected && !focusBeforeSave.disabled && controls.some(([control]) => control === focusBeforeSave)) focusBeforeSave.focus();
   };
   action(null, async () => { try {
   let signal = null; if ($('entry-signal').value.trim()) { try { signal = JSON.parse($('entry-signal').value); } catch { throw new Error('The structured signal is not valid JSON.'); } }
@@ -887,7 +894,7 @@ $('entry-form').addEventListener('submit', event => {
   renderEntries();
   if (document.activeElement === returnFocus || $('entry-list').contains(document.activeElement) && document.activeElement.dataset.rowKey === returnFocus?.dataset.rowKey) (document.querySelector('.entry-card.selected') ?? $('new-entry')).focus({ preventScroll: true });
   notify('Saved.', true);
-  } finally { releaseSave(); } });
+  } finally { releaseSave({ restoreFocus: true }); } });
 });
 let notebookSaving = false, notebookIntent = null;
 $('new-notebook').addEventListener('click', () => { if (!notebookIntent) $('notebook-error').hidden = true; $('notebook-dialog').showModal(); });
@@ -895,7 +902,8 @@ $('cancel-notebook').addEventListener('click', () => $('notebook-dialog').close(
 $('notebook-form').addEventListener('submit', event => {
   event.preventDefault(); if (notebookSaving) return;
   notebookSaving = true;
-  const input = $('notebook-name'), submit = $('create-notebook');
+  const input = $('notebook-name'), submit = $('create-notebook'), focusBeforeSave = document.activeElement;
+  let confirmed = false;
   notebookIntent ??= { name: input.value, key: crypto.randomUUID() };
   const intent = notebookIntent;
   input.disabled = submit.disabled = true; $('notebook-form').setAttribute('aria-busy', 'true');
@@ -910,10 +918,13 @@ $('notebook-form').addEventListener('submit', event => {
         if (!$('notebook-dialog').open) notify(message, false, true);
         return;
       }
-      notebookIntent = null; input.value = ''; $('notebook-dialog').close();
+      confirmed = true; notebookIntent = null; input.value = ''; $('notebook-dialog').close();
       try { await load({ forms: !formDirty }); } catch { notify('Notebook added, but the list could not refresh. Refresh to see it.', false, true); return; }
       notify('Notebook added.', true);
-    } finally { notebookSaving = false; input.disabled = submit.disabled = false; input.readOnly = Boolean(notebookIntent); submit.textContent = notebookIntent ? 'Retry notebook' : 'Create notebook'; $('notebook-form').removeAttribute('aria-busy'); }
+    } finally {
+      notebookSaving = false; input.disabled = submit.disabled = false; input.readOnly = Boolean(notebookIntent); submit.textContent = notebookIntent ? 'Retry notebook' : 'Create notebook'; $('notebook-form').removeAttribute('aria-busy');
+      if (!confirmed && $('notebook-dialog').open && document.activeElement === document.body && focusBeforeSave?.isConnected && (focusBeforeSave === input || focusBeforeSave === submit)) focusBeforeSave.focus();
+    }
   });
 });
 $('sync').addEventListener('click', event => action(event.currentTarget, async () => { const result = await api('/api/sync', {}); await load(); notify(result.complete ? 'Cloud Journal synced.' : result.reason, result.complete); }));

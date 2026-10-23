@@ -145,6 +145,7 @@ main{min-width:0;width:100%;max-width:1320px;margin:0 auto;padding:30px 40px 56p
 .card>.hint{margin:-8px 0 16px;max-width:95ch}
 .field-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 18px;margin-bottom:16px}
 .field-grid:last-child{margin-bottom:0}
+.risk-field{display:grid;gap:6px;align-content:start;min-width:0}
 .card>label{margin-bottom:16px}
 .form-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap}
 .form-actions .hint{margin-right:auto}
@@ -347,6 +348,8 @@ tr:last-child td{border-bottom:0}
 .handoff-head img{border-radius:5px}
 .handoff-section .detail-meta{margin-bottom:10px}
 @media(forced-colors:active){
+  input:focus,select:focus,textarea:focus{outline:2px solid Highlight;outline-offset:2px}
+  .affix:focus-within{outline:2px solid Highlight;outline-offset:2px}
   .nav-button[aria-current=page]{outline:2px solid Highlight;outline-offset:-3px}
   .nav-dot,.agent-dot,.output-status::before{border:1px solid ButtonText}
   .switch-track{forced-color-adjust:none;background:Canvas;border:1px solid ButtonText}
@@ -477,7 +480,7 @@ tr:last-child td{border-bottom:0}
   .editor{padding:20px 18px 0;scroll-margin-top:80px}
   .editor-head{top:62px}
   .journal-layout:has(#editor:not([hidden])) .entry-pane{display:none}
-  #view-journal:has(#editor:not([hidden])) .head-actions{display:none}
+  #view-journal:has(#editor:not([hidden])) .head-actions>*:not(#new-notebook){display:none}
   .field-grid{grid-template-columns:minmax(0,1fr)}
   .card{padding:18px}
   .head-actions{width:100%}

@@ -375,7 +375,7 @@ test('native notebook creation retains failures in the dialog and a confirmed sa
     const pending = new Promise(resolve => { release = resolve; });
     const get = id => { if (!nodes.has(id)) nodes.set(id, { value: id === 'notebook-name' ? 'Exact new notebook' : '', hidden: true, disabled: false,
       addEventListener: (event, callback) => callbacks.set(`${id}:${event}`, callback), setAttribute(name, value) { this[name] = value; }, removeAttribute(name) { delete this[name]; }, showModal() { this.open = true; }, close() { this.open = false; } }); return nodes.get(id); };
-    const context = { $: get, crypto: { randomUUID: () => 'stable-notebook-key' }, formDirty: false, api: async (_path, input) => { requests++; assert.equal(input.name, 'Exact new notebook'); await pending; if (mode === 'refused') throw Object.assign(new Error('Actual create refusal.'), { status: 400 }); return {}; },
+    const context = { $: get, document: { activeElement: {}, body: {} }, crypto: { randomUUID: () => 'stable-notebook-key' }, formDirty: false, api: async (_path, input) => { requests++; assert.equal(input.name, 'Exact new notebook'); await pending; if (mode === 'refused') throw Object.assign(new Error('Actual create refusal.'), { status: 400 }); return {}; },
       load: async () => { if (mode === 'refresh-failed') throw new Error('Actual read failure.'); }, notify: (message, success) => notices.push({ message, success }),
       action: (_button, work) => jobs.push(work()) };
     runInNewContext(handlers, context); callbacks.get('new-notebook:click')(); assert.equal(get('notebook-dialog').open, true);
@@ -991,12 +991,14 @@ test('workspace disclosure follows its trigger in keyboard order and keyboard op
   const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
   const handlers = source.slice(source.indexOf("$('account-toggle').addEventListener('click'"), source.indexOf("$('account-settings').addEventListener"));
   const callbacks = new Map(); let focused = 'toggle'; const hidden = { disabled: false, closest: () => true, focus() { focused = 'hidden'; } }, disabled = { disabled: true, closest: () => null, focus() { focused = 'disabled'; } }, control = { disabled: false, closest: () => null, focus() { focused = 'first'; } };
-  const toggle = { addEventListener: (event, callback) => callbacks.set(`toggle:${event}`, callback), setAttribute(name, value) { this[name] = value; } }, menu = { hidden: true, querySelectorAll: () => [hidden, disabled, control] }, area = { contains: target => target === toggle || target === control };
+  const toggle = { addEventListener: (event, callback) => callbacks.set(`toggle:${event}`, callback), setAttribute(name, value) { this[name] = value; } }, menu = { hidden: true, querySelectorAll: () => [hidden, disabled, control] }, area = { contains: target => target === toggle || target === control, addEventListener: (event, callback) => callbacks.set(`area:${event}`, callback) };
   const context = { $: id => ({ 'account-toggle': toggle, 'account-menu': menu, 'account-area': area })[id], document: { addEventListener: (event, callback) => callbacks.set(`document:${event}`, callback) }, closeAccountMenu({ focus = false } = {}) { menu.hidden = true; toggle['aria-expanded'] = 'false'; if (focus) focused = 'toggle'; } };
   runInNewContext(handlers, context); callbacks.get('toggle:click')({ detail: 1 }); assert.equal(menu.hidden, false); assert.equal(focused, 'toggle', 'Pointer opening retains pointer focus.');
   callbacks.get('toggle:click')({ detail: 1 }); callbacks.get('toggle:click')({ detail: 0 }); assert.equal(focused, 'first'); assert.equal(toggle['aria-expanded'], 'true');
   callbacks.get('document:keydown')({ key: 'Escape' }); assert.equal(menu.hidden, true); assert.equal(focused, 'toggle');
   callbacks.get('toggle:click')({ detail: 0 }); callbacks.get('document:click')({ target: {} }); assert.equal(menu.hidden, true);
+  callbacks.get('toggle:click')({ detail: 0 }); callbacks.get('area:focusout')({ relatedTarget: control }); assert.equal(menu.hidden, false);
+  const next = {}; focused = next; callbacks.get('area:focusout')({ relatedTarget: next }); assert.equal(menu.hidden, true); assert.equal(focused, next, 'Tabbing out closes the panel without returning focus to its trigger.');
 });
 
 test('notices have one exposed message source and settings subsection headings nest below their title', async () => {
@@ -1032,7 +1034,7 @@ test('dismissed pending notebook creation cannot submit twice and its later refu
     const get = id => { if (!nodes.has(id)) nodes.set(id, { value: id === 'notebook-name' ? 'Retained name' : '', hidden: true, disabled: false,
       addEventListener: (event, callback) => callbacks.set(`${id}:${event}`, callback), setAttribute(name, value) { this[name] = value; }, removeAttribute(name) { delete this[name]; },
       showModal() { this.open = true; }, close() { this.open = false; } }); return nodes.get(id); };
-    const context = { $: get, crypto: { randomUUID: () => 'stable-notebook-key' }, formDirty: false, api: async () => { requests++; await pending; }, load: async () => assert.fail('A refused create must not refresh or report success.'),
+    const context = { $: get, document: { activeElement: {}, body: {} }, crypto: { randomUUID: () => 'stable-notebook-key' }, formDirty: false, api: async () => { requests++; await pending; }, load: async () => assert.fail('A refused create must not refresh or report success.'),
       action: (_button, work) => jobs.push(work()), notify: (message, success, error) => notices.push({ message, success, error }) };
     runInNewContext(handlers, context); callbacks.get('new-notebook:click')(); const submit = () => callbacks.get('notebook-form:submit')({ preventDefault() {}, submitter: get('create-notebook') });
     submit(); if (dismiss === 'cancel') callbacks.get('cancel-notebook:click')(); else get('notebook-dialog').close();
@@ -1053,7 +1055,7 @@ test('an uncertain notebook create retains its original request through dismissa
     const pending = new Promise((_resolve, refuse) => { reject = refuse; });
     const get = id => { if (!nodes.has(id)) nodes.set(id, { value: id === 'notebook-name' ? 'Original requested name' : '', hidden: true, disabled: false,
       addEventListener: (event, callback) => callbacks.set(`${id}:${event}`, callback), setAttribute(name, value) { this[name] = value; }, removeAttribute(name) { delete this[name]; }, showModal() { this.open = true; }, close() { this.open = false; } }); return nodes.get(id); };
-    const context = { $: get, crypto: { randomUUID: () => `intent-${++key}` }, formDirty: false,
+    const context = { $: get, document: { activeElement: {}, body: {} }, crypto: { randomUUID: () => `intent-${++key}` }, formDirty: false,
       api: async (path, body, headers) => { requests.push({ path, body: { ...body }, headers: { ...headers } }); if (requests.length === 1) await pending; return { id: 'committed-notebook' }; },
       load: async () => { throw new Error('Readback unavailable after confirmed save.'); }, action: (_button, work) => jobs.push(work()), notify: (message, success, error) => notices.push({ message, success, error }) };
     runInNewContext(handlers, context); const submit = () => callbacks.get('notebook-form:submit')({ preventDefault() {}, submitter: get('create-notebook') });
@@ -1065,4 +1067,86 @@ test('an uncertain notebook create retains its original request through dismissa
     callbacks.get('new-notebook:click')(); get('notebook-name').value = 'Original requested name'; submit(); await jobs[2];
     assert.equal(requests[2].headers['Idempotency-Key'], 'intent-2', 'An intentional same-named notebook is a new operation after confirmed success.');
   }
+});
+
+
+test('dismissing or auto-hiding a notice clears its live text and cancels a pending announcement', async () => {
+  const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
+  const functions = source.slice(source.indexOf('function notify('), source.indexOf('async function api('));
+  const nodes = new Map(), frames = new Map(); let next = 0, timer;
+  const get = id => { if (!nodes.has(id)) nodes.set(id, { hidden: true, textContent: '', className: '' }); return nodes.get(id); };
+  const context = { $: get, requestAnimationFrame: callback => { frames.set(++next, callback); return next; }, cancelAnimationFrame: id => frames.delete(id), clearTimeout() {}, setTimeout: callback => { timer = callback; return 1; } };
+  runInNewContext(functions, context); const flush = () => { for (const [id, callback] of frames) { frames.delete(id); callback(); } };
+  context.notify('Notebook added.', true); flush(); assert.equal(get('notice-status').textContent, 'Notebook added.');
+  assert.equal(typeof context.dismissNotice, 'function'); context.dismissNotice(); assert.equal(get('notice').hidden, true); assert.equal(get('notice-status').textContent, ''); assert.equal(get('notice-alert').textContent, '');
+  context.notify('Saved.', true); context.dismissNotice(); flush(); assert.equal(get('notice-status').textContent, '', 'Dismiss cancels an announcement that has not yet run.');
+  context.notify('Saved again.', true); flush(); timer(); assert.equal(get('notice').hidden, true); assert.equal(get('notice-status').textContent, '');
+  assert.match(source, /\$\('dismiss-notice'\)\.addEventListener\('click', dismissNotice\)/);
+});
+
+test('narrow editor creation stays reachable, notebook controls have distinct names and risk help is outside labels', async () => {
+  const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8'), css = await readFile(new URL('../public/styles.css', import.meta.url), 'utf8');
+  assert.match(html, /<label>Filter by notebook<select id="journal-filter"/); assert.match(html, /<label>Save in notebook<select id="entry-notebook"/);
+  assert.match(css, /#view-journal:has\(#editor:not\(\[hidden\]\)\) \.head-actions>\*:not\(#new-notebook\)\{display:none\}/);
+  assert.doesNotMatch(css, /#view-journal:has\(#editor:not\(\[hidden\]\)\) \.head-actions\{display:none\}/);
+  for (const [id, name] of [['max-order', 'Max per order'], ['max-ticket', 'Max per ticket'], ['max-leverage', 'Max leverage']]) {
+    assert.match(html, new RegExp(`<label for="${id}">${name}${id === 'max-leverage' ? '' : '<span class="sr-only"> in USD</span>'}</label>`));
+    assert.ok([...html.matchAll(/<label\b[^>]*>[\s\S]*?<\/label>/g)].every(([label]) => !label.includes(`id="${id}-error"`)));
+  }
+  const forced = css.slice(css.indexOf('@media(forced-colors:active)'), css.indexOf('\n}', css.indexOf('@media(forced-colors:active)')));
+  assert.match(forced, /input:focus,select:focus,textarea:focus\{outline:2px solid Highlight/);
+  assert.match(forced, /\.affix:focus-within\{outline:2px solid Highlight/);
+});
+
+test('failed local entry save restores a disabled focused control only when focus fell to body', async () => {
+  const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
+  const handler = source.slice(source.indexOf("$('entry-form').addEventListener('submit'"), source.indexOf('let notebookSaving'));
+  for (const deliberate of [false, true]) {
+    let submit, reject, job, restores = 0; const body = {}, other = {}, doc = { body }, nodes = {};
+    const button = { isConnected: true, focus() { doc.activeElement = this; restores++; }, get disabled() { return this.off; }, set disabled(value) { this.off = value; if (value && doc.activeElement === this) doc.activeElement = body; } };
+    doc.activeElement = button;
+    for (const [id, value] of Object.entries({ 'entry-notebook': 'book', 'entry-title': 'Unsaved title', 'entry-body': 'Exact notes', 'entry-status': 'watching', 'entry-signal': '' })) nodes[id] = { value, disabled: false };
+    nodes['entry-form'] = { elements: [...Object.values(nodes), button], setAttribute() {}, removeAttribute() {}, addEventListener(_event, callback) { submit = callback; } };
+    const context = { $: id => nodes[id], document: doc, entrySaving: false, editing: null, entryRetryKey: 'entry-key', updateDraftProtection() {}, action(_button, work) { job = work().catch(() => {}); }, api: () => new Promise((_resolve, refuse) => { reject = refuse; }) };
+    runInNewContext(handler, context); submit({ preventDefault() {} }); assert.equal(doc.activeElement, body);
+    if (deliberate) doc.activeElement = other;
+    reject(new Error('The save was not confirmed.')); await job;
+    assert.equal(doc.activeElement, deliberate ? other : button); assert.equal(restores, deliberate ? 0 : 1); assert.equal(nodes['entry-body'].value, 'Exact notes');
+  }
+});
+
+
+test('a refused notebook save restores its disabled trigger only if the dialog remains open and focus fell to body', async () => {
+  const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
+  const handlers = source.slice(source.indexOf('let notebookSaving'), source.indexOf("$('sync').addEventListener"));
+  for (const state of ['body', 'deliberate', 'dismissed']) {
+    const callbacks = new Map(), nodes = new Map(), body = {}, other = {}, doc = { body }; let job, refuse, restores = 0;
+    const get = id => { if (!nodes.has(id)) nodes.set(id, { value: id === 'notebook-name' ? 'Original name' : '', isConnected: true, hidden: true,
+      get disabled() { return this.off; }, set disabled(value) { this.off = value; if (value && doc.activeElement === this) doc.activeElement = body; },
+      addEventListener: (event, callback) => callbacks.set(`${id}:${event}`, callback), setAttribute() {}, removeAttribute() {}, showModal() { this.open = true; }, close() { this.open = false; }, focus() { doc.activeElement = this; restores++; } }); return nodes.get(id); };
+    const context = { $: get, document: doc, crypto: { randomUUID: () => 'notebook-key' }, formDirty: false, action(_button, work) { job = work(); },
+      api: () => new Promise((_resolve, reject) => { refuse = reject; }), notify() {} };
+    runInNewContext(handlers, context); callbacks.get('new-notebook:click')(); doc.activeElement = get('create-notebook');
+    callbacks.get('notebook-form:submit')({ preventDefault() {} }); assert.equal(doc.activeElement, body);
+    if (state === 'deliberate') doc.activeElement = other; if (state === 'dismissed') callbacks.get('cancel-notebook:click')();
+    refuse(Object.assign(new Error('Actual refusal.'), { status: 400 })); await job;
+    assert.equal(restores, state === 'body' ? 1 : 0); assert.equal(doc.activeElement, state === 'body' ? get('create-notebook') : state === 'deliberate' ? other : body);
+  }
+});
+
+
+test('risk validation associates external error and scope descriptions while preserving concise field labels', async () => {
+  const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
+  const functions = source.slice(source.indexOf('const requiredRiskFields'), source.indexOf('function ensureOption('));
+  const nodes = new Map();
+  const get = id => { if (!nodes.has(id)) nodes.set(id, { id, validity: { valid: false, valueMissing: true }, setAttribute(name, value) { this[name] = value; }, removeAttribute(name) { delete this[name]; } }); return nodes.get(id); };
+  const context = { $: get, snapshot: { settings: { executionEnabled: false } }, riskValidationActive: true };
+  runInNewContext(functions, context); assert.equal(context.renderRiskValidation(), get('max-order'));
+  for (const id of ['max-order', 'max-ticket', 'max-leverage']) {
+    assert.equal(get(id)['aria-invalid'], 'true'); assert.equal(get(`${id}-error`).hidden, false);
+    assert.equal(get(id)['aria-describedby'], `${id}-error${id === 'max-leverage' ? ' max-leverage-scope' : ''}`);
+    get(id).validity = { valid: true };
+  }
+  assert.equal(context.renderRiskValidation(), null); assert.equal(get('max-order')['aria-describedby'], undefined);
+  assert.equal(get('max-leverage')['aria-describedby'], 'max-leverage-scope'); assert.equal(get('max-leverage-error').hidden, true);
 });
