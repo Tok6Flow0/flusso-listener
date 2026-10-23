@@ -291,7 +291,10 @@ function renderProcess() {
   // One block carries the reason from its first streamed words to the published
   // decision; only a validated, matching run earns the decision label.
   const summary = view.verdict ? { state: 'published', kicker: 'Published decision', label: view.verdict.label, tone: view.verdict.tone, reason: view.verdict.reason || 'The model gave no reason.' }
-    : view.draft !== null ? { state: 'draft', kicker: view.draftLabel, label: 'not accepted', tone: '', reason: view.draft } : null;
+    : view.draft !== null ? { state: 'draft', kicker: view.draftLabel, label: view.live ? 'validation pending' : 'not accepted', tone: '', reason: view.draft } : null;
+  // Announce only a completed public decision, never the token stream.
+  const announcement = view.accepted ? `Review complete. ${view.verdict.label}. ${view.verdict.reason}` : ['failed', 'stopped'].includes(view.status) ? `${view.label}. No decision was accepted.` : '';
+  if (changed('model-completion', [output?.atUtc, announcement])) setText('model-completion', announcement);
   // Keep the raw answer open if a keyboard reader is using it as the reason appears.
   if (summary && $('model-output').contains(document.activeElement)) rawOpen = true;
   // Scheduled checks must not strand a keyboard reader inside a hidden summary.
@@ -461,12 +464,13 @@ $('check-now').addEventListener('click', async event => {
   // after the shared action helper releases its temporary button lock.
   renderStatus();
 });
-for (const id of ['ticket-example', 'editor-ticket-example']) $(id).textContent = '```flusso-orders\n' + JSON.stringify(TICKET_EXAMPLE, null, 2) + '\n```';
+for (const id of ['ticket-example', 'editor-ticket-example']) $(id).textContent = JSON.stringify(TICKET_EXAMPLE, null, 2);
 
 /* --------------------------------------------------------------- journal */
 function renderEntries() {
   const filter = $('journal-filter').value, result = $('result-filter').value;
   const rows = snapshot.entries.filter(row => (!filter || `${row.origin}:${row.notebookId}` === filter) && matchesResultFilter(row, result));
+  if (selected) selected = rows.find(row => row.id === selected.id && row.origin === selected.origin) ?? null;
   $('entry-list').replaceChildren(...rows.map(row => {
     const button = element('button', null, 'entry-card'), isSelected = selected?.id === row.id && selected.origin === row.origin; button.type = 'button';
     button.classList.toggle('selected', isSelected); if (isSelected) button.setAttribute('aria-current', 'true');
@@ -532,6 +536,7 @@ function positionsTable(positions, withResults = false) {
 function renderDetail() {
   const detail = $('entry-detail');
   if (!selected) {
+    detail.setAttribute('aria-label', 'Selected entry');
     const empty = element('div', null, 'empty-art'), mark = element('img'); mark.src = '/flusso-mark.png'; mark.alt = ''; mark.width = mark.height = 40;
     const write = element('button', snapshot?.entries.length ? 'New entry' : 'Write the first entry'); write.type = 'button';
     write.addEventListener('click', () => showEditor());
@@ -599,7 +604,7 @@ function showEditor(row = null) {
   $('entry-notebook').replaceChildren(...notebooks.map(item => new Option(item.name, item.id)));
   if (row?.origin === 'local') $('entry-notebook').value = row.notebookId;
   $('entry-title').value = row?.title ?? ''; $('entry-body').value = row?.body ?? ''; $('entry-status').value = row?.status ?? 'watching'; $('entry-signal').value = row?.signal ? JSON.stringify(row.signal, null, 2) : '';
-  editorDirty = false; reveal($('editor'), 'nearest'); $('entry-title').focus({ preventScroll: true });
+  editorDirty = false; reveal($('editor'), window.matchMedia('(max-width:760px)').matches ? 'start' : 'nearest'); $('entry-title').focus({ preventScroll: true });
 }
 // Unsaved writing is never discarded by picking another entry; only Cancel discards it.
 let editorDirty = false;

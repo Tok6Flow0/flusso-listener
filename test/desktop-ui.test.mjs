@@ -62,7 +62,7 @@ test('displayed submission and uncertain results never imply an order was filled
     assert.equal(matchesResultFilter(entry, status === 'submitted' || status === 'partial' ? 'placed' : 'open'), true);
   }
   const note = { listener: { status: 'observed', decision: 'review' } };
-  assert.equal(listenerResult(note).label, 'needs attention');
+  assert.equal(listenerResult(note).label, 'review suggested');
   assert.equal(matchesResultFilter(note, 'tickets'), false);
 });
 
@@ -107,7 +107,7 @@ test('partial or unmatched model output is never presented as an accepted decisi
     assert.equal(view.accepted, false); assert.equal(view.verdict, null); assert.match(view.note, /not accepted|Nothing is accepted/);
   }
   const complete = modelOutputPresentation({ ...output, status: 'complete' }, published);
-  assert.deepEqual([complete.accepted, complete.verdict], [true, { label: 'needs attention', tone: 'warn', reason: 'Needs a quantity.' }]);
+  assert.deepEqual([complete.accepted, complete.verdict], [true, { label: 'review suggested', tone: 'info', reason: 'Needs a quantity.' }]);
   for (const other of [null, { ...published, entryId: 'note-b' }, { ...published, origin: 'cloud' }, { ...published, atUtc: '2026-10-22T17:19:00Z' }, { ...published, atUtc: undefined }, { ...published, atUtc: 'invalid' }, { ...published, decision: 'submit' }]) {
     const view = modelOutputPresentation({ ...output, status: 'complete' }, other);
     assert.equal(view.accepted, false); assert.equal(view.verdict, null);
@@ -246,4 +246,15 @@ test('full Activity includes the preview without truncating retained history or 
   assert.deepEqual(original, before);
   assert.equal(latestDecisions([...original, { ...output, status: 'observed' }], output, { limit: null }).length, 10);
   assert.deepEqual(latestDecisions([], output, { limit: null }), [{ ...output, status: 'observed' }]);
+});
+
+
+test('completed model reviews and owner-resolved uncertainty are not unsubmitted or pending tickets', async () => {
+  const { matchesResultFilter } = await import('../public/desktop-ui.mjs');
+  const review = { listener: { status: 'observed', decision: 'review' } };
+  assert.equal(matchesResultFilter(review, 'decided'), true);
+  assert.equal(matchesResultFilter(review, 'open'), false);
+  const resolved = { ticket: { ticket: {} }, listener: { status: 'resolved' } };
+  assert.equal(matchesResultFilter(resolved, 'resolved'), true);
+  assert.equal(matchesResultFilter(resolved, 'refused'), false);
 });

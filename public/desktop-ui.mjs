@@ -58,7 +58,7 @@ export function entryStatus(entry) {
 }
 
 const RESULT = { submitted: ['submitted', 'pos'], partial: ['partly submitted', 'warn'], blocked: ['refused', 'neg'], unknown: ['unconfirmed', 'warn'], pending: ['submitting', 'info'], sending: ['submitting', 'info'], processing: ['reviewing', 'info'], review: ['not submitted', 'warn'], waiting: ['waiting', 'warn'], resolved: ['owner resolved', ''] };
-const DECISION = { candidate: ['flagged', 'info'], review: ['needs attention', 'warn'], ignore: ['no action', ''], ticket: ['ticket', 'info'] };
+const DECISION = { candidate: ['flagged', 'info'], review: ['review suggested', 'info'], ignore: ['no action', ''], ticket: ['ticket', 'info'] };
 export function activityStatus(row = {}) {
   const [label, tone] = RESULT[row.status] ?? (row.status === 'observed' ? DECISION[row.decision] : null) ?? [text(row.status) || 'noted', ''];
   return { label, tone };
@@ -74,20 +74,20 @@ const LISTENER_RESULT = {
   submitted: ['submitted', 'pos', 'placed'], partial: ['partly submitted', 'warn', 'placed'],
   blocked: ['refused', 'neg', 'refused'], review: ['not submitted', 'warn', 'refused'],
   waiting: ['waiting', 'warn', 'open'], sending: ['submitting', 'info', 'open'], pending: ['submitting', 'info', 'open'], processing: ['reviewing', 'info', 'open'],
-  unknown: ['unconfirmed', 'warn', 'open'], observed: ['seen', '', 'open'], resolved: ['owner resolved', '', 'refused'],
+  unknown: ['unconfirmed', 'warn', 'open'], observed: ['seen', '', 'open'], resolved: ['owner resolved', '', 'resolved'],
 };
 export function listenerResult(entry) {
   if (!entry?.ticket && !entry?.listener) return null;
   if (!entry.ticket && entry.listener?.status === 'observed') {
     const result = activityStatus(entry.listener);
-    return { ...result, group: 'open' };
+    return { ...result, group: 'decided' };
   }
   const [label, tone, group] = LISTENER_RESULT[entry.listener?.status] ?? ['not actioned', '', 'open'];
   return { label, tone, group };
 }
 export const RESULT_FILTERS = Object.freeze([
   { value: '', label: 'All entries' }, { value: 'tickets', label: 'Order tickets' },
-  { value: 'placed', label: 'Submitted' }, { value: 'refused', label: 'Refused or not submitted' }, { value: 'open', label: 'Awaiting a result' },
+  { value: 'placed', label: 'Submitted' }, { value: 'refused', label: 'Refused or not submitted' }, { value: 'open', label: 'Awaiting a result' }, { value: 'decided', label: 'Model reviews' }, { value: 'resolved', label: 'Owner resolved' },
 ]);
 export function matchesResultFilter(entry, filter) {
   if (!filter) return true;
@@ -180,7 +180,7 @@ export function streamedReason(source) {
   }
 }
 
-const OUTPUT_STATUS = { streaming: ['Streaming', 'info'], complete: ['Complete', 'pos'], failed: ['Failed', 'warn'], stopped: ['Stopped', 'warn'] };
+const OUTPUT_STATUS = { streaming: ['Streaming', 'info'], complete: ['Complete', 'info'], failed: ['Failed', 'warn'], stopped: ['Stopped', 'warn'] };
 // The streamed text is kept exactly as received. Until that same run completes and
 // the Listener publishes its validated decision, only the model's own reason words
 // are lifted out of it, as a draft that is never labelled or styled as a decision.

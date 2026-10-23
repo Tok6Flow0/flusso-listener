@@ -25,7 +25,7 @@ export function describeEntryHandoff({ entry, settings, checkpoint = null, activ
   const currentCheckpoint = checkpoint?.version === entry.version ? checkpoint : null;
   const currentActivity = activity?.version === entry.version ? activity : null;
   const context = { inScope: mismatch === null, scopeMismatch: mismatch, entryStatus: entry.status, listenerEnabled: settings.enabled, checkpointState: currentCheckpoint?.state ?? null };
-  const result = (code, reason) => ({ schemaVersion: 'flusso.listener_handoff.v1', kind, code, reason, context });
+  const result = (code, reason) => ({ schemaVersion: 'flusso.listener_handoff.v1', kind, code, reason: !settings.enabled && code !== 'listener_off' ? `The Listener is off. ${reason}` : reason, context });
   const currentAttempts = attempts.filter(row => row.entryId === entry.id && row.origin === entry.origin && row.version === entry.version && ['orders', 'close', 'legacy'].includes(row.kind));
   // Delivery evidence outlives admission freshness, selection, and local opt-out.
   // Prefer uncertainty if inconsistent retained rows ever share the same revision.
