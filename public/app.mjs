@@ -16,9 +16,14 @@ const TICKET_EXAMPLE = { id: 'kaia-2026-10-12T14', together: true, orders: [
 ] };
 const TICKET_FENCE = /^(```|~~~)[ \t]*flusso-(?:orders|close)[ \t]*\n[\s\S]*?^\1[ \t]*$/gm;
 
-function element(tag, content, className) { const node = document.createElement(tag); if (content != null) node.textContent = content; if (className) node.className = className; return node; }
+function element(tag, content, className) {
+  const node = document.createElement(tag); if (className) node.className = className;
+  if (tag === 'time' || className?.split(' ').includes('interface-numbers')) node.dataset.interfaceNumbers = 'true';
+  if (content != null) { if (node.dataset.interfaceNumbers === 'true') interfaceText(node, content); else node.textContent = content; }
+  return node;
+}
 function pill(text, tone) { return element('span', text, `pill${tone ? ' ' + tone : ''}`); }
-function notify(message, success = false, error = false) {
+function notify(message, success = false, error = false, { reveal: showError = true } = {}) {
   const notice = $('notice'), className = `notice${error ? ' error' : success ? ' success' : ''}`;
   notify.pollMessage = null;
   if (!notice.hidden && $('notice-text').textContent === message && notice.className === className) return;
@@ -26,7 +31,7 @@ function notify(message, success = false, error = false) {
   cancelAnimationFrame(notify.frame); $('notice-status').textContent = ''; $('notice-alert').textContent = '';
   notify.frame = requestAnimationFrame(() => { $(error ? 'notice-alert' : 'notice-status').textContent = message; });
   clearTimeout(notify.timer); if (success) notify.timer = setTimeout(() => { $('notice').hidden = true; }, 5000);
-  if (error) {
+  if (error && showError) {
     const bounds = notice.getBoundingClientRect(), top = matchMedia('(max-width:760px)').matches ? document.querySelector('.sidebar').getBoundingClientRect().bottom : 0;
     if (bounds.top < top || bounds.bottom > window.innerHeight) notice.scrollIntoView({ block: 'start', behavior: 'auto' });
   }
@@ -43,7 +48,7 @@ function recoverPollNotice() {
 function notifyPollFailure(message) {
   setText('refresh-status', 'Not updating. Showing the last loaded state until Journal reconnects.'); $('refresh-status').hidden = false;
   if (notify.pollFailure === message) return;
-  notify(message, false, true); notify.pollMessage = message; notify.pollFailure = message;
+  notify(message, false, true, { reveal: false }); notify.pollMessage = message; notify.pollFailure = message;
 }
 async function api(path, body, headers = {}) {
   let response;
@@ -86,10 +91,13 @@ function decisionItems(rows, details) {
   return rows.map((row, index) => ({ key: keys[index], value: { row, sourceAvailable: snapshot.entries.some(entry => entry.id === row.entryId && (!row.origin || row.origin === entry.origin)), ...details(row) } }));
 }
 // Writes only real changes, so live regions announce a state once rather than on every token.
+function interfaceText(node, value) {
+  if (node.textContent === value) return;
+  node.replaceChildren(...value.split(/(\d+(?:[.,:]\d+)*)/g).map((part, index) => index % 2 ? element('span', part, 'mono') : document.createTextNode(part)));
+}
 function setText(id, value) {
   const node = $(id); if (node.textContent === value) return;
-  if (node.dataset.interfaceNumbers === 'true') node.replaceChildren(...value.split(/(\d+(?:[.,:]\d+)*)/g).map((part, index) => index % 2 ? element('span', part, 'mono') : document.createTextNode(part)));
-  else node.textContent = value;
+  if (node.dataset.interfaceNumbers === 'true') interfaceText(node, value); else node.textContent = value;
 }
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 function reveal(node, block = 'start') { node.scrollIntoView({ behavior: reducedMotion.matches ? 'auto' : 'smooth', block }); }
@@ -254,9 +262,9 @@ async function load({ forms = false } = {}) {
 }
 function renderStatus() {
   const { settings, listener } = snapshot;
-  const tone = !settings.enabled ? '' : listener.lastError ? 'warn' : 'on';
-  $('listener-dot').className = `nav-dot ${tone}${settings.enabled && listener.busy ? ' busy' : ''}`;
-  $('listener-dot-label').textContent = !settings.enabled ? 'Off' : listener.lastError ? 'Needs attention' : listener.busy ? 'Reading' : 'On';
+  const tone = streamDisconnected ? 'warn' : !settings.enabled ? '' : listener.lastError ? 'warn' : 'on';
+  $('listener-dot').className = `nav-dot ${tone}${!streamDisconnected && settings.enabled && listener.busy ? ' busy' : ''}`;
+  $('listener-dot-label').textContent = streamDisconnected ? 'Reconnecting' : !settings.enabled ? 'Off' : listener.lastError ? 'Needs attention' : listener.busy ? 'Reading' : 'On';
   // The schedule lives here; the review desk owns state, errors and the next action.
   const interval = intervalLabel(settings.intervalSeconds), parts = [];
   if (!settings.enabled) parts.push(listener.lastCheckedAtUtc ? `Last checked ${when(listener.lastCheckedAtUtc)}` : 'Not checked yet');
@@ -272,8 +280,8 @@ function renderStatus() {
   $('activity-count').closest('button').setAttribute('aria-label', pending ? `Activity, ${formatCount(pending)} unconfirmed` : 'Activity');
   $('check-now').disabled = !settings.enabled || Boolean(listener.busy);
   $('check-now').classList.toggle('primary', settings.enabled && !listener.busy);
-  $('check-now').title = !settings.enabled ? 'Turn Listener on to check notes' : listener.busy ? 'A check is already running' : 'Review the newest selected note';
-  $('check-now').textContent = listener.busy ? 'Checking…' : 'Check now';
+  $('check-now').title = !settings.enabled ? 'Turn Listener on to check notes' : streamDisconnected && listener.busy ? 'Waiting for current status. The last reported check may still be running.' : listener.busy ? 'A check is already running' : 'Review the newest selected note';
+  $('check-now').textContent = listener.busy ? streamDisconnected ? 'Status unavailable' : 'Checking…' : 'Check now';
   renderWatchSummary();
 }
 
@@ -353,7 +361,7 @@ function positionResponseTools(accepted) {
 }
 function renderProcess() {
   const { listener, settings } = snapshot, output = listener.modelOutput;
-  const state = processingPresentation(listener, settings.enabled);
+  const state = processingPresentation(listener, settings.enabled, { disconnected: streamDisconnected });
   const view = modelOutputPresentation(output, listener.lastModelOutput, { disconnected: streamDisconnected, enabled: settings.enabled, busy: listener.busy });
   const completed = completedModelPresentation(listener, snapshot.entries);
   const earlier = listener.modelReview?.id != null && output?.checkId !== listener.modelReview.id;
@@ -422,7 +430,7 @@ function renderProcess() {
       if (metadata.contains(document.activeElement)) $('model-verdict-label').focus();
       metadata.replaceChildren(element('span', 'Source note', 'hint'), sourceButton(source, source.title || 'Journal entry'), element('time'));
     }
-    const time = metadata.querySelector('time'); time.textContent = `${source.completionKnown === false ? 'Recorded' : 'Completed'} ${when(source.atUtc, true)}`; time.dateTime = source.atUtc;
+    const time = metadata.querySelector('time'); interfaceText(time, `${source.completionKnown === false ? 'Recorded' : 'Completed'} ${when(source.atUtc, true)}`); time.dateTime = source.atUtc;
   }
   const sourceHidden = !output || view.accepted;
   if (sourceHidden && $('model-output-source').contains(document.activeElement)) $('model-verdict-label').focus();
@@ -687,8 +695,8 @@ function renderDetail() {
     const head = element('header', null, 'detail-head'), heading = element('div', null, 'detail-title');
     const meta = element('div', null, 'detail-meta'), ticketKind = element('span'); ticketKind.dataset.entryPart = 'ticket-kind';
     meta.append(pill(row.status, row.status === 'watching' ? 'info' : ''), ticketKind);
-    const facts = element('span', null, 'detail-facts mono'), time = element('time', when(row.updatedAtUtc)); time.dateTime = row.updatedAtUtc ?? '';
-    facts.append(document.createTextNode(`${book ? `${book} · ` : ''}${row.origin} · v${formatCount(row.version)} · `), time); meta.append(facts);
+    const facts = element('span', null, 'detail-facts'), time = element('time', when(row.updatedAtUtc)); time.dateTime = row.updatedAtUtc ?? '';
+    facts.append(element('span', `${book ? `${book} · ` : ''}${row.origin} · v${formatCount(row.version)} · `, 'interface-numbers'), time); meta.append(facts);
     heading.append(element('h2', row.title), meta);
     const actions = element('div', null, 'detail-actions'), button = element('button', row.origin === 'local' ? 'Edit' : 'Copy to local'); button.type = 'button'; button.dataset.entryAction = 'edit';
     button.addEventListener('click', () => { const current = snapshot.entries.find(item => item.id === row.id && item.origin === row.origin); if (current) showEditor(current.origin === 'local' ? current : { ...current, id: null, version: null }); }); actions.append(button); head.append(heading, actions);
@@ -714,7 +722,8 @@ function renderDetail() {
     if (row.listenerCheck) {
       const check = row.listenerCheck, status = activityStatus(check), section = element('aside', null, 'detail-section handoff-section');
       const metadata = activityMetadata(check, row), at = element('time', `${metadata.clockLabel} ${when(metadata.clock, true)} · ${metadata.revision}`, 'detail-facts'); at.dateTime = metadata.clock ?? '';
-      section.append(element('h3', 'Latest research check'), pill(status.label, status.tone), element('p', activityReason(check)), at);
+      const header = element('div', null, 'detail-meta'); header.append(pill(status.label, status.tone), at);
+      section.append(element('h3', 'Latest research check'), header, element('p', activityReason(check)));
       const focus = reviewFocusPresentation(check.focus, { prepared: check.responseReceived !== true }), details = element('details');
       details.append(element('summary', focus.label), element('p', focus.text, 'focus-copy')); section.append(details); slot.append(section);
     }
@@ -729,7 +738,7 @@ function renderDetail() {
     if (!row.ticket && row.listener?.status === 'observed' && review) {
       const metadata = activityMetadata(row.listener, row), line = element('div', null, 'detail-meta'), at = element('time', `${metadata.clockLabel} ${when(metadata.clock, true)}`, 'detail-facts'); at.dateTime = metadata.clock ?? '';
       line.append(pill(review.label, review.tone), at); section.append(line, element('p', activityReason(row.listener), 'verdict-reason'));
-      if (revision) section.append(element('p', revision.note, 'hint mono'));
+      if (revision) section.append(element('p', revision.note, 'hint interface-numbers'));
       const focus = reviewFocusPresentation(row.listener.focus), details = element('details');
       details.append(element('summary', focus.label), element('p', focus.text, 'focus-copy')); section.append(details);
     }
@@ -743,7 +752,7 @@ function renderDetail() {
     if (outcome && (!row.ticket.error || row.listener)) {
       const line = element('p', null, 'hint ticket-result');
       line.append(pill(outcome.label, outcome.tone), document.createTextNode(row.listener ? ` ${when(row.listener.atUtc)}${row.listener.reason ? ` · ${row.listener.reason}` : ''}` : ' The listener has not acted on this ticket yet.')); section.append(line);
-      if (revision) section.append(element('p', revision.note, 'hint mono'));
+      if (revision) section.append(element('p', revision.note, 'hint interface-numbers'));
     }
     if (row.ticket.error) section.append(element('p', row.ticket.error, 'hint'), element('p', 'Correct the ticket and save a new revision before it can be checked.', 'hint'));
     else section.append(row.ticket.kind === 'close' ? positionsTable(row.ticket.ticket.positionIds) : ordersTable(row.ticket.ticket.orders));
@@ -903,7 +912,7 @@ function renderActivity() {
 let listenerEvents, streamDisconnected = false;
 function streamListener() {
   listenerEvents = new EventSource('/api/status');
-  listenerEvents.onerror = () => { streamDisconnected = true; if (snapshot) renderProcess(); };
+  listenerEvents.onerror = () => { streamDisconnected = true; if (snapshot) { renderStatus(); renderProcess(); } };
   listenerEvents.onmessage = event => {
     streamDisconnected = false;
     const listener = JSON.parse(event.data);
@@ -911,7 +920,7 @@ function streamListener() {
     const finished = snapshot.listener.busy && !listener.busy;
     snapshot.listener = listener;
     renderStatus(); renderProcess(); renderDecisions(); renderActivity();
-    if (finished) load().catch(error => notify(error.message, false, true));
+    if (finished) load().catch(error => notifyPollFailure(error.message));
   };
 }
 window.addEventListener('pagehide', () => listenerEvents?.close());

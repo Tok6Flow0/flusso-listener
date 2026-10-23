@@ -98,7 +98,7 @@ async function start() {
   tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Open Journal', click: showJournal }, { label: 'Quit Journal and stop Listener', click: () => app.quit() }]));
   tray.on('click', showJournal);
   window.on('close', event => { if (!quitting) { event.preventDefault(); window.hide(); } });
-  Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'Flusso Journal', submenu: [{ label: 'Show Journal', click: showJournal }, { label: 'Check for updates', click: () => updates.check().catch(() => changed()) }, { type: 'separator' }, { label: 'Quit Journal and stop Listener', accelerator: 'CmdOrCtrl+Q', click: () => app.quit() }] }, { role: 'editMenu' }]));
+  Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'Flusso Journal', submenu: [{ label: 'Show Journal', click: showJournal }, { label: 'Check for updates', click: () => updates.check().catch(() => changed()) }, { type: 'separator' }, { label: 'Quit Journal and stop Listener', accelerator: 'CmdOrCtrl+Q', click: () => app.quit() }] }, { role: 'editMenu' }, { label: 'View', submenu: [{ role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }] }, { role: 'windowMenu', submenu: [{ role: 'minimize' }, { role: 'zoom' }, { role: 'close' }] }]));
   await window.loadURL(server.url); window.show(); listener.start(); model.initialize().catch(() => {});
 }
 app.on('activate', showJournal);

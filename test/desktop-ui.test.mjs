@@ -14,17 +14,18 @@ test('unchanged visible notices announce once, recover without focus theft, and 
   runInNewContext(functions, context);
   const flush = () => { for (const [id, callback] of frames) { frames.delete(id); callback(); } };
   context.notifyPollFailure('Status read unavailable.'); flush();
-  assert.equal(get('notice-alert').textContent, 'Status read unavailable.'); assert.equal(scrolls, 1);
+  assert.equal(get('notice-alert').textContent, 'Status read unavailable.'); assert.equal(scrolls, 0, 'A background outage cannot move the reader or editor.');
   get('notice').getBoundingClientRect = () => ({ top: 20, bottom: 60 });
   context.notifyPollFailure('Status read unavailable.');
-  assert.equal(frames.size, 0); assert.equal(get('notice-alert').textContent, 'Status read unavailable.'); assert.equal(scrolls, 1);
+  assert.equal(frames.size, 0); assert.equal(get('notice-alert').textContent, 'Status read unavailable.'); assert.equal(scrolls, 0);
   get('notice').hidden = true; context.notifyPollFailure('Status read unavailable.');
   assert.equal(get('notice').hidden, true); assert.equal(frames.size, 0, 'Dismissing an ongoing polling outage keeps it dismissed.');
   assert.equal(get('refresh-status').hidden, false); assert.match(get('refresh-status').textContent, /Not updating.*last loaded state/);
   context.recoverPollNotice(); assert.equal(get('notice').hidden, true); assert.equal(get('notice-alert').textContent, '');
   assert.equal(get('refresh-status').hidden, true);
-  context.notifyPollFailure('Status read unavailable.'); flush(); assert.equal(scrolls, 2);
+  context.notifyPollFailure('Status read unavailable.'); flush(); assert.equal(scrolls, 0);
   context.notify('Different save error.', false, true); flush(); assert.equal(get('notice-alert').textContent, 'Different save error.');
+  assert.equal(scrolls, 1, 'An explicit action error still reveals itself without taking focus.');
   context.notifyPollFailure('Status read unavailable.'); assert.equal(frames.size, 0, 'The same polling outage does not replace a new action error.');
   context.recoverPollNotice(); assert.equal(get('notice').hidden, false, 'A successful poll must not clear an unrelated action error.');
   get('notice').hidden = true; context.notify('Different save error.', false, true); assert.equal(frames.size, 1, 'A dismissed notice may announce a recurrence.');
@@ -46,14 +47,14 @@ test('a local service outage explains recovery without exposing raw browser fetc
 
 test('interface prose keeps numbers mono without making its whole sentence a data readout', async () => {
   const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
-  const helper = source.slice(source.indexOf('function setText('), source.indexOf('const reducedMotion'));
+  const helper = source.slice(source.indexOf('function interfaceText('), source.indexOf('const reducedMotion'));
   const node = { dataset: { interfaceNumbers: 'true' }, textContent: '', replaceChildren(...children) { this.children = children; this.textContent = children.map(row => row.textContent).join(''); } };
   const context = { $: () => node, element: (tag, textContent, className) => ({ tag, textContent, className }), document: { createTextNode: textContent => ({ textContent }) } };
   runInNewContext(helper, context); const text = 'Checks 60 seconds after completion · v2 · first 2,000 UTF-16 text units'; context.setText('mixed', text);
   assert.equal(node.textContent, text); assert.deepEqual(node.children.filter(row => row.className === 'mono').map(row => row.textContent), ['60', '2', '2,000', '16']);
   const children = node.children; context.setText('mixed', text); assert.equal(node.children, children, 'Unchanged text keeps its DOM and selection.');
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
-  for (const id of ['last-check', 'model-input-coverage', 'model-verdict-context', 'model-verdict-coverage']) {
+  for (const id of ['last-check', 'model-input-coverage', 'model-verdict-context', 'model-verdict-coverage', 'process-count']) {
     const tag = html.match(new RegExp(`<[^>]+id="${id}"[^>]*>`))?.[0]; assert.match(tag, /data-interface-numbers="true"/); assert.doesNotMatch(tag, /class="[^"]*\bmono\b/);
   }
 });
@@ -201,7 +202,7 @@ test('a hidden verdict returns keyboard focus to visible process state and keyed
   const context = {
     document, $: get, snapshot: { settings: { enabled: true }, entries: [], listener: { busy: true, modelOutput: null, events: [] } },
     processingPresentation, modelOutputPresentation, completedModelPresentation, modelCoverageLabel, reviewFocusPresentation, completionAnnouncement, streamDisconnected: false, rawOpen: false, lastCompletionKey: null, completionFrame: null,
-    setText: (id, value) => { get(id).textContent = value; }, growText: (target, value) => { target.textContent = value; },
+    setText: (id, value) => { get(id).textContent = value; }, interfaceText: (target, value) => { target.textContent = value; }, growText: (target, value) => { target.textContent = value; },
     changed: (key, value) => { const serialized = JSON.stringify(value); if (keys.get(key) === serialized) return false; keys.set(key, serialized); return true; },
     element: (tag, content) => node(tag, content), sourceButton: (_row, title) => node(`source-${++sourceButtons}`, title), when: value => value,
     renderOutputText() {}, positionResponseTools() {}, decisionItems: () => [], reconcileRows() {}, cancelAnimationFrame() {}, requestAnimationFrame: callback => { callback(); return 1; },
@@ -237,6 +238,12 @@ test('a hidden verdict returns keyboard focus to visible process state and keyed
   assert.equal(get('model-draft-head').className, 'sr-only'); assert.equal(get('model-output-status').hidden, true);
   assert.equal(metadata.hidden, false, 'A new stream shows its own source separately from the completed card.');
   assert.match(get('model-verdict-kicker').textContent, /^Earlier/);
+  const lastReported = JSON.stringify(context.snapshot.listener); context.streamDisconnected = true; context.renderProcess();
+  assert.equal(get('review-desk').dataset.state, 'disconnected'); assert.equal(get('review-desk').dataset.live, 'false');
+  assert.equal(get('process-state').textContent, 'Reconnecting'); assert.equal(get('process-stage').hidden, true);
+  assert.match(get('process-message').textContent, /last reported state.*may still be running/);
+  assert.equal(JSON.stringify(context.snapshot.listener), lastReported, 'A disconnected view never aborts or fabricates a terminal model state.');
+  assert.equal(get('model-verdict-reason').textContent, 'Public model wording.'); context.streamDisconnected = false; context.renderProcess();
   acceptedSource.focus(); context.snapshot.listener.busy = false;
   context.snapshot.listener.modelOutput.status = 'complete';
   context.snapshot.listener.lastModelOutput = { ...context.snapshot.listener.modelOutput, decision: 'review', reason: 'Second completed reason.', atUtc: '2026-10-23T10:01:04Z' };
@@ -274,6 +281,24 @@ test('a hidden verdict returns keyboard focus to visible process state and keyed
   assert.equal(get('model-output-status').textContent, 'Needs attention', 'Recovery cannot relabel an actual failed response as stopped or unfinished.');
   context.snapshot.listener.modelOutput.status = 'stopped'; context.renderProcess(); assert.equal(get('model-output-status').textContent, 'Review unfinished');
 
+});
+
+test('native menu uses Electron zoom and window roles without changing the existing close or quit handlers', async () => {
+  const source = await readFile(new URL('../desktop/main.mjs', import.meta.url), 'utf8');
+  const menu = source.slice(source.indexOf('  Menu.setApplicationMenu('), source.indexOf('  await window.loadURL'));
+  let template; const context = { Menu: { buildFromTemplate: value => value, setApplicationMenu: value => { template = value; } }, showJournal() {}, updates: {}, changed() {}, app: {} };
+  runInNewContext(menu, context);
+  const roles = template.flatMap(item => [item.role, ...(item.submenu ?? []).map(child => child.role)]).filter(Boolean);
+  for (const role of ['editMenu', 'resetZoom', 'zoomIn', 'zoomOut', 'windowMenu', 'minimize', 'zoom', 'close']) assert.ok(roles.includes(role));
+  assert.match(source, /window\.on\('close', event => \{ if \(!quitting\) \{ event\.preventDefault\(\); window\.hide\(\); \} \}\)/);
+  assert.ok(template[0].submenu.some(item => item.label === 'Quit Journal and stop Listener'));
+});
+
+test('forced colors preserves explicit checked and selected control outlines with system colors', async () => {
+  const css = await readFile(new URL('../public/styles.css', import.meta.url), 'utf8');
+  const forced = css.slice(css.indexOf('@media(forced-colors:active)'), css.indexOf('\n}', css.indexOf('@media(forced-colors:active)')) + 2);
+  for (const selector of ['.switch-track', '.switch input:checked+.switch-track', '.segmented>label input:checked+span', '.chips input:checked+span', '.entry-card.selected', '.theme-option[aria-checked=true]']) assert.ok(forced.includes(selector));
+  assert.match(forced, /outline:2px solid Highlight/); assert.match(forced, /background:HighlightText/); assert.match(forced, /border:1px solid ButtonText/);
 });
 
 test('a saving clean entry cannot be replaced, closed or navigated away from', async () => {

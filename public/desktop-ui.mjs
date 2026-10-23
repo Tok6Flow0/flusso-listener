@@ -153,8 +153,9 @@ function position(current) {
 }
 
 // `state` is the one coarse word a person scans for; `label` keeps the exact stage.
-export function processingPresentation(listener = {}, enabled = false) {
+export function processingPresentation(listener = {}, enabled = false, { disconnected = false } = {}) {
   const current = listener.processing;
+  if (disconnected) return { state: 'disconnected', title: 'Reconnecting', label: 'Status unavailable', message: 'Live status is unavailable. Showing the last reported state; the Listener may still be running.', tone: 'warn', busy: false, position: null };
   if (listener.busy) {
     const error = current?.stage === 'error';
     return { state: error ? 'error' : 'reviewing', title: error ? 'Needs attention' : 'Reading', label: processStage(current?.stage), message: text(current?.message) || 'Checking Journal entries.', tone: error ? 'warn' : 'info', busy: true, position: position(current) };

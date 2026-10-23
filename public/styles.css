@@ -16,7 +16,7 @@ h1,h2,h3,p,dl,dd{margin:0}
 h1{font:var(--fw-medium) var(--fs-display)/var(--lh-tight) var(--font-serif);letter-spacing:var(--ls-tight)}
 h2{font-size:var(--fs-title-sm);font-weight:var(--fw-semibold);line-height:var(--lh-snug)}
 h3{font-size:var(--fs-body-lg);font-weight:var(--fw-semibold);line-height:var(--lh-snug)}
-code,pre,.mono,time{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+code,pre,.mono{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
 code{font-size:var(--fs-body-sm)}
 pre{margin:0;white-space:pre;font-size:var(--fs-body-sm);line-height:var(--lh-relaxed)}
 svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:0 0 auto}
@@ -341,6 +341,13 @@ tr:last-child td{border-bottom:0}
 .handoff-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
 .handoff-head img{border-radius:5px}
 .handoff-section .detail-meta{margin-bottom:10px}
+@media(forced-colors:active){
+  .switch-track{forced-color-adjust:none;background:Canvas;border:1px solid ButtonText}
+  .switch-track::after{background:ButtonText;box-shadow:none}
+  .switch input:checked+.switch-track{background:Highlight;border-color:Highlight}
+  .switch input:checked+.switch-track::after{background:HighlightText}
+  .segmented>label input:checked+span,.chips input:checked+span,.entry-card.selected,.theme-option[aria-checked=true]{outline:2px solid Highlight;outline-offset:-3px}
+}
 .handoff-section>.hint{max-width:95ch;font-size:var(--fs-body-sm);line-height:var(--lh-relaxed)}
 .ticket-result{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 10px}
 
