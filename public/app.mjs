@@ -102,7 +102,7 @@ function decisionItems(rows, details) {
 // Writes only real changes, so live regions announce a state once rather than on every token.
 function interfaceText(node, value) {
   if (node.textContent === value) return;
-  node.replaceChildren(...value.split(/(\b\d{4}-\d{2}-\d{2}\b|\d+(?:[.,:]\d+)*)/g).map((part, index) => index % 2 ? element('span', part, 'mono') : document.createTextNode(part)));
+  node.replaceChildren(...value.split(/(\b\d{4}-\d{2}-\d{2}\b|[−+-]?\d+(?:[.,:]\d+)*)/g).map((part, index) => index % 2 ? element('span', part, 'mono') : document.createTextNode(part)));
 }
 function setText(id, value) {
   const node = $(id); if (node.textContent === value) return;

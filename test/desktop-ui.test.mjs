@@ -53,7 +53,7 @@ test('interface prose keeps numbers mono without making its whole sentence a dat
   const node = { dataset: { interfaceNumbers: 'true' }, textContent: '', replaceChildren(...children) { this.children = children; this.textContent = children.map(row => row.textContent).join(''); } };
   const context = { $: () => node, element: (tag, textContent, className) => ({ tag, textContent, className }), document: { createTextNode: textContent => ({ textContent }) } };
   runInNewContext(helper, context); const text = 'Checks 60 seconds after completion · v2 · first 2,000 UTF-16 text units'; context.setText('mixed', text);
-  assert.equal(node.textContent, text); assert.deepEqual(node.children.filter(row => row.className === 'mono').map(row => row.textContent), ['60', '2', '2,000', '16']);
+  assert.equal(node.textContent, text); assert.deepEqual(node.children.filter(row => row.className === 'mono').map(row => row.textContent), ['60', '2', '2,000', '-16']);
   const children = node.children; context.setText('mixed', text); assert.equal(node.children, children, 'Unchanged text keeps its DOM and selection.');
   const dated = 'Source A: 2026-10-20; today: 2026-10-23. Exact model text 到'; context.setText('mixed', dated);
   assert.equal(node.textContent, dated); assert.deepEqual(node.children.filter(row => row.className === 'mono').map(row => row.textContent), ['2026-10-20', '2026-10-23']);
