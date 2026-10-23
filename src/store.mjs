@@ -68,7 +68,22 @@ export async function openStore({ directory, vault, encryptionKey, clock = () =>
     settings: () => get('settings', 'main'),
     saveSettings(value) { return transaction(() => { const old = get('settings', 'main'); if (value.version !== old.version) throw new InputError('Settings changed. Reload before saving.', 409); const next = { ...old, ...value, version: old.version + 1 }; put('settings', 'main', next); return next; }); },
     notebooks: () => all('notebook'),
-    createNotebook(name) { const id = randomUUID(), row = { id, name: text(name, 120, 'notebook name').trim(), origin: 'local', version: 1, telegramEnabled: false }; put('notebook', `local:${id}`, row); return row; },
+    createNotebook(name, retryKey = null) { return transaction(() => {
+      const validated = text(name, 120, 'notebook name').trim(); let digest;
+      if (retryKey !== null) {
+        text(retryKey, 200, 'retry key');
+        digest = createHash('sha256').update(JSON.stringify({ operation: 'createNotebook', name: validated })).digest('hex');
+        const retry = get('retry', retryKey);
+        if (retry) {
+          if (retry.operation !== 'createNotebook' || retry.digest !== digest) throw new InputError('Retry key was used for different content.', 409);
+          return retry.notebook;
+        }
+      }
+      const id = randomUUID(), row = { id, name: validated, origin: 'local', version: 1, telegramEnabled: false };
+      put('notebook', `local:${id}`, row);
+      if (retryKey !== null) put('retry', retryKey, { operation: 'createNotebook', digest, notebook: row });
+      return row;
+    }); },
     entries: () => all('entry').sort((a, b) => b.updatedAtUtc.localeCompare(a.updatedAtUtc)),
     entry: (id, origin = 'local') => get('entry', `${origin}:${id}`),
     createEntry(input, retryKey = randomUUID()) { return transaction(() => {

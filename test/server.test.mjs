@@ -294,3 +294,18 @@ test('authenticated status pushes real progress without waiting for a check to f
     await reader.cancel(); await closed;
   } finally { await reader?.cancel().catch(() => {}); await w.close(); }
 });
+
+
+test('a notebook create with a lost committed reply replays the same notebook rather than creating another', async () => {
+  const w = await appFixture(); try {
+    await w.unlock(); const before = w.store.notebooks().length, headers = { 'Idempotency-Key': 'lost-notebook-reply' }, input = { name: 'Exact requested notebook' };
+    const committed = await w.post('/api/notebooks', input, headers); assert.equal(committed.status, 201); await committed.arrayBuffer(); // Reply was not available to the client.
+    const saved = w.store.notebooks().find(row => row.name === input.name);
+    const replay = await w.post('/api/notebooks', input, headers); assert.equal(replay.status, 201); assert.deepEqual(await replay.json(), saved);
+    assert.equal(w.store.notebooks().length, before + 1);
+    assert.equal((await w.post('/api/notebooks', { name: 'Changed request' }, headers)).status, 409);
+    assert.equal((await w.post('/api/entries', note(w.store), headers)).status, 409);
+    const intentional = await w.post('/api/notebooks', input, { 'Idempotency-Key': 'distinct-notebook-intent' }); assert.equal(intentional.status, 201); assert.notEqual((await intentional.json()).id, saved.id);
+    assert.equal(w.store.notebooks().length, before + 2); assert.equal(w.store.all('attempt').length, 0);
+  } finally { await w.close(); }
+});

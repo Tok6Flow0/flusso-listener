@@ -54,7 +54,7 @@ async function api(path, body, headers = {}) {
   let response;
   try { response = await fetch(path, { method: body === undefined ? 'GET' : 'POST', headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json', 'x-flusso-csrf': csrf }), ...headers }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }); }
   catch { throw new Error('Journal could not reach its local service. Keep Journal running, or reopen it to reconnect.'); }
-  const value = await response.json(); if (!response.ok) throw new Error(value.error || 'That did not work. Try again.'); return value;
+  const value = await response.json(); if (!response.ok) throw Object.assign(new Error(value.error || 'That did not work. Try again.'), { status: response.status }); return value;
 }
 async function action(button, work) { if (button?.disabled) return; if (button) button.disabled = true; try { await work(); } catch (error) { notify(error.message, false, true); } finally { if (button) button.disabled = false; } }
 function when(value, seconds = false) { const date = new Date(value); return Number.isFinite(date.getTime()) ? date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', ...(seconds ? { second: '2-digit' } : {}) }) : '—'; }
@@ -889,26 +889,31 @@ $('entry-form').addEventListener('submit', event => {
   notify('Saved.', true);
   } finally { releaseSave(); } });
 });
-let notebookSaving = false;
-$('new-notebook').addEventListener('click', () => { if (!notebookSaving) $('notebook-error').hidden = true; $('notebook-dialog').showModal(); });
+let notebookSaving = false, notebookIntent = null;
+$('new-notebook').addEventListener('click', () => { if (!notebookIntent) $('notebook-error').hidden = true; $('notebook-dialog').showModal(); });
 $('cancel-notebook').addEventListener('click', () => $('notebook-dialog').close());
 $('notebook-form').addEventListener('submit', event => {
   event.preventDefault(); if (notebookSaving) return;
   notebookSaving = true;
-  const input = $('notebook-name'), name = input.value, submit = $('create-notebook');
+  const input = $('notebook-name'), submit = $('create-notebook');
+  notebookIntent ??= { name: input.value, key: crypto.randomUUID() };
+  const intent = notebookIntent;
   input.disabled = submit.disabled = true; $('notebook-form').setAttribute('aria-busy', 'true');
   $('notebook-error').textContent = ''; $('notebook-error').hidden = true;
   action(null, async () => {
     try {
-      try { await api('/api/notebooks', { name }); } catch (error) {
-        $('notebook-error').textContent = error.message; $('notebook-error').hidden = false;
-        if (!$('notebook-dialog').open) notify(error.message, false, true);
+      try { await api('/api/notebooks', { name: intent.name }, { 'Idempotency-Key': intent.key }); } catch (error) {
+        if (error.status >= 400 && error.status < 500) notebookIntent = null;
+        const message = notebookIntent ? `${error.message} Notebook creation is unconfirmed. Retry to check the same request.` : error.message;
+        input.value = intent.name;
+        $('notebook-error').textContent = message; $('notebook-error').hidden = false;
+        if (!$('notebook-dialog').open) notify(message, false, true);
         return;
       }
-      input.value = ''; $('notebook-dialog').close();
+      notebookIntent = null; input.value = ''; $('notebook-dialog').close();
       try { await load({ forms: !formDirty }); } catch { notify('Notebook added, but the list could not refresh. Refresh to see it.', false, true); return; }
       notify('Notebook added.', true);
-    } finally { notebookSaving = false; input.disabled = submit.disabled = false; $('notebook-form').removeAttribute('aria-busy'); }
+    } finally { notebookSaving = false; input.disabled = submit.disabled = false; input.readOnly = Boolean(notebookIntent); submit.textContent = notebookIntent ? 'Retry notebook' : 'Create notebook'; $('notebook-form').removeAttribute('aria-busy'); }
   });
 });
 $('sync').addEventListener('click', event => action(event.currentTarget, async () => { const result = await api('/api/sync', {}); await load(); notify(result.complete ? 'Cloud Journal synced.' : result.reason, result.complete); }));

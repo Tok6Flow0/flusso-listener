@@ -154,3 +154,37 @@ test('a saved 15-minute ticket window is raised to six hours once, and other cho
     } finally { await rm(directory, { recursive: true, force: true }); }
   }
 });
+
+
+test('notebook creation replays an encrypted original reply after close/reopen and binds the operation and name', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'flusso-notebook-retry-')), vault = memoryVault(); let store;
+  try {
+    store = await openStore({ directory, vault });
+    const name = 'Private exact notebook name', count = store.notebooks().length;
+    const saved = store.createNotebook(name, 'stable-notebook-key');
+    assert.deepEqual(store.createNotebook(name, 'stable-notebook-key'), saved); assert.equal(store.notebooks().length, count + 1);
+    assert.throws(() => store.createNotebook('Different name', 'stable-notebook-key'), /different content/);
+    assert.throws(() => store.createEntry(note(store), 'stable-notebook-key'), /different content/);
+    const entry = store.createEntry(note(store), 'entry-only-key');
+    assert.throws(() => store.createNotebook(name, 'entry-only-key'), /different content/);
+    assert.throws(() => store.updateEntry(entry.id, { ...note(store), version: 1 }, 'stable-notebook-key'), /different content/);
+    store.close(); store = await openStore({ directory, vault });
+    assert.deepEqual(store.createNotebook(name, 'stable-notebook-key'), saved); assert.equal(store.notebooks().length, count + 1);
+    const other = store.createNotebook(name, 'intentional-same-name'); assert.notEqual(other.id, saved.id);
+    const retries = store.all('retry').length; store.createNotebook('Internal notebook'); assert.equal(store.all('retry').length, retries);
+    const bytes = await readFile(join(directory, 'journal.db')); assert.equal(bytes.includes(Buffer.from(name)), false);
+    assert.equal(store.all('attempt').length, 0);
+  } finally { store?.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('notebook row and original retry reply commit atomically', async () => {
+  const w = await workspace(); let observer;
+  try {
+    const before = w.store.notebooks(); observer = new DatabaseSync(join(w.directory, 'journal.db'));
+    observer.exec("CREATE TRIGGER refuse_notebook_retry BEFORE INSERT ON records WHEN NEW.kind='retry' AND NEW.id='notebook-atomic-key' BEGIN SELECT RAISE(ABORT,'Synthetic notebook retry refusal'); END;");
+    assert.throws(() => w.store.createNotebook('Atomic notebook', 'notebook-atomic-key'), /Synthetic notebook retry refusal/);
+    assert.deepEqual(w.store.notebooks(), before); assert.equal(w.store.get('retry', 'notebook-atomic-key'), null);
+    observer.exec('DROP TRIGGER refuse_notebook_retry');
+    const saved = w.store.createNotebook('Atomic notebook', 'notebook-atomic-key'); assert.deepEqual(w.store.createNotebook('Atomic notebook', 'notebook-atomic-key'), saved);
+  } finally { observer?.close(); await w.close(); }
+});

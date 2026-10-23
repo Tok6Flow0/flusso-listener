@@ -41,8 +41,10 @@ test('a local service outage explains recovery without exposing raw browser fetc
   const context = { csrf: 'synthetic-csrf', fetch: async () => { throw new TypeError('Failed to fetch'); } };
   runInNewContext(api, context);
   await assert.rejects(context.api('/api/status'), /Journal could not reach its local service.*reopen it to reconnect/);
-  context.fetch = async () => ({ ok: false, json: async () => ({ error: 'The session expired. Reopen Journal.' }) });
-  await assert.rejects(context.api('/api/status'), /The session expired/);
+  context.fetch = async () => ({ ok: false, status: 403, json: async () => ({ error: 'The session expired. Reopen Journal.' }) });
+  await assert.rejects(context.api('/api/status'), error => error.status === 403 && /The session expired/.test(error.message));
+  context.fetch = async () => ({ ok: true, status: 201, json: async () => { throw new SyntaxError('Truncated reply.'); } });
+  await assert.rejects(context.api('/api/notebooks', { name: 'Unconfirmed' }), error => error instanceof SyntaxError && error.status === undefined);
 });
 
 test('interface prose keeps numbers mono without making its whole sentence a data readout', async () => {
@@ -373,7 +375,7 @@ test('native notebook creation retains failures in the dialog and a confirmed sa
     const pending = new Promise(resolve => { release = resolve; });
     const get = id => { if (!nodes.has(id)) nodes.set(id, { value: id === 'notebook-name' ? 'Exact new notebook' : '', hidden: true, disabled: false,
       addEventListener: (event, callback) => callbacks.set(`${id}:${event}`, callback), setAttribute(name, value) { this[name] = value; }, removeAttribute(name) { delete this[name]; }, showModal() { this.open = true; }, close() { this.open = false; } }); return nodes.get(id); };
-    const context = { $: get, formDirty: false, api: async (_path, input) => { requests++; assert.equal(input.name, 'Exact new notebook'); await pending; if (mode === 'refused') throw new Error('Actual create refusal.'); return {}; },
+    const context = { $: get, crypto: { randomUUID: () => 'stable-notebook-key' }, formDirty: false, api: async (_path, input) => { requests++; assert.equal(input.name, 'Exact new notebook'); await pending; if (mode === 'refused') throw Object.assign(new Error('Actual create refusal.'), { status: 400 }); return {}; },
       load: async () => { if (mode === 'refresh-failed') throw new Error('Actual read failure.'); }, notify: (message, success) => notices.push({ message, success }),
       action: (_button, work) => jobs.push(work()) };
     runInNewContext(handlers, context); callbacks.get('new-notebook:click')(); assert.equal(get('notebook-dialog').open, true);
@@ -1030,14 +1032,37 @@ test('dismissed pending notebook creation cannot submit twice and its later refu
     const get = id => { if (!nodes.has(id)) nodes.set(id, { value: id === 'notebook-name' ? 'Retained name' : '', hidden: true, disabled: false,
       addEventListener: (event, callback) => callbacks.set(`${id}:${event}`, callback), setAttribute(name, value) { this[name] = value; }, removeAttribute(name) { delete this[name]; },
       showModal() { this.open = true; }, close() { this.open = false; } }); return nodes.get(id); };
-    const context = { $: get, formDirty: false, api: async () => { requests++; await pending; }, load: async () => assert.fail('A refused create must not refresh or report success.'),
+    const context = { $: get, crypto: { randomUUID: () => 'stable-notebook-key' }, formDirty: false, api: async () => { requests++; await pending; }, load: async () => assert.fail('A refused create must not refresh or report success.'),
       action: (_button, work) => jobs.push(work()), notify: (message, success, error) => notices.push({ message, success, error }) };
     runInNewContext(handlers, context); callbacks.get('new-notebook:click')(); const submit = () => callbacks.get('notebook-form:submit')({ preventDefault() {}, submitter: get('create-notebook') });
     submit(); if (dismiss === 'cancel') callbacks.get('cancel-notebook:click')(); else get('notebook-dialog').close();
     callbacks.get('new-notebook:click')(); submit(); assert.equal(requests, 1); assert.equal(get('notebook-name').disabled, true);
-    get('notebook-dialog').close(); reject(new Error('The actual create request was refused.')); await jobs[0];
+    get('notebook-dialog').close(); reject(Object.assign(new Error('The actual create request was refused.'), { status: 400 })); await jobs[0];
     assert.equal(get('notebook-dialog').open, false); assert.equal(get('notebook-name').value, 'Retained name'); assert.equal(get('notebook-name').disabled, false); assert.equal(get('create-notebook').disabled, false);
     assert.deepEqual(notices, [{ message: 'The actual create request was refused.', success: false, error: true }]);
-    assert.equal(requests, 1); callbacks.get('new-notebook:click')(); assert.equal(get('notebook-name').value, 'Retained name');
+    assert.equal(requests, 1); assert.equal(get('notebook-name').readOnly, false, 'A definitive refusal releases the request for correction.'); callbacks.get('new-notebook:click')(); assert.equal(get('notebook-name').value, 'Retained name');
+  }
+});
+
+
+test('an uncertain notebook create retains its original request through dismissal and exact retry; a confirmed save releases it', async () => {
+  const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
+  const handlers = source.slice(source.indexOf('let notebookSaving'), source.indexOf("$('sync').addEventListener"));
+  for (const failure of [new TypeError('Network reply lost.'), new SyntaxError('Reply could not be parsed.'), Object.assign(new Error('Server result unavailable.'), { status: 500 })]) {
+    const callbacks = new Map(), nodes = new Map(), jobs = [], notices = [], requests = []; let key = 0, reject;
+    const pending = new Promise((_resolve, refuse) => { reject = refuse; });
+    const get = id => { if (!nodes.has(id)) nodes.set(id, { value: id === 'notebook-name' ? 'Original requested name' : '', hidden: true, disabled: false,
+      addEventListener: (event, callback) => callbacks.set(`${id}:${event}`, callback), setAttribute(name, value) { this[name] = value; }, removeAttribute(name) { delete this[name]; }, showModal() { this.open = true; }, close() { this.open = false; } }); return nodes.get(id); };
+    const context = { $: get, crypto: { randomUUID: () => `intent-${++key}` }, formDirty: false,
+      api: async (path, body, headers) => { requests.push({ path, body: { ...body }, headers: { ...headers } }); if (requests.length === 1) await pending; return { id: 'committed-notebook' }; },
+      load: async () => { throw new Error('Readback unavailable after confirmed save.'); }, action: (_button, work) => jobs.push(work()), notify: (message, success, error) => notices.push({ message, success, error }) };
+    runInNewContext(handlers, context); const submit = () => callbacks.get('notebook-form:submit')({ preventDefault() {}, submitter: get('create-notebook') });
+    callbacks.get('new-notebook:click')(); submit(); callbacks.get('cancel-notebook:click')(); reject(failure); await jobs[0];
+    assert.equal(get('notebook-name').readOnly, true); assert.equal(get('notebook-name').value, 'Original requested name'); assert.match(notices[0].message, /unconfirmed/);
+    callbacks.get('new-notebook:click')(); get('notebook-name').value = 'Changed DOM must not change retry'; submit(); await jobs[1];
+    assert.equal(requests.length, 2); assert.deepEqual(requests[1], requests[0]); assert.equal(requests[0].headers['Idempotency-Key'], 'intent-1');
+    assert.equal(get('notebook-name').readOnly, false); assert.equal(get('notebook-name').value, ''); assert.match(notices.at(-1).message, /Notebook added, but the list could not refresh/);
+    callbacks.get('new-notebook:click')(); get('notebook-name').value = 'Original requested name'; submit(); await jobs[2];
+    assert.equal(requests[2].headers['Idempotency-Key'], 'intent-2', 'An intentional same-named notebook is a new operation after confirmed success.');
   }
 });
