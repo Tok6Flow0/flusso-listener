@@ -20,8 +20,8 @@ export function parseMarkdown(markdown) {
       while (cursor < lines.length && lines[cursor].trim() && lines[cursor].includes('|')) { const row = splitRow(lines[cursor++]); while (row.length < head.length) row.push(''); rows.push(row.slice(0, head.length)); }
       blocks.push({ type: 'table', head, rows }); index = cursor - 1; continue;
     }
-    const heading = /^(#{2,3})\s+(.+)$/.exec(trimmed);
-    if (heading) { flush(); blocks.push({ type: `h${heading[1].length}`, text: heading[2] }); continue; }
+    const heading = /^(#{1,3})\s+(.+)$/.exec(trimmed);
+    if (heading) { flush(); blocks.push({ type: heading[1].length <= 2 ? 'h2' : 'h3', text: heading[2] }); continue; }
     const unordered = /^[-*•]\s+(.+)$/.exec(trimmed), ordered = /^(\d+)[.)]\s+(.+)$/.exec(trimmed);
     if (unordered || ordered) {
       if (paragraph.length) { blocks.push({ type: 'p', text: paragraph.join(' ') }); paragraph = []; }

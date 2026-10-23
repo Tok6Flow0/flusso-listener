@@ -56,6 +56,7 @@
         <div class="head-actions">
           <label>Notebook<select id="journal-filter"><option value="">All notebooks</option></select></label>
           <label>Listener result<select id="result-filter"></select></label>
+          <details class="notebook-tools"><summary>New notebook</summary><form id="notebook-form" class="notebook-form"><label class="sr-only" for="notebook-name">Notebook name</label><input id="notebook-name" placeholder="Notebook name" maxlength="120" required><button type="submit" class="icon-button" aria-label="Add notebook" title="Add notebook"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg></button></form></details>
           <button id="sync" type="button" class="icon-button" title="Sync cloud Journal" aria-label="Sync cloud Journal"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16 10a6 6 0 0 1-10.4 4.1M4 10a6 6 0 0 1 10.4-4.1"/><path d="M14.5 2.5v3.6h-3.6M5.5 17.5v-3.6h3.6"/></svg></button>
           <button id="new-entry" type="button" class="primary"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg>New entry</button>
         </div>
@@ -64,7 +65,6 @@
       <div class="journal-layout">
         <div class="entry-pane">
           <div class="entry-list" id="entry-list" role="region" aria-label="Journal entries"></div>
-          <form id="notebook-form" class="notebook-form"><label class="sr-only" for="notebook-name">New notebook</label><input id="notebook-name" placeholder="New notebook" maxlength="120" required><button type="submit" class="icon-button" aria-label="Add notebook" title="Add notebook"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg></button></form>
         </div>
         <article class="entry-detail" id="entry-detail" tabindex="-1" aria-label="Selected entry"><div class="empty-art"><img src="/flusso-mark.png" alt="" width="40" height="40"><p>Pick an entry or write a new one.</p></div></article>
         <section id="editor" class="editor" aria-labelledby="editor-title" hidden>
@@ -99,9 +99,9 @@
             </div>
           </header>
           <div class="output-frame" id="output-frame" data-status="none">
+            <h2 id="model-output-heading" class="sr-only" tabindex="-1">Model output</h2>
             <aside id="latest-check" class="latest-check hint" aria-label="Last check outcome" hidden><div class="detail-meta"><strong id="latest-check-label"></strong><time id="latest-check-time" class="detail-facts" data-interface-numbers="true"></time></div><p id="latest-check-reason"></p></aside>
             <div class="output-head">
-              <h2 id="model-output-heading" class="sr-only" tabindex="-1">Model output</h2>
               <span id="model-output-status" class="output-status">Loading</span>
               <p id="model-completion" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
             </div>

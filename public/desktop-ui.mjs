@@ -66,7 +66,7 @@ export function entryCardPresentation(entry, { book = '', time = '', selected = 
     id: entry.id, origin: entry.origin, title: entry.title, status: entry.status,
     book, time, selected,
     outcome: entry.ticket?.error ? ticket : result && { label: `${check ? 'Earlier response: ' : ''}${result.label}${revision ? ` · ${revision.label}` : ''}`, tone: check ? '' : result.tone },
-    check: check && { ...check, label: `Latest check: ${check.label}` },
+    check,
   };
 }
 
@@ -93,9 +93,9 @@ export function entryReadingCore(entry, book = '') {
 const RESULT = { submitted: ['submitted', 'pos'], partial: ['partly submitted', 'warn'], blocked: ['refused', 'neg'], unknown: ['unconfirmed', 'warn'], pending: ['submitting', 'info'], sending: ['submitting', 'info'], processing: ['reviewing', 'info'], review: ['not submitted', 'warn'], waiting: ['waiting', 'warn'], resolved: ['owner resolved', ''] };
 const DECISION = { candidate: ['flagged', 'info'], review: ['review suggested', 'info'], ignore: ['no action', ''], ticket: ['ticket', 'info'] };
 export function activityStatus(row = {}, { historical = false } = {}) {
-  if (historical && row.kind === 'research_check' && ['waiting', 'processing'].includes(row.status)) return { label: row.reviewStatus === 'failed' ? 'earlier review failed' : 'earlier review unfinished', tone: '' };
-  if (row.kind === 'research_check' && row.status === 'waiting') return { label: row.reviewStatus === 'failed' ? 'needs attention' : 'review unfinished', tone: 'warn' };
-  if (row.status === 'processing' && row.decision !== 'ticket' && row.activeReview !== true) return { label: 'review unfinished', tone: 'warn' };
+  if (historical && row.kind === 'research_check' && ['waiting', 'processing'].includes(row.status)) return { label: row.reviewStatus === 'failed' ? 'earlier check failed' : 'earlier check unfinished', tone: '' };
+  if (row.kind === 'research_check' && row.status === 'waiting') return { label: row.reviewStatus === 'failed' ? 'check failed' : 'check unfinished', tone: 'warn' };
+  if (row.status === 'processing' && row.decision !== 'ticket' && row.activeReview !== true) return { label: 'check unfinished', tone: 'warn' };
   const [label, tone] = RESULT[row.status] ?? (row.status === 'observed' ? DECISION[row.decision] : null) ?? [text(row.status) || 'noted', ''];
   return { label, tone };
 }
@@ -162,10 +162,10 @@ export function processingPresentation(listener = {}, enabled = false, { disconn
     return { state: error ? 'error' : 'reviewing', title: error ? 'Needs attention' : 'Reading', label: processStage(current?.stage), message: text(current?.message) || 'Checking Journal entries.', tone: error ? 'warn' : 'info', busy: true, position: position(current) };
   }
   if (!enabled) return { state: 'off', title: 'Off', label: 'Listener off', message: 'Turn on the Listener to run a check.', tone: '', busy: false, position: null };
-  if (listener.lastError) return { state: 'error', title: 'Needs attention', label: 'Needs attention', message: text(listener.lastError), tone: 'warn', busy: false, position: null };
+  if (listener.lastError) return { state: 'error', title: listener.modelReview?.status === 'failed' ? 'Check failed' : 'Needs attention', label: 'Needs attention', message: text(listener.lastError), tone: 'warn', busy: false, position: null };
   if (listener.modelRecovery) return { state: 'ready', title: 'Model ready', label: 'Model ready', message: text(current?.message), tone: '', busy: false, position: null };
-  if (listener.modelReview?.restored && listener.modelReview.status === 'failed') return { state: 'error', title: 'Last check failed', label: 'Last check failed', message: text(listener.modelReview.reason), tone: 'warn', busy: false, position: null };
-  if (listener.modelReview?.restored && listener.modelReview.status === 'stopped') return { state: 'paused', title: 'Review unfinished', label: 'Review unfinished', message: text(listener.modelReview.reason), tone: 'warn', busy: false, position: null };
+  if (listener.modelReview?.restored && listener.modelReview.status === 'failed') return { state: 'error', title: 'Check failed', label: 'Check failed', message: text(listener.modelReview.reason), tone: 'warn', busy: false, position: null };
+  if (listener.modelReview?.restored && listener.modelReview.status === 'stopped') return { state: 'paused', title: 'Check unfinished', label: 'Check unfinished', message: text(listener.modelReview.reason), tone: 'warn', busy: false, position: null };
   if (current?.stage === 'paused') return { state: 'paused', title: 'Paused', label: 'Paused', message: text(current.message) || 'The last check paused before it finished.', tone: 'warn', busy: false, position: null };
   if (listener.modelReview?.status === 'not_run') return { state: 'ready', title: 'No model run', label: 'No model run', message: text(listener.modelReview.reason), tone: '', busy: false, position: null };
   if (listener.modelReview?.status === 'skipped') return { state: 'paused', title: 'Review skipped', label: 'Review skipped', message: text(listener.modelReview.reason), tone: 'warn', busy: false, position: null };
@@ -234,7 +234,7 @@ export function streamedReason(source) {
   }
 }
 
-const OUTPUT_STATUS = { streaming: ['Streaming', 'info'], complete: ['Complete', ''], failed: ['Needs attention', 'warn'], stopped: ['Review unfinished', 'warn'] };
+const OUTPUT_STATUS = { streaming: ['Streaming', 'info'], complete: ['Complete', ''], failed: ['Check failed', 'warn'], stopped: ['Check unfinished', 'warn'] };
 // The streamed text is kept exactly as received. Until that same run completes and
 // the Listener publishes its validated decision, only the model's own reason words
 // are lifted out of it, as a draft that is never labelled or styled as a decision.
@@ -281,7 +281,7 @@ export function latestCheckPresentation(listener = {}) {
   const review = listener.modelReview;
   if (listener.busy || !review || !['failed', 'stopped', 'skipped'].includes(review.status)) return null;
   const finished = Number.isFinite(Date.parse(review.completedAtUtc)), clock = finished ? review.completedAtUtc : review.startedAtUtc;
-  return { label: review.status === 'failed' ? 'Last check failed' : review.status === 'stopped' ? 'Last check unfinished' : 'Last research review skipped',
+  return { label: review.status === 'failed' ? 'Check failed' : review.status === 'stopped' ? 'Check unfinished' : 'Research review skipped',
     reason: text(review.reason) || text(listener.lastError) || 'No completed result was recorded for this check.',
     clock: Number.isFinite(Date.parse(clock)) ? clock : null, clockLabel: finished ? 'Finished' : 'Recorded' };
 }
@@ -289,8 +289,8 @@ export function latestCheckPresentation(listener = {}) {
 export function activityMetadata(row, source = null) {
   const revision = listenerRevisionPresentation({ version: source?.version, listener: row })?.label
     ?? (Number.isSafeInteger(row.version) && row.version > 0 ? `v${formatCount(row.version)}` : 'revision unknown');
-  const completed = row.status === 'observed' && Number.isFinite(Date.parse(row.completedAtUtc));
-  return { revision, clock: completed ? row.completedAtUtc : row.atUtc, clockLabel: completed ? 'Completed' : 'Recorded',
+  const completed = row.status === 'observed' && Number.isFinite(Date.parse(row.completedAtUtc)), finished = row.kind === 'research_check' && ['failed', 'stopped'].includes(row.reviewStatus) && Number.isFinite(Date.parse(row.completedAtUtc));
+  return { revision, clock: completed || finished ? row.completedAtUtc : row.atUtc, clockLabel: completed ? 'Completed' : finished ? 'Finished' : 'Recorded',
     historical: Boolean(source && Number.isSafeInteger(row.version) && row.version > 0 && row.version < source.version) };
 }
 
@@ -320,7 +320,7 @@ export function completionAnnouncement(view, output, previousKey = null, error =
   if (!outcome) return null;
   const key = JSON.stringify(outcome);
   if (key === previousKey) return null;
-  return { key, message: error ? `Check needs attention. ${error}`
+  return { key, message: error ? `${view.status === 'failed' ? 'Check failed' : 'Check needs attention'}. ${error}`
     : view.accepted ? `Review complete: ${view.verdict.label}.` : `${view.label}. No decision was accepted.` };
 }
 

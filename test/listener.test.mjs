@@ -300,6 +300,8 @@ test('settings changes during model classification abort and do not checkpoint t
     const pending = listener.tick(); while (!release) await new Promise(resolve => setImmediate(resolve));
     enable(w.store, { section: 'Different heading' }); listener.refresh(); release(await candidate()); await pending;
     assert.equal(w.store.get('checkpoint', `local:${entry.id}`), null);
+    const stopped = w.store.all('activity').find(row => row.kind === 'research_check');
+    assert.equal(stopped.reviewStatus, 'stopped'); assert.equal(stopped.completedAtUtc, new Date(now).toISOString());
   } finally { listener.stop(); await w.close(); }
 });
 test('first cloud sync baselines imported notes; a changed old note is discovered by the next full scan', async () => {
@@ -548,6 +550,7 @@ test('a failed streamed answer retains its partial text as failed and leaves the
     enable(w.store); listener.start(); const entry = w.store.createEntry(note(w.store)); await listener.tick();
     assert.equal(listener.status().modelOutput.status, 'failed'); assert.equal(listener.status().modelOutput.text, 'unfinished response');
     assert.equal(listener.status().lastModelOutput, null); assert.equal(w.store.get('checkpoint', `local:${entry.id}`), null);
+    assert.equal(w.store.all('activity').find(row => row.kind === 'research_check').completedAtUtc, new Date(now).toISOString());
   } finally { await listener.stop(); await w.close(); }
 });
 

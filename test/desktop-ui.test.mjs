@@ -81,12 +81,12 @@ test('the Journal reader shows the current check before the preserved completed 
   const all = node => [node, ...node.children.flatMap(all)];
   assert.ok(all(check).some(node => node.textContent === 'Latest research check')); assert.ok(all(check).some(node => node.textContent === 'Actual latest failure.'));
   assert.ok(all(check).some(node => node.tag === 'time' && node.textContent === `Recorded ${recorded}/seconds · v2` && node.className === 'detail-facts'));
-  assert.ok(all(live).some(node => node.textContent === 'Completed research response')); assert.ok(all(live).some(node => node.textContent === 'Preserved accepted words.'));
+  assert.ok(all(live).some(node => node.textContent === 'Earlier response')); assert.ok(all(live).some(node => node.textContent === 'Preserved accepted words.'));
   assert.ok(all(live).some(node => node.textContent === 'Preserved accepted words.' && node.className === 'verdict-reason'), 'The same published words use the Listener prose style.');
   const metadataLine = all(live).find(node => node.className === 'detail-meta');
-  assert.ok(metadataLine.children.some(node => node.textContent === 'Listener off'), 'System state belongs with metadata, separately from the untouched model prose.');
+  assert.ok(!metadataLine.children.some(node => node.textContent === 'Listener off'), 'Current Off state must not be presented as the historical response state.');
   const disclosure = all(live).find(node => node.tag === 'details' && node.children[0]?.textContent === 'Review details');
-  assert.ok(disclosure); assert.ok(all(disclosure).some(node => node.textContent === row.handoff.reason), 'Secondary historical context stays inside a compact disclosure.');
+  assert.ok(disclosure); assert.ok(all(disclosure).some(node => node.textContent === `Current Listener context: ${row.handoff.reason}`), 'Current handoff context is explicitly distinct from the historical response.');
   assert.ok(all(live).some(node => node.tag === 'time' && node.textContent === `Completed ${completed}/seconds`));
   row.listener = { ...row.listener, completedAtUtc: null }; context.renderDetail();
   assert.ok(all(live).some(node => node.tag === 'time' && node.textContent === 'Recorded 2026-10-23T10:00:00Z/seconds'), 'Legacy records retain their recorded clock without an invented completion.');
@@ -286,15 +286,15 @@ test('a hidden verdict returns keyboard focus to visible process state and keyed
   context.snapshot.listener.lastModelOutput = null;
   context.snapshot.listener.modelReview = { id: 'recovered', status: 'failed' }; context.snapshot.listener.modelRecovery = { checkId: 'recovered' };
   context.snapshot.listener.modelOutput = { ...output, checkId: 'recovered', status: 'failed' }; context.renderProcess();
-  assert.equal(get('model-output-status').textContent, 'Needs attention', 'Recovery cannot relabel an actual failed response as stopped or unfinished.');
-  context.snapshot.listener.modelOutput.status = 'stopped'; context.renderProcess(); assert.equal(get('model-output-status').textContent, 'Review unfinished');
+  assert.equal(get('model-output-status').textContent, 'Check failed', 'Recovery cannot relabel an actual failed response as stopped or unfinished.');
+  context.snapshot.listener.modelOutput.status = 'stopped'; context.renderProcess(); assert.equal(get('model-output-status').textContent, 'Check unfinished');
   context.snapshot.settings.enabled = false;
   context.snapshot.listener.modelRecovery = null; context.snapshot.listener.modelOutput = null;
   context.snapshot.listener.modelReview = { id: 'latest-failed', status: 'failed', restored: true, startedAtUtc: '2026-10-23T10:02:00Z', completedAtUtc: '2026-10-23T10:02:04Z', reason: 'The actual latest model failure.' };
   context.snapshot.listener.lastModelOutput = { ...output, checkId: 'earlier-accepted', status: 'complete', decision: 'review', reason: 'Earlier actual model words.', atUtc: '2026-10-23T10:00:04Z' };
   context.renderProcess();
   assert.equal(get('process-state').textContent, 'Off'); assert.equal(get('latest-check').hidden, false);
-  assert.equal(get('latest-check-label').textContent, 'Last check failed'); assert.equal(get('latest-check-reason').textContent, 'The actual latest model failure.');
+  assert.equal(get('latest-check-label').textContent, 'Check failed'); assert.equal(get('latest-check-reason').textContent, 'The actual latest model failure.');
   assert.equal(get('latest-check-time').textContent, 'Finished 2026-10-23T10:02:04Z');
   assert.equal(get('model-verdict-reason').textContent, 'Earlier actual model words.'); assert.match(get('model-verdict-kicker').textContent, /^Earlier/);
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
@@ -307,9 +307,9 @@ test('last-check summary uses only retained terminal evidence and distinguishes 
   const { latestCheckPresentation } = await import('../public/desktop-ui.mjs');
   const review = { id: 'check', status: 'failed', reason: 'The actual recorded failure.', startedAtUtc: '2026-10-23T10:00:00Z', completedAtUtc: '2026-10-23T10:00:03Z' };
   const listener = { busy: false, modelReview: review }, before = JSON.stringify(listener);
-  assert.deepEqual(latestCheckPresentation(listener), { label: 'Last check failed', reason: review.reason, clock: review.completedAtUtc, clockLabel: 'Finished' });
+  assert.deepEqual(latestCheckPresentation(listener), { label: 'Check failed', reason: review.reason, clock: review.completedAtUtc, clockLabel: 'Finished' });
   assert.equal(latestCheckPresentation({ ...listener, busy: true }), null);
-  assert.deepEqual(latestCheckPresentation({ modelReview: { ...review, status: 'stopped', completedAtUtc: null } }), { label: 'Last check unfinished', reason: review.reason, clock: review.startedAtUtc, clockLabel: 'Recorded' });
+  assert.deepEqual(latestCheckPresentation({ modelReview: { ...review, status: 'stopped', completedAtUtc: null } }), { label: 'Check unfinished', reason: review.reason, clock: review.startedAtUtc, clockLabel: 'Recorded' });
   assert.equal(latestCheckPresentation({ modelReview: { status: 'failed' } }).clock, null);
   assert.equal(latestCheckPresentation({ modelReview: { ...review, status: 'complete' } }), null);
   assert.equal(JSON.stringify(listener), before);
@@ -324,6 +324,29 @@ test('native menu uses Electron zoom and window roles without changing the exist
   for (const role of ['editMenu', 'resetZoom', 'zoomIn', 'zoomOut', 'windowMenu', 'minimize', 'zoom', 'close']) assert.ok(roles.includes(role));
   assert.match(source, /window\.on\('close', event => \{ if \(!quitting\) \{ event\.preventDefault\(\); window\.hide\(\); \} \}\)/);
   assert.ok(template[0].submenu.some(item => item.label === 'Quit Journal and stop Listener'));
+});
+
+test('output heading precedes its outcome and notebook creation lives in the existing library header disclosure', async () => {
+  const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  assert.ok(html.indexOf('id="model-output-heading"') < html.indexOf('id="latest-check"'));
+  assert.equal((html.match(/id="model-output-heading"/g) ?? []).length, 1);
+  const journal = html.slice(html.indexOf('id="view-journal"'), html.indexOf('id="view-listener"'));
+  const header = journal.slice(0, journal.indexOf('</header>'));
+  assert.match(header, /<details class="notebook-tools"><summary>New notebook<\/summary><form id="notebook-form"/);
+  assert.equal((journal.match(/id="notebook-form"/g) ?? []).length, 1);
+  assert.ok(journal.indexOf('id="notebook-form"') < journal.indexOf('class="journal-layout"'));
+  const pane = journal.slice(journal.indexOf('class="entry-pane"'), journal.indexOf('<article class="entry-detail"'));
+  assert.doesNotMatch(pane, /notebook-form/);
+});
+
+test('research outcome vocabulary is consistent and Finished is used only with an actual terminal clock', async () => {
+  const { activityStatus, activityMetadata, modelOutputPresentation, latestCheckPresentation, completionAnnouncement } = await import('../public/desktop-ui.mjs');
+  const failure = { kind: 'research_check', status: 'waiting', reviewStatus: 'failed', version: 2, atUtc: '2026-10-23T10:00:00Z', completedAtUtc: '2026-10-23T10:00:03Z' };
+  assert.equal(activityStatus(failure).label, 'check failed'); assert.equal(modelOutputPresentation({ status: 'failed' }).label, 'Check failed');
+  assert.equal(latestCheckPresentation({ modelReview: { status: 'failed', completedAtUtc: failure.completedAtUtc } }).label, 'Check failed');
+  assert.equal(activityMetadata(failure).clockLabel, 'Finished'); assert.equal(activityMetadata(failure).clock, failure.completedAtUtc);
+  assert.equal(activityMetadata({ ...failure, completedAtUtc: null }).clockLabel, 'Recorded'); assert.equal(activityMetadata({ ...failure, completedAtUtc: null }).clock, failure.atUtc);
+  assert.match(completionAnnouncement(modelOutputPresentation({ status: 'failed' }), { status: 'failed' }, null, 'Actual model failure.').message, /^Check failed\. Actual model failure\./);
 });
 
 test('forced colors preserves explicit checked and selected control outlines with system colors', async () => {
@@ -454,7 +477,7 @@ test('legacy empty reasons remain unavailable and saved review focus never comes
   assert.equal(reviewFocusPresentation({ kind: 'default', text: 'Saved default goal.' }, { prepared: true }).label, 'Prepared focus: Default research review');
   const entry = { version: 3, listener: { status: 'observed', decision: 'review', version: 2, reason: 'Prior accepted reason.' }, listenerCheck: { kind: 'research_check', status: 'waiting', reviewStatus: 'failed', version: 3 } };
   const card = entryCardPresentation(entry);
-  assert.equal(card.outcome.label, 'Earlier response: review suggested · prior v2'); assert.equal(card.check.label, 'Latest check: needs attention');
+  assert.equal(card.outcome.label, 'Earlier response: review suggested · prior v2'); assert.equal(card.check.label, 'check failed');
   assert.equal(card.outcome.tone, '', 'The retained answer is secondary to the latest failed check.');
   assert.equal(matchesResultFilter(entry, 'decided'), true, 'The failed current check does not replace accepted review/filter truth.');
 });
@@ -462,7 +485,7 @@ test('legacy empty reasons remain unavailable and saved review focus never comes
 test('long entry result labels retain their full current/prior meaning and wrap only inside entry tags', async () => {
   const { entryCardPresentation } = await import('../public/desktop-ui.mjs');
   const card = entryCardPresentation({ version: 2147483647, listener: { version: 2147483646, status: 'observed', decision: 'review', reason: 'Saved response.' }, listenerCheck: { kind: 'research_check', status: 'waiting', reviewStatus: 'failed', version: 2147483647 } });
-  assert.equal(card.check.label, 'Latest check: needs attention');
+  assert.equal(card.check.label, 'check failed');
   assert.equal(card.outcome.label, 'Earlier response: review suggested · prior v2,147,483,646');
   const css = await readFile(new URL('../public/styles.css', import.meta.url), 'utf8');
   const entryRule = css.match(/\.entry-card \.tags \.pill\{([^}]+)\}/)?.[1];
@@ -473,22 +496,22 @@ test('long entry result labels retain their full current/prior meaning and wrap 
 test('inactive durable research progress says unfinished while the actual active review and ticket states retain their labels', async () => {
   const { activityStatus, listenerResult, modelOutputPresentation } = await import('../public/desktop-ui.mjs');
   const progress = { kind: 'research_check', status: 'processing' };
-  assert.equal(activityStatus({ ...progress, activeReview: false }).label, 'review unfinished');
-  assert.equal(activityStatus(progress).label, 'review unfinished');
-  assert.equal(activityStatus({ status: 'processing' }).label, 'review unfinished', 'Legacy progress without live-check proof cannot claim an active model.');
-  assert.equal(listenerResult({ ticket: null, listener: { status: 'processing' } }).label, 'review unfinished');
+  assert.equal(activityStatus({ ...progress, activeReview: false }).label, 'check unfinished');
+  assert.equal(activityStatus(progress).label, 'check unfinished');
+  assert.equal(activityStatus({ status: 'processing' }).label, 'check unfinished', 'Legacy progress without live-check proof cannot claim an active model.');
+  assert.equal(listenerResult({ ticket: null, listener: { status: 'processing' } }).label, 'check unfinished');
   assert.equal(activityStatus({ ...progress, activeReview: true }).label, 'reviewing');
-  assert.equal(listenerResult({ ticket: null, listener: { ...progress, activeReview: false } }).label, 'review unfinished');
+  assert.equal(listenerResult({ ticket: null, listener: { ...progress, activeReview: false } }).label, 'check unfinished');
   assert.equal(listenerResult({ ticket: null, listener: { ...progress, activeReview: true } }).label, 'reviewing');
   assert.equal(activityStatus({ status: 'processing', decision: 'ticket' }).label, 'reviewing');
   assert.equal(activityStatus({ status: 'unknown', kind: 'orders' }).label, 'unconfirmed');
-  assert.equal(activityStatus({ kind: 'research_check', status: 'waiting', reviewStatus: 'failed' }).label, 'needs attention');
-  assert.equal(activityStatus({ kind: 'research_check', status: 'waiting', reviewStatus: 'stopped' }).label, 'review unfinished');
-  assert.deepEqual(activityStatus({ kind: 'research_check', status: 'waiting', reviewStatus: 'failed' }, { historical: true }), { label: 'earlier review failed', tone: '' });
+  assert.equal(activityStatus({ kind: 'research_check', status: 'waiting', reviewStatus: 'failed' }).label, 'check failed');
+  assert.equal(activityStatus({ kind: 'research_check', status: 'waiting', reviewStatus: 'stopped' }).label, 'check unfinished');
+  assert.deepEqual(activityStatus({ kind: 'research_check', status: 'waiting', reviewStatus: 'failed' }, { historical: true }), { label: 'earlier check failed', tone: '' });
   assert.equal(activityStatus({ kind: 'orders', decision: 'ticket', status: 'waiting' }, { historical: true }).label, 'waiting');
   assert.equal(activityStatus({ kind: 'orders', decision: 'ticket', status: 'waiting' }).label, 'waiting');
-  assert.equal(modelOutputPresentation({ status: 'failed' }).label.toLowerCase(), 'needs attention');
-  assert.equal(modelOutputPresentation({ status: 'stopped' }).label.toLowerCase(), 'review unfinished');
+  assert.equal(modelOutputPresentation({ status: 'failed' }).label.toLowerCase(), 'check failed');
+  assert.equal(modelOutputPresentation({ status: 'stopped' }).label.toLowerCase(), 'check unfinished');
 });
 
 test('Activity metadata identifies source revisions and uses only known completion clocks', async () => {

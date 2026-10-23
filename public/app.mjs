@@ -744,17 +744,17 @@ function renderDetail() {
   const revision = listenerRevisionPresentation(row);
   if (row.handoff || (!row.ticket && row.listener?.status === 'observed')) {
     const section = element('aside', null, 'detail-section handoff-section'), title = element('div', null, 'handoff-head'), mark = element('img');
-    mark.src = '/flusso-mark.png'; mark.alt = ''; mark.width = mark.height = 18; title.append(mark, element('h3', !row.ticket && row.listener?.status === 'observed' ? 'Completed research response' : 'Listener status')); section.append(title);
+    const earlierResponse = Boolean(row.listenerCheck) || Number.isSafeInteger(row.listener?.version) && row.listener.version < row.version;
+    mark.src = '/flusso-mark.png'; mark.alt = ''; mark.width = mark.height = 18; title.append(mark, element('h3', !row.ticket && row.listener?.status === 'observed' ? earlierResponse ? 'Earlier response' : 'Completed research response' : 'Listener status')); section.append(title);
     const review = listenerResult(row);
     if (!row.ticket && row.listener?.status === 'observed' && review) {
       const metadata = activityMetadata(row.listener, row), line = element('div', null, 'detail-meta'), at = element('time', `${metadata.clockLabel} ${when(metadata.clock, true)}`, 'detail-facts'); at.dateTime = metadata.clock ?? '';
       line.append(pill(review.label, review.tone), at); section.append(line, element('p', activityReason(row.listener), 'verdict-reason'));
-      if (row.handoff?.context?.listenerEnabled === false) line.append(element('span', 'Listener off', 'hint'));
       const focus = reviewFocusPresentation(row.listener.focus), details = element('details');
       details.append(element('summary', 'Review details'));
       if (revision) details.append(element('p', revision.note, 'hint interface-numbers'));
       details.append(element('p', focus.label, 'hint'), element('p', focus.text, 'focus-copy'));
-      if (row.handoff) details.append(element('p', row.handoff.reason, 'hint'));
+      if (row.handoff) details.append(element('p', `Current Listener context: ${row.handoff.reason}`, 'hint'));
       section.append(details);
     }
     else if (row.handoff) section.append(element('p', row.handoff.reason, 'hint'));

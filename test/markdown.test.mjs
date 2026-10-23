@@ -10,12 +10,19 @@ test('HTML and remote image syntax stay inert text rather than becoming HTML blo
   const text = '<script>globalThis.injected=true</script>\n<img src="https://example.com/track">\n![image](https://example.com/track)';
   const blocks = parseMarkdown(text); assert.equal(blocks.length, 1); assert.equal(blocks[0].type, 'p'); assert.match(blocks[0].text, /<script>/);
 });
+test('a source H1 renders as an in-article section heading while preserving its title and inert HTML boundary', () => {
+  const blocks = parseMarkdown('# Findings\n\n## Evidence\n\n### Source\n\n# <script>unchanged text</script>');
+  assert.deepEqual(blocks.map(block => block.type), ['h2', 'h2', 'h3', 'h2']);
+  assert.equal(blocks[0].text, 'Findings'); assert.equal(blocks[3].text, '<script>unchanged text</script>');
+  assert.ok(!blocks.some(block => block.type === 'h1'), 'Journal retains its one page title.');
+});
 test('rendered ISO dates and signed decimals preserve exact prose and leave sentence punctuation outside numeric spans', () => {
   const previous = globalThis.document;
   const element = tag => ({ tag, children: [], value: '', append(...children) { this.children.push(...children); }, replaceChildren(...children) { this.children = children; this.value = ''; },
     get textContent() { return this.value + this.children.map(node => node.textContent).join(''); }, set textContent(value) { this.value = value; this.children = []; } });
   globalThis.document = { createElement: element, createTextNode: textContent => ({ textContent }) };
   try {
+    const heading = element('article'); renderMarkdown(heading, '# Findings'); assert.equal(heading.children[0].tag, 'h2'); assert.equal(heading.textContent, 'Findings');
     const prose = 'Recorded 2026-10-20. At 2026-10-20T14:03:05.250Z, rates were -12.50bps, +3%, and 1,234.56.';
     const root = element('article'); renderMarkdown(root, prose); assert.equal(root.textContent, prose);
     const walk = node => [node, ...(node.children ?? []).flatMap(walk)];

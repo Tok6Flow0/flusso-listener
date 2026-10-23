@@ -283,18 +283,18 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
         }
         catch (error) {
           state.modelOutput.status = review.status = activeAbort.signal.aborted ? 'stopped' : 'failed'; changed();
-          if (activeAbort.signal.aborted) { store.put('activity', activity.id, { ...activity, status: 'waiting', reviewStatus: 'stopped', responseReceived: Boolean(state.modelOutput.text), reason: 'Model review paused before a decision. This note will be checked again when selected and the Listener is on.' }); break; }
+          if (activeAbort.signal.aborted) { store.put('activity', activity.id, { ...activity, status: 'waiting', reviewStatus: 'stopped', completedAtUtc: new Date(clock()).toISOString(), responseReceived: Boolean(state.modelOutput.text), reason: 'Model review paused before a decision. This note will be checked again when selected and the Listener is on.' }); break; }
           // Left unchecked so it is read again once the model is available.
           state.lastError = error?.code === 'LOCAL_MODEL_UNAVAILABLE' || error?.message?.includes('local model') || error?.message?.includes('classification') ? error.message : 'The local model could not read a note.';
           state.modelFailure = error?.code === 'LOCAL_MODEL_UNAVAILABLE' ? { checkId: review.id, message: state.lastError } : null;
-          store.put('activity', activity.id, { ...activity, status: 'waiting', reviewStatus: 'failed', responseReceived: Boolean(state.modelOutput.text), reason: state.lastError });
+          store.put('activity', activity.id, { ...activity, status: 'waiting', reviewStatus: 'failed', completedAtUtc: new Date(clock()).toISOString(), responseReceived: Boolean(state.modelOutput.text), reason: state.lastError });
           publish('error', state.lastError, entry, { index, total });
           continue;
         }
         const latestSettings = store.settings();
         if (activeAbort.signal.aborted || latestSettings.version !== settingsVersion || !latestSettings.enabled || !inScope(entry, latestSettings)) {
           state.modelOutput.status = review.status = 'stopped'; changed();
-          store.put('activity', activity.id, { ...activity, status: 'waiting', reviewStatus: 'stopped', responseReceived: Boolean(state.modelOutput.text), reason: 'Listener settings changed before the model decision was accepted. This note will be checked again when selected and the Listener is on.' });
+          store.put('activity', activity.id, { ...activity, status: 'waiting', reviewStatus: 'stopped', completedAtUtc: new Date(clock()).toISOString(), responseReceived: Boolean(state.modelOutput.text), reason: 'Listener settings changed before the model decision was accepted. This note will be checked again when selected and the Listener is on.' });
           break;
         }
         const completedAtUtc = new Date(clock()).toISOString();
@@ -324,7 +324,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
         if (unfinished) {
           try {
             const progress = store.get('activity', state.modelOutput.activityId);
-            if (progress?.checkId === review.id) store.put('activity', progress.id, { ...progress, status: 'waiting', reviewStatus: 'failed', responseReceived: Boolean(state.modelOutput.text), reason: state.lastError });
+            if (progress?.checkId === review.id) store.put('activity', progress.id, { ...progress, status: 'waiting', reviewStatus: 'failed', completedAtUtc: new Date(clock()).toISOString(), responseReceived: Boolean(state.modelOutput.text), reason: state.lastError });
           } catch { /* A failed store cannot promise a durable error row; live state remains terminal. */ }
         }
         publish('error', state.lastError);
