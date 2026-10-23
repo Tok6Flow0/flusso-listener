@@ -68,7 +68,7 @@
             <label class="title-field">Title<input id="entry-title" maxlength="200" required placeholder="What is this note about?"></label>
             <div class="entry-body-field"><div class="label-row"><label for="entry-body">Notes</label><div class="ticket-tools"><button id="insert-ticket" type="button" class="chip-button">Add order ticket</button><button id="insert-close-ticket" type="button" class="chip-button">Add close ticket</button></div></div><textarea id="entry-body" rows="14" maxlength="20000" placeholder="Write in Markdown. Research notes never place orders; only an explicit ticket can."></textarea><details><summary>Ticket format</summary><div class="code-scroll" tabindex="0" role="region" aria-label="Order ticket format example"><pre id="editor-ticket-example"></pre></div><p class="hint">Format example, not current market data. This JSON alone is not an executable ticket. Use Add order ticket for an empty draft, then supply your own exact <code>orders</code>. For a close ticket, supply owned <code>positionIds</code>. Quantity is in venue contracts. An empty draft cannot run.</p></details></div>
             <div class="editor-fields"><label>Status<select id="entry-status"><option value="watching">Watching</option><option value="reviewed">Reviewed</option><option value="closed">Closed</option></select></label><label>Notebook<select id="entry-notebook" required></select></label></div>
-            <details><summary>Structured signal</summary><label class="sr-only" for="entry-signal">Signal JSON</label><textarea id="entry-signal" class="mono" rows="7" placeholder="product.journal_signal.v1"></textarea></details>
+            <details><summary>Structured signal</summary><label class="sr-only" for="entry-signal">Signal JSON</label><textarea id="entry-signal" class="mono" rows="7" placeholder="Paste a recorded signal object"></textarea></details>
             <div class="form-actions"><span class="hint">Save to this computer.</span><button id="cancel-edit" type="button" class="ghost">Cancel</button><button type="submit" class="primary">Save</button></div>
           </form>
         </section>
@@ -80,10 +80,9 @@
         <div class="title-block"><h1>Listener</h1><p class="status-line" id="last-check">Not checked yet</p></div>
         <label class="switch switch-lg"><input id="enabled" type="checkbox" aria-label="Turn on Listener"><span class="switch-track" aria-hidden="true"></span><span id="enabled-label">Turn on</span></label>
       </header>
-      <div class="connect-hint" id="connect-hint" hidden><span>Connect Flusso for the cloud Journal and auto-trade. Local notes work without it.</span><button id="connect" type="button">Connect</button></div>
       <div class="listener-toolbar">
         <dl class="watch-summary" id="watch-summary" aria-label="Listener configuration summary"></dl>
-        <div class="listener-actions"><button id="check-now" type="button" aria-describedby="last-check">Check now</button><button id="configure-listener" type="button" class="primary" aria-expanded="false" aria-controls="listener-configuration"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h7M15 6h1M4 14h1M9 14h7"/><circle cx="13" cy="6" r="2"/><circle cx="7" cy="14" r="2"/></svg><span id="configure-label">Configure</span></button></div>
+        <div class="listener-actions"><button id="check-now" type="button" aria-describedby="last-check">Check now</button><button id="configure-listener" type="button" aria-expanded="false" aria-controls="listener-configuration"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h7M15 6h1M4 14h1M9 14h7"/><circle cx="13" cy="6" r="2"/><circle cx="7" cy="14" r="2"/></svg><span id="configure-label">Configure</span></button></div>
       </div>
       <div class="listener-body">
         <section class="review-desk" id="review-desk" data-state="off" aria-labelledby="model-output-heading">
@@ -170,6 +169,7 @@
         </form>
         </section>
       </div>
+      <div class="connect-hint" id="connect-hint" hidden><span>Connect Flusso for the cloud Journal and auto-trade. Local notes work without it.</span><button id="connect" type="button">Connect</button></div>
     </section>
 
     <section id="view-activity" class="view" hidden>
@@ -178,6 +178,11 @@
     </section>
   </main>
 </div>
+<dialog id="discard-entry" class="discard-dialog" aria-labelledby="discard-entry-title" aria-describedby="discard-entry-description">
+  <h2 id="discard-entry-title">Discard this draft?</h2>
+  <p id="discard-entry-description">Your unsaved changes to this local entry will be lost.</p>
+  <div class="form-actions"><button id="keep-writing" type="button" autofocus>Keep writing</button><button id="discard-writing" type="button">Discard draft</button></div>
+</dialog>
 <aside class="update-corner" id="update-corner" aria-label="App update" hidden><button id="dismiss-update" class="dismiss-update" type="button" aria-label="Dismiss">×</button><img class="update-mark" src="/flusso-mark.png" alt="" width="28" height="28"><div><strong id="update-title">Update ready</strong><p class="hint" id="update-detail" role="status"></p><div class="setup-progress" id="update-progress-wrap" hidden><progress id="update-progress" max="100" aria-label="Update download"></progress><span id="update-progress-label" class="mono"></span></div></div><button id="update-action" type="button">Download</button></aside>
 </body>
 </html>

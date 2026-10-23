@@ -180,7 +180,7 @@ export function streamedReason(source) {
   }
 }
 
-const OUTPUT_STATUS = { streaming: ['Streaming', 'info'], complete: ['Complete', 'info'], failed: ['Failed', 'warn'], stopped: ['Stopped', 'warn'] };
+const OUTPUT_STATUS = { streaming: ['Streaming', 'info'], complete: ['Complete', ''], failed: ['Failed', 'warn'], stopped: ['Stopped', 'warn'] };
 // The streamed text is kept exactly as received. Until that same run completes and
 // the Listener publishes its validated decision, only the model's own reason words
 // are lifted out of it, as a draft that is never labelled or styled as a decision.
@@ -215,7 +215,7 @@ export function latestDecisions(activity = [], output = null, { limit = 5 } = {}
   const rows = [...activity];
   // Activity clocks the model's start; its published output clocks completion.
   // Keep every retained revision and suppress only its duplicate output summary.
-  const retained = output && rows.some(row => row.entryId === output.entryId && row.origin === output.origin
+  const retained = output && rows.some(row => row.status === 'observed' && row.entryId === output.entryId && row.origin === output.origin
     && row.decision === output.decision && row.reason === output.reason
     && (output.version == null || row.version === output.version));
   if (output && !retained) rows.unshift({ ...output, status: 'observed' });
@@ -224,6 +224,18 @@ export function latestDecisions(activity = [], output = null, { limit = 5 } = {}
   const unconfirmed = row => ['pending', 'unknown'].includes(row.status);
   rows.sort((a, b) => Number(unconfirmed(b)) - Number(unconfirmed(a)) || clock(b) - clock(a));
   return limit === null ? rows : rows.slice(0, limit);
+}
+
+// Activity IDs survive status/receipt updates. Published summaries have no ID;
+// their clock and outcome distinguish them from a later check of the same note.
+export function decisionRowKeys(rows) {
+  const occurrences = new Map();
+  return rows.map(row => {
+    const identity = JSON.stringify(row.id != null ? ['activity', row.id] : ['summary', row.origin, row.entryId, row.version, row.atUtc, row.status, row.decision]);
+    const occurrence = occurrences.get(identity) ?? 0;
+    occurrences.set(identity, occurrence + 1);
+    return `${identity}:${occurrence}`;
+  });
 }
 
 // The API accepts a complete versioned settings body. A switch must carry only

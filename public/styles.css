@@ -110,7 +110,7 @@ details[open]>:not(summary){animation:fade .2s ease}
 .pill.pos{background:var(--c-pos-wash);border-color:var(--c-pos-soft);color:var(--c-pos-deep)}
 .pill.neg{background:var(--c-neg-wash);border-color:var(--c-neg-soft);color:var(--c-neg-deep)}
 .pill.warn{background:var(--c-warn-wash);border-color:var(--c-warn-soft);color:var(--c-warn-deep)}
-.pill.info{background:var(--c-teal-wash);border-color:var(--c-teal-soft);color:var(--c-teal-deep)}
+.pill.info{background:var(--c-info-wash);border-color:var(--c-info-soft);color:var(--c-info)}
 
 /* --------------------------------------------------------------- layout */
 .app-shell{display:grid;grid-template-columns:220px minmax(0,1fr);min-height:100vh}
@@ -123,7 +123,7 @@ details[open]>:not(summary){animation:fade .2s ease}
 .nav-button.active{background:rgba(var(--c-on-dark-rgb),.12);color:var(--c-on-dark);font-weight:var(--fw-semibold)}
 .nav-button>span:not(.sr-only):first-of-type{flex:1;text-align:left}
 .nav-dot{width:8px;height:8px;border-radius:50%;background:var(--c-on-dark-4);transition:background .3s}
-.nav-dot.on{background:var(--c-pos-mid);box-shadow:0 0 0 3px rgba(var(--c-pos-mid-rgb),.18)}
+.nav-dot.on{background:var(--c-teal-mid);box-shadow:0 0 0 3px rgba(var(--c-teal-rgb),.18)}
 .nav-dot.on.busy{background:var(--c-teal-mid)}
 .nav-dot.warn{background:var(--c-warn-mid);box-shadow:0 0 0 3px rgba(var(--c-warn-mid-rgb),.18)}
 .nav-count{min-width:20px;padding:2px 6px;border-radius:10px;background:var(--c-warn-mid);color:var(--c-panel);font:var(--fw-regular) var(--fs-label)/1.2 var(--font-mono);text-align:center}
@@ -169,7 +169,7 @@ tr:last-child td{border-bottom:0}
 
 /* ------------------------------------------------------------- listener */
 .listener-head .switch-lg{margin-left:auto}
-.connect-hint{display:flex;align-items:center;justify-content:space-between;gap:10px 14px;flex-wrap:wrap;margin-bottom:14px;padding:10px 10px 10px 16px;border:1px dashed var(--c-line-strong);border-radius:12px;color:var(--c-ink-3);font-size:var(--fs-body)}
+.connect-hint{display:flex;align-items:center;justify-content:space-between;gap:10px 14px;flex-wrap:wrap;margin-top:18px;padding:10px 10px 10px 16px;border:1px dashed var(--c-line-strong);border-radius:12px;color:var(--c-ink-3);font-size:var(--fs-body)}
 .listener-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px 16px;flex-wrap:wrap;margin-bottom:18px}
 .watch-summary{display:flex;align-items:center;gap:8px;flex:1 1 320px;flex-wrap:wrap;min-width:0}
 .watch-item{display:inline-flex;align-items:baseline;gap:8px;min-width:0;max-width:100%;min-height:32px;padding:6px 12px;border:1px solid var(--c-line);border-radius:16px;background:var(--c-surface)}
@@ -215,7 +215,7 @@ tr:last-child td{border-bottom:0}
 .output-head h2{font:var(--fw-regular) var(--fs-label)/1 var(--font-mono);text-transform:uppercase;letter-spacing:var(--ls-label);color:var(--c-ink-5)}
 .output-status{display:inline-flex;align-items:center;gap:7px;font-size:var(--fs-body-sm);font-weight:var(--fw-semibold);color:var(--c-ink-4)}
 .output-status::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--c-ink-7);flex:0 0 auto}
-.output-status.info{color:var(--c-teal-deep)}.output-status.info::before{background:var(--c-teal)}
+.output-status.info{color:var(--c-info)}.output-status.info::before{background:var(--c-info)}
 .output-status.pos{color:var(--c-pos-deep)}.output-status.pos::before{background:var(--c-pos)}
 .output-status.warn{color:var(--c-warn-deep)}.output-status.warn::before{background:var(--c-warn)}
 .output-source{display:flex;align-items:baseline;gap:4px 12px;flex-wrap:wrap;min-width:0}
@@ -342,6 +342,10 @@ tr:last-child td{border-bottom:0}
 .editor{min-width:0;padding:28px 40px 0;animation:fade .2s ease}
 .editor-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px 20px;flex-wrap:wrap;margin-bottom:20px}
 .editor-head h2{font-size:var(--fs-title)}
+.discard-dialog{width:min(440px,calc(100% - 32px));max-height:calc(100dvh - 32px);overflow:auto;padding:24px;border:1px solid var(--c-line-strong);border-radius:16px;background:var(--c-surface);color:var(--c-ink)}
+.discard-dialog::backdrop{background:rgba(var(--c-shadow-rgb),.45)}
+.discard-dialog p{margin-top:12px;color:var(--c-ink-3)}
+.discard-dialog .form-actions{margin-top:24px;flex-wrap:wrap}
 .editor-fields{display:flex;gap:10px;flex-wrap:wrap}
 .editor-fields label{min-width:150px}
 .title-field{margin-bottom:18px}

@@ -1,6 +1,6 @@
 import { formatCount, formatPrice, formatQuantity, formatPercentLabel, formatMoney, formatPercent } from './format.mjs';
 import { renderMarkdown } from './markdown.mjs';
-import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, activityStatus, listenerResult, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions, receiptDetails, modelOutputPresentation, intervalLabel, settingsSwitchBody, ticketDraft } from './desktop-ui.mjs';
+import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, activityStatus, listenerResult, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions, decisionRowKeys, receiptDetails, modelOutputPresentation, intervalLabel, settingsSwitchBody, ticketDraft } from './desktop-ui.mjs';
 
 const $ = id => document.getElementById(id);
 let csrf, snapshot, selected = null, editing = null, entryRetryKey = crypto.randomUUID();
@@ -27,6 +27,35 @@ async function action(button, work) { if (button?.disabled) return; if (button) 
 function when(value, seconds = false) { const date = new Date(value); return Number.isFinite(date.getTime()) ? date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', ...(seconds ? { second: '2-digit' } : {}) }) : '—'; }
 function timeOf(value) { const date = new Date(value); return Number.isFinite(date.getTime()) ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'; }
 function changed(key, value) { const next = JSON.stringify(value); if (renderKeys.get(key) === next) return false; renderKeys.set(key, next); return true; }
+const rowViews = new WeakMap();
+// Keep unchanged cards attached, including their focused controls, as new rows arrive.
+function reconcileRows(list, items, render) {
+  const previous = rowViews.get(list) ?? new Map(), next = new Map();
+  const focused = document.activeElement, focusedRow = list.contains(focused) ? focused.closest('[data-row-key]') : null;
+  const focusKey = focusedRow?.dataset.rowKey, control = focused?.dataset.rowControl;
+  let cursor = list.firstChild;
+  for (const item of items) {
+    const revision = JSON.stringify(item.value), old = previous.get(item.key);
+    const node = old?.revision === revision ? old.node : render(item.value);
+    node.dataset.rowKey = item.key; node.tabIndex = -1;
+    next.set(item.key, { node, revision });
+    if (old && old.node !== node) { if (cursor === old.node) cursor = old.node.nextSibling; old.node.remove(); }
+    if (node !== cursor) list.insertBefore(node, cursor);
+    cursor = node.nextSibling;
+  }
+  for (const node of [...list.children]) if (!next.has(node.dataset.rowKey) || next.get(node.dataset.rowKey).node !== node) node.remove();
+  rowViews.set(list, next);
+  if (focusedRow && document.activeElement !== focused) {
+    const row = next.get(focusKey)?.node;
+    const target = row && (control && row.querySelector(`[data-row-control="${control}"]`) || row.querySelector('[data-row-control="source"]') || row);
+    if (focused.isConnected) focused.focus({ preventScroll: true });
+    else { list.tabIndex = -1; (target || list).focus({ preventScroll: true }); }
+  }
+}
+function decisionItems(rows, details) {
+  const keys = decisionRowKeys(rows);
+  return rows.map((row, index) => ({ key: keys[index], value: { row, sourceAvailable: snapshot.entries.some(entry => entry.id === row.entryId && (!row.origin || row.origin === entry.origin)), ...details(row) } }));
+}
 // Writes only real changes, so live regions announce a state once rather than on every token.
 function setText(id, value) { const node = $(id); if (node.textContent !== value) node.textContent = value; }
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
@@ -203,6 +232,7 @@ function renderStatus() {
   const pending = snapshot.attempts.filter(row => ['pending', 'unknown'].includes(row.status)).length;
   $('activity-count').hidden = !pending; $('activity-count').textContent = formatCount(pending);
   $('check-now').disabled = !settings.enabled || Boolean(listener.busy);
+  $('check-now').classList.toggle('primary', settings.enabled && !listener.busy);
   $('check-now').title = !settings.enabled ? 'Turn Listener on to check notes' : listener.busy ? 'A check is already running' : 'Review the newest selected note';
   $('check-now').textContent = listener.busy ? 'Checking…' : 'Check now';
   renderWatchSummary();
@@ -237,7 +267,8 @@ function sourceButton(row, label = row.title || 'Open Journal entry') {
   const entry = snapshot.entries.find(item => item.id === row.entryId && (!row.origin || row.origin === item.origin));
   if (!entry) return element('span', label);
   const button = element('button', label, 'source-link'); button.type = 'button';
-  button.addEventListener('click', () => { openEntry(entry); });
+  button.dataset.rowControl = 'source';
+  button.addEventListener('click', () => { const current = snapshot.entries.find(item => item.id === row.entryId && (!row.origin || row.origin === item.origin)); if (current) openEntry(current); });
   return button;
 }
 function openEntry(entry) {
@@ -282,6 +313,7 @@ function renderProcess() {
   $('output-frame').dataset.status = view.status;
   setText('model-output-heading', !settings.enabled && output ? 'Last model response' : 'Model output');
   setText('model-output-status', !settings.enabled && view.status === 'complete' ? 'Last check complete' : view.label); $('model-output-status').className = `output-status ${!settings.enabled && view.status === 'complete' ? '' : view.tone}`;
+  $('model-output-status').hidden = settings.enabled && view.accepted;
   if (changed('model-output-source', output ? [output.entryId, output.origin, output.title, output.atUtc, snapshot.entries.some(row => row.id === output.entryId && row.origin === output.origin)] : null)) {
     const source = $('model-output-source');
     if (output) { const time = element('time', when(output.atUtc, true)); time.dateTime = output.atUtc; source.replaceChildren(sourceButton(output, output.title || 'Journal entry'), time); }
@@ -332,18 +364,19 @@ function renderDecisions() {
   const latest = latestDecisions(snapshot.activity, snapshot.listener.lastModelOutput);
   const output = snapshot.listener.modelOutput, published = snapshot.listener.lastModelOutput;
   const current = modelOutputPresentation(output, published).verdict ? published : null;
-  if (!changed('decisions', [latest, snapshot.settings.enabled, current])) return;
-  $('latest-decisions').replaceChildren(...latest.map(row => {
+  const items = decisionItems(latest, row => ({ enabled: snapshot.settings.enabled, shownInDesk: Boolean(current && row.entryId === current.entryId && row.origin === current.origin && row.decision === current.decision && row.reason === current.reason) }));
+  if (!changed('decisions', items)) return;
+  reconcileRows($('latest-decisions'), items.length ? items : [{ key: 'empty', value: null }], value => {
+    if (!value) return element('p', 'No decisions yet. Published model decisions and order results are listed here after a check.', 'empty');
+    const { row, enabled, shownInDesk } = value;
     const item = element('article', null, 'decision-row'), top = element('div', null, 'decision-top'), source = element('div', null, 'decision-source'), status = activityStatus(row);
     const time = element('time', when(row.atUtc, true)); time.dateTime = row.atUtc;
     top.append(pill(status.label, status.tone), time); source.append(sourceButton(row));
     item.append(top, source);
-    const shownInDesk = current && row.entryId === current.entryId && row.origin === current.origin && row.decision === current.decision && row.reason === current.reason;
     if (!shownInDesk) item.append(element('p', row.reason || 'Processing this entry.', 'decision-excerpt'));
-    if (row.status === 'waiting' && !snapshot.settings.enabled) item.append(element('p', 'Checks resume when you turn the Listener on.', 'hint'));
+    if (row.status === 'waiting' && !enabled) item.append(element('p', 'Checks resume when you turn the Listener on.', 'hint'));
     return item;
-  }));
-  if (!latest.length) $('latest-decisions').append(element('p', 'No decisions yet. Published model decisions and order results are listed here after a check.', 'empty'));
+  });
 }
 
 /* -------------------------------------------------------------- settings */
@@ -587,7 +620,8 @@ function renderDetail() {
   }
   if (row.signal) {
     const section = element('section', null, 'detail-section');
-    section.append(element('h3', 'Structured signal'), element('p', `${row.signal.quality} · ${row.signal.sourceOperationId} · ${row.signal.sourceAsOfUtc ? when(row.signal.sourceAsOfUtc) : 'no source time'}`, 'hint mono'));
+    const quality = row.signal.quality;
+    section.append(element('h3', 'Structured signal'), element('p', `${quality ? quality[0].toUpperCase() + quality.slice(1) : 'Unavailable'} · ${row.signal.sourceOperationId} · ${row.signal.sourceAsOfUtc ? when(row.signal.sourceAsOfUtc) : 'no source time'}`, 'hint mono'), element('p', 'Recorded source quality; not a current venue reading.', 'hint'));
     const wrap = element('div', null, 'table-scroll'), table = element('table'), thead = element('thead'), head = element('tr'), tbody = element('tbody');
     ['Instrument', 'Side', 'Direction', 'Qty', 'Unit', 'Ref price'].forEach((label, index) => head.append(element('th', label, index === 3 || index === 5 ? 'num' : '')));
     thead.append(head); table.append(thead);
@@ -606,7 +640,7 @@ function showEditor(row = null) {
   $('entry-title').value = row?.title ?? ''; $('entry-body').value = row?.body ?? ''; $('entry-status').value = row?.status ?? 'watching'; $('entry-signal').value = row?.signal ? JSON.stringify(row.signal, null, 2) : '';
   editorDirty = false; reveal($('editor'), window.matchMedia('(max-width:760px)').matches ? 'start' : 'nearest'); $('entry-title').focus({ preventScroll: true });
 }
-// Unsaved writing is never discarded by picking another entry; only Cancel discards it.
+// Picking another entry keeps the draft; Cancel requires an explicit discard choice.
 let editorDirty = false;
 $('entry-form').addEventListener('input', () => { editorDirty = true; });
 function leaveEditor() {
@@ -631,7 +665,10 @@ $('insert-close-ticket').addEventListener('click', () => insertTicket(true));
 $('result-filter').replaceChildren(...RESULT_FILTERS.map(option => new Option(option.label, option.value)));
 $('journal-filter').addEventListener('change', renderEntries);
 $('result-filter').addEventListener('change', renderEntries);
-$('new-entry').addEventListener('click', () => showEditor()); $('cancel-edit').addEventListener('click', () => closeEditor({ focus: true }));
+$('new-entry').addEventListener('click', () => showEditor());
+$('cancel-edit').addEventListener('click', () => { if (editorDirty) $('discard-entry').showModal(); else closeEditor({ focus: true }); });
+$('keep-writing').addEventListener('click', () => $('discard-entry').close());
+$('discard-writing').addEventListener('click', () => { $('discard-entry').close(); closeEditor({ focus: true }); });
 $('entry-form').addEventListener('submit', event => { event.preventDefault(); action(event.submitter, async () => {
   let signal = null; if ($('entry-signal').value.trim()) { try { signal = JSON.parse($('entry-signal').value); } catch { throw new Error('The structured signal is not valid JSON.'); } }
   const body = { notebookId: $('entry-notebook').value, title: $('entry-title').value, body: $('entry-body').value, status: $('entry-status').value, source: editing?.source ?? 'manual', observedAtUtc: editing?.observedAtUtc ?? null, instrument: editing?.instrument ?? null, venue: editing?.venue ?? null, signal, ...(editing ? { version: editing.version } : {}) };
@@ -661,11 +698,20 @@ $('account-disconnect').addEventListener('click', () => changeConnection(false))
 
 /* -------------------------------------------------------------- activity */
 function renderActivity() {
-  if (!changed('activity', [snapshot.activity, snapshot.attempts, snapshot.settings.enabled, snapshot.listener.lastModelOutput])) return;
   const rows = latestDecisions(snapshot.activity, snapshot.listener.lastModelOutput, { limit: null });
   const attempts = new Map(snapshot.attempts.map(row => [row.id, row]));
-  $('activity-list').replaceChildren(...rows.map(row => {
-    const card = element('article', null, 'activity-card'), head = element('div', null, 'activity-head'), status = activityStatus(row), attempt = row.attemptId ? attempts.get(row.attemptId) : null;
+  const items = decisionItems(rows, row => ({ attempt: row.attemptId ? attempts.get(row.attemptId) : null }));
+  if (!rows.length) items.push({ key: 'empty', value: { enabled: snapshot.settings.enabled } });
+  if (!changed('activity', items)) return;
+  reconcileRows($('activity-list'), items, ({ row, attempt, enabled }) => {
+    if (!row) {
+      const empty = element('div', null, 'empty-art'), mark = element('img'), open = element('button', 'Open Listener'); open.type = 'button';
+      mark.src = '/flusso-mark.png'; mark.alt = ''; mark.width = mark.height = 40;
+      open.addEventListener('click', () => switchView('listener'));
+      empty.append(mark, element('p', enabled ? 'Nothing yet. Decisions and order receipts are listed here after the Listener reviews a selected note.' : 'Nothing yet. Turn the Listener on to review selected notes; its decisions and order receipts are listed here.'), open);
+      return empty;
+    }
+    const card = element('article', null, 'activity-card'), head = element('div', null, 'activity-head'), status = activityStatus(row);
     // Seconds, as in Latest decisions: checks can run several times a minute.
     const time = element('time', when(row.atUtc, true)); time.dateTime = row.atUtc;
     card.dataset.tone = status.tone;
@@ -682,18 +728,12 @@ function renderActivity() {
     }
     if (attempt && ['pending', 'unknown'].includes(attempt.status)) {
       const actions = element('div', null, 'form-actions resolve-actions'), resolve = element('button', 'I checked Flusso. Mark resolved'); resolve.type = 'button';
+      resolve.dataset.rowControl = 'resolve';
       resolve.addEventListener('click', () => action(resolve, async () => { await api(`/api/attempts/${encodeURIComponent(attempt.id)}/resolve`, {}); await load(); notify('Marked resolved. New tickets can be placed.', true); }));
       actions.append(element('p', 'This result is unconfirmed and will never be resent. New tickets wait until you check orders and positions in Flusso and mark it resolved.', 'hint'), resolve); card.append(actions);
     }
     return card;
-  }));
-  if (!rows.length) {
-    const empty = element('div', null, 'empty-art'), mark = element('img'), open = element('button', 'Open Listener'); open.type = 'button';
-    mark.src = '/flusso-mark.png'; mark.alt = ''; mark.width = mark.height = 40;
-    open.addEventListener('click', () => switchView('listener'));
-    empty.append(mark, element('p', snapshot.settings.enabled ? 'Nothing yet. Decisions and order receipts are listed here after the Listener reviews a selected note.' : 'Nothing yet. Turn the Listener on to review selected notes; its decisions and order receipts are listed here.'), open);
-    $('activity-list').append(empty);
-  }
+  });
 }
 
 // EventSource reconnects to the same authenticated local status resource. A

@@ -196,6 +196,25 @@ test('recent decisions keep a newer paused check above an older published respon
   assert.deepEqual(latestDecisions([unknownClock, paused], published), [paused, { ...published, status: 'observed' }, unknownClock]);
 });
 
+test('decision row identities survive insertion and updates without conflating retained checks', async () => {
+  const { latestDecisions, decisionRowKeys } = await import('../public/desktop-ui.mjs');
+  const prior = { id: 'check-a', entryId: 'note-a', origin: 'local', version: 1, status: 'unknown', atUtc: '2026-10-22T17:20:00Z' };
+  const newer = { ...prior, id: 'check-b', version: 2, atUtc: '2026-10-22T17:21:00Z' };
+  const key = decisionRowKeys([prior])[0];
+  assert.equal(decisionRowKeys([newer, prior])[1], key);
+  assert.equal(decisionRowKeys([{ ...prior, status: 'resolved', reason: 'Owner checked.', attemptId: 'attempt-a' }])[0], key);
+  assert.notEqual(decisionRowKeys([newer])[0], key);
+  const published = { entryId: prior.entryId, origin: prior.origin, version: 1, decision: 'review', reason: 'Needs context.', atUtc: prior.atUtc };
+  const waiting = { ...published, status: 'waiting' };
+  const rows = latestDecisions([waiting], published, { limit: null });
+  assert.equal(rows.length, 2);
+  assert.deepEqual(new Set(decisionRowKeys(rows)).size, 2);
+  const summaryKey = decisionRowKeys(rows)[1];
+  assert.equal(decisionRowKeys([newer, ...rows])[2], summaryKey);
+  // Identical retained rows are still distinct nodes; identity assignment never drops history.
+  assert.equal(new Set(decisionRowKeys([waiting, waiting])).size, 2);
+});
+
 test('receipt details preserve explicit order and close refusal codes without inventing an explanation', async () => {
   const { receiptDetails } = await import('../public/desktop-ui.mjs');
   for (const identity of [{ instrumentId: 'kraken:BTCUSD' }, { positionId: 'owned-position' }]) {
