@@ -175,6 +175,50 @@ test('an empty model output names the next action for the current Listener state
   assert.equal(modelOutputPresentation(null).label, 'Not run');
 });
 
+test('completion announcements survive streaming without repeating an unchanged scheduled outcome', async () => {
+  const { modelOutputPresentation, completionAnnouncement } = await import('../public/desktop-ui.mjs');
+  const output = { entryId: 'note-a', origin: 'local', version: 1, status: 'complete', atUtc: '2026-10-23T10:00:00Z' };
+  const published = { ...output, decision: 'review', reason: 'An exact quantity is still needed.' };
+  const first = completionAnnouncement(modelOutputPresentation(output, published), output);
+  assert.equal(first.message, 'Review complete: review suggested.');
+  assert.doesNotMatch(first.message, /exact quantity/);
+  const streaming = { ...output, status: 'streaming', atUtc: '2026-10-23T10:01:00Z' };
+  assert.equal(completionAnnouncement(modelOutputPresentation(streaming, published), streaming, first.key), null);
+  const next = { ...streaming, status: 'complete' }, repeated = { ...published, atUtc: next.atUtc };
+  assert.equal(completionAnnouncement(modelOutputPresentation(next, repeated), next, first.key), null);
+  for (const change of [{ reason: 'The risk limit changed.' }, { decision: 'ignore' }, { entryId: 'note-b' }, { origin: 'cloud' }, { version: 2 }]) {
+    const source = { ...next, ...change }, result = { ...repeated, ...change };
+    assert.ok(completionAnnouncement(modelOutputPresentation(source, result), source, first.key));
+  }
+  const error = completionAnnouncement(modelOutputPresentation(next, repeated), next, first.key, 'The model is unavailable.');
+  assert.match(error.message, /needs attention.*model is unavailable/);
+  assert.equal(completionAnnouncement(modelOutputPresentation(next, repeated), next, error.key, 'The model is unavailable.'), null);
+  assert.ok(completionAnnouncement(modelOutputPresentation(next, repeated), next, error.key, 'The response was invalid.'));
+  assert.ok(completionAnnouncement(modelOutputPresentation(next, repeated), next, error.key), 'Recovery is a real changed outcome.');
+  for (const status of ['failed', 'stopped']) {
+    const failed = { ...next, status }, view = modelOutputPresentation(failed, repeated);
+    const announcement = completionAnnouncement(view, failed, first.key);
+    assert.match(announcement.message, /No decision was accepted/);
+    assert.equal(completionAnnouncement(view, { ...failed, atUtc: '2026-10-23T10:02:00Z' }, announcement.key), null);
+    assert.ok(completionAnnouncement(modelOutputPresentation(next, repeated), next, announcement.key));
+  }
+  assert.equal(completionAnnouncement(modelOutputPresentation(next, null), next), null, 'An unmatched response is never announced as accepted.');
+});
+
+test('local draft protection compares every actual field and clears on an exact revert', async () => {
+  const { localDraftDirty } = await import('../public/desktop-ui.mjs');
+  const base = { notebookId: 'book-a', title: 'Research', body: 'Original writing.\n', status: 'watching', signal: '' };
+  assert.equal(localDraftDirty(null, base), false);
+  assert.equal(localDraftDirty(base, { ...base }), false);
+  for (const field of Object.keys(base)) {
+    const edited = { ...base, [field]: base[field] + ' changed' };
+    assert.equal(localDraftDirty(base, edited), true, field);
+    assert.equal(localDraftDirty(base, { ...edited, [field]: base[field] }), false, `${field} reverted`);
+  }
+  assert.equal(localDraftDirty(base, { ...base, body: base.body.trimEnd() }), true, 'Whitespace is part of the draft.');
+  assert.equal(localDraftDirty({ ...base, body: '' }, { ...base, body: '' }), false, 'Empty new-entry fields start clean.');
+});
+
 test('a published decision appears once when model start and completion timestamps differ', async () => {
   const { latestDecisions } = await import('../public/desktop-ui.mjs');
   const row = { entryId: 'note-a', origin: 'local', version: 1, decision: 'review', reason: 'An exact quantity is needed.', status: 'observed', atUtc: '2026-10-22T17:20:00Z' };

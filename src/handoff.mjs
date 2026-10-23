@@ -37,9 +37,9 @@ export function describeEntryHandoff({ entry, settings, checkpoint = null, activ
     if (deliveryStatus === 'sending') return result('sending', 'Submission for this revision is in progress or unconfirmed. It must not be treated as unsent.');
     if (deliveryStatus === 'submitted') return result('submitted', 'Submission for this revision was confirmed. Sent is not filled; inspect the retained receipt.');
     if (deliveryStatus === 'partial') return result('partial', 'This revision was partly submitted. Inspect every retained leg; residual exposure may remain.');
-    if (deliveryStatus === 'blocked') return result('blocked', 'The retained attempt for this revision was refused. Inspect its receipt; its durable claim remains.');
-    if (deliveryStatus === 'resolved') return result('resolved', 'The owner marked the unconfirmed attempt for this revision resolved. Its durable claim remains; it will not be resent.');
-    return result('unconfirmed', 'A retained submission attempt exists for this revision. Inspect its original receipt before treating it as unsent; its durable claim remains.');
+    if (deliveryStatus === 'blocked') return result('blocked', 'This ticket revision was refused. Check its receipt; the Listener will not send it again.');
+    if (deliveryStatus === 'resolved') return result('resolved', 'You marked the unconfirmed attempt for this revision resolved. The Listener will not send it again.');
+    return result('unconfirmed', 'A submission attempt is recorded for this revision. Check its original receipt before assuming nothing was sent. The Listener will not send it again.');
   }
   if (mismatch) return result('out_of_scope', {
     source: 'This entry is outside the selected local/cloud source.',
@@ -65,5 +65,5 @@ export function describeEntryHandoff({ entry, settings, checkpoint = null, activ
   if (currentCheckpoint) return result('decided', 'This ticket revision has already been observed; inspect its retained result.');
   const gap = ticketSetupGap(settings);
   if (gap) return result('waiting', `${gap} No order has been sent for this revision.`);
-  return result('awaiting_check', 'The explicit ticket passes local format, age and limit checks. A Listener check and current server admission are still required; this diagnostic sends nothing.');
+  return result('awaiting_check', 'This ticket passes local format, age and limit checks. The Listener must still check it, and Flusso must approve it before submission. Viewing this status does not send an order.');
 }

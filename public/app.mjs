@@ -1,6 +1,6 @@
 import { formatCount, formatPrice, formatQuantity, formatPercentLabel, formatMoney, formatPercent } from './format.mjs';
 import { renderMarkdown } from './markdown.mjs';
-import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, activityStatus, listenerResult, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions, decisionRowKeys, receiptDetails, modelOutputPresentation, intervalLabel, settingsSwitchBody, ticketDraft } from './desktop-ui.mjs';
+import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, activityStatus, listenerResult, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions, decisionRowKeys, receiptDetails, modelOutputPresentation, completionAnnouncement, localDraftDirty, intervalLabel, settingsSwitchBody, ticketDraft } from './desktop-ui.mjs';
 
 const $ = id => document.getElementById(id);
 let csrf, snapshot, selected = null, editing = null, entryRetryKey = crypto.randomUUID();
@@ -18,7 +18,7 @@ const TICKET_FENCE = /^(```|~~~)[ \t]*flusso-(?:orders|close)[ \t]*\n[\s\S]*?^\1
 
 function element(tag, content, className) { const node = document.createElement(tag); if (content != null) node.textContent = content; if (className) node.className = className; return node; }
 function pill(text, tone) { return element('span', text, `pill${tone ? ' ' + tone : ''}`); }
-function notify(message, success = false, error = false) { $('notice').setAttribute('role', error ? 'alert' : 'status'); $('notice-text').textContent = message; $('notice').hidden = false; $('notice').className = `notice${success ? ' success' : ''}`; clearTimeout(notify.timer); if (success) notify.timer = setTimeout(() => { $('notice').hidden = true; }, 5000); }
+function notify(message, success = false, error = false) { $('notice').setAttribute('role', error ? 'alert' : 'status'); $('notice-text').textContent = message; $('notice').hidden = false; $('notice').className = `notice${error ? ' error' : success ? ' success' : ''}`; clearTimeout(notify.timer); if (success) notify.timer = setTimeout(() => { $('notice').hidden = true; }, 5000); }
 async function api(path, body, headers = {}) {
   const response = await fetch(path, { method: body === undefined ? 'GET' : 'POST', headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json', 'x-flusso-csrf': csrf }), ...headers }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const value = await response.json(); if (!response.ok) throw new Error(value.error || 'That did not work. Try again.'); return value;
@@ -169,7 +169,7 @@ async function nativeAction(method, argument) {
 async function initializeDesktop() {
   if (!desktop) return;
   const unsubscribe = desktop.onStatus(status => { desktopStatus = status; renderDesktop(); });
-  window.addEventListener('beforeunload', () => unsubscribe(), { once: true });
+  window.addEventListener('pagehide', () => unsubscribe(), { once: true });
   desktopStatus = await desktop.status(); renderDesktop();
 }
 $('account-toggle').addEventListener('click', () => { const open = $('account-menu').hidden; $('account-menu').hidden = !open; $('account-toggle').setAttribute('aria-expanded', String(open)); });
@@ -299,6 +299,7 @@ function growText(node, value) {
   if (current && value.startsWith(current)) node.append(value.slice(current.length)); else node.textContent = value;
 }
 
+let lastCompletionKey = null, completionFrame = null;
 function renderProcess() {
   const { listener, settings } = snapshot, output = listener.modelOutput;
   const state = processingPresentation(listener, settings.enabled);
@@ -320,13 +321,21 @@ function renderProcess() {
     else source.replaceChildren();
     source.hidden = !output;
   }
-  // One block carries the reason from its first streamed words to the published
+  // One block carries the reason from its first streamed words to the accepted
   // decision; only a validated, matching run earns the decision label.
-  const summary = view.verdict ? { state: 'published', kicker: 'Published decision', label: view.verdict.label, tone: view.verdict.tone, reason: view.verdict.reason || 'The model gave no reason.' }
+  const summary = view.verdict ? { state: 'accepted', kicker: 'Accepted local decision', label: view.verdict.label, tone: view.verdict.tone, reason: view.verdict.reason || 'The model gave no reason.' }
     : view.draft !== null ? { state: 'draft', kicker: view.draftLabel, label: view.live ? 'validation pending' : 'not accepted', tone: '', reason: view.draft } : null;
-  // Announce only a completed public decision, never the token stream.
-  const announcement = view.accepted ? `Review complete. ${view.verdict.label}. ${view.verdict.reason}` : ['failed', 'stopped'].includes(view.status) ? `${view.label}. No decision was accepted.` : '';
-  if (changed('model-completion', [output?.atUtc, announcement])) setText('model-completion', announcement);
+  const announcement = listener.busy ? null : completionAnnouncement(view, output, lastCompletionKey, listener.lastError);
+  if (listener.busy || (!view.accepted && !['failed', 'stopped'].includes(view.status) && !listener.lastError)) {
+    cancelAnimationFrame(completionFrame); setText('model-completion', '');
+  } else if (announcement) {
+    lastCompletionKey = announcement.key;
+    // A changed reason may keep the same short label. Separate the update from
+    // clearing it so the live region can announce that real change as well.
+    setText('model-completion', '');
+    cancelAnimationFrame(completionFrame);
+    completionFrame = requestAnimationFrame(() => { if (lastCompletionKey === announcement.key) setText('model-completion', announcement.message); });
+  }
   // Keep the raw answer open if a keyboard reader is using it as the reason appears.
   if (summary && $('model-output').contains(document.activeElement)) rawOpen = true;
   // Scheduled checks must not strand a keyboard reader inside a hidden summary.
@@ -367,7 +376,7 @@ function renderDecisions() {
   const items = decisionItems(latest, row => ({ enabled: snapshot.settings.enabled, shownInDesk: Boolean(current && row.entryId === current.entryId && row.origin === current.origin && row.decision === current.decision && row.reason === current.reason) }));
   if (!changed('decisions', items)) return;
   reconcileRows($('latest-decisions'), items.length ? items : [{ key: 'empty', value: null }], value => {
-    if (!value) return element('p', 'No decisions yet. Published model decisions and order results are listed here after a check.', 'empty');
+    if (!value) return element('p', 'No decisions yet. Accepted local decisions and order results are listed here after a check.', 'empty');
     const { row, enabled, shownInDesk } = value;
     const item = element('article', null, 'decision-row'), top = element('div', null, 'decision-top'), source = element('div', null, 'decision-source'), status = activityStatus(row);
     const time = element('time', when(row.atUtc, true)); time.dateTime = row.atUtc;
@@ -631,33 +640,46 @@ function renderDetail() {
 }
 // The editor takes the reading pane's place, so the list stays in view while writing.
 function showEditor(row = null) {
-  if (!$('editor').hidden && editorDirty) { notify('Save or cancel the entry you are writing first.'); $('entry-title').focus(); return; }
+  if (editorDirty()) { keepDraftVisible(); return; }
   editing = row?.id ? row : null; entryRetryKey = crypto.randomUUID();
   $('editor').hidden = false; $('entry-detail').hidden = true; $('editor-title').textContent = editing ? 'Edit entry' : row ? 'Copy to local' : 'New entry';
   const notebooks = snapshot.notebooks.filter(item => item.origin === 'local');
   $('entry-notebook').replaceChildren(...notebooks.map(item => new Option(item.name, item.id)));
   if (row?.origin === 'local') $('entry-notebook').value = row.notebookId;
   $('entry-title').value = row?.title ?? ''; $('entry-body').value = row?.body ?? ''; $('entry-status').value = row?.status ?? 'watching'; $('entry-signal').value = row?.signal ? JSON.stringify(row.signal, null, 2) : '';
-  editorDirty = false; reveal($('editor'), window.matchMedia('(max-width:760px)').matches ? 'start' : 'nearest'); $('entry-title').focus({ preventScroll: true });
+  editorBase = editorValues(); updateDraftProtection(); reveal($('editor'), window.matchMedia('(max-width:760px)').matches ? 'start' : 'nearest'); $('entry-title').focus({ preventScroll: true });
 }
 // Picking another entry keeps the draft; Cancel requires an explicit discard choice.
-let editorDirty = false;
-$('entry-form').addEventListener('input', () => { editorDirty = true; });
+let editorBase = null;
+function editorValues() { return { notebookId: $('entry-notebook').value, title: $('entry-title').value, body: $('entry-body').value, status: $('entry-status').value, signal: $('entry-signal').value }; }
+function editorDirty() { return !$('editor').hidden && localDraftDirty(editorBase, editorValues()); }
+function protectDraftOnLeave(event) { if (editorDirty()) { event.preventDefault(); event.returnValue = ''; } }
+function updateDraftProtection() {
+  if (editorDirty()) window.addEventListener('beforeunload', protectDraftOnLeave);
+  else window.removeEventListener('beforeunload', protectDraftOnLeave);
+}
+function keepDraftVisible() {
+  switchView('journal');
+  notify('Your local draft is still open. Save it, or choose Cancel to discard it.');
+  reveal($('editor'), window.matchMedia('(max-width:760px)').matches ? 'start' : 'nearest'); $('entry-title').focus({ preventScroll: true });
+}
+$('entry-form').addEventListener('input', updateDraftProtection);
+$('entry-form').addEventListener('change', updateDraftProtection);
 function leaveEditor() {
   if ($('editor').hidden) return true;
-  if (editorDirty) { notify('Save or cancel the entry you are writing first.'); $('entry-title').focus(); return false; }
+  if (editorDirty()) { keepDraftVisible(); return false; }
   closeEditor(); return true;
 }
 function closeEditor({ focus = false } = {}) {
   if ($('editor').hidden) return;
-  $('editor').hidden = true; $('entry-detail').hidden = false; editorDirty = false;
+  $('editor').hidden = true; $('entry-detail').hidden = false; editorBase = null; updateDraftProtection();
   if (focus) (document.querySelector('.entry-card.selected') ?? $('new-entry')).focus();
 }
 function insertTicket(close = false) {
   const id = `ticket-${new Date().toISOString().slice(0, 16).replace(/[-:]/g, '')}`;
   const body = $('entry-body'), block = '```' + (close ? 'flusso-close' : 'flusso-orders') + '\n' + JSON.stringify(ticketDraft(id, close), null, 2) + '\n```\n';
   if (TICKET_FENCE.test(body.value)) { TICKET_FENCE.lastIndex = 0; notify('This entry already has an order ticket.'); return; }
-  TICKET_FENCE.lastIndex = 0; body.value = `${body.value.trimEnd()}${body.value.trim() ? '\n\n' : ''}${block}`; $('entry-status').value = 'watching'; editorDirty = true; body.focus();
+  TICKET_FENCE.lastIndex = 0; body.value = `${body.value.trimEnd()}${body.value.trim() ? '\n\n' : ''}${block}`; $('entry-status').value = 'watching'; updateDraftProtection(); body.focus();
   notify(close ? 'Close ticket draft added. Add exact owned position IDs; an empty draft cannot run.' : 'Order ticket draft added. Add your exact orders; an empty draft cannot run.');
 }
 $('insert-ticket').addEventListener('click', () => insertTicket());
@@ -666,7 +688,7 @@ $('result-filter').replaceChildren(...RESULT_FILTERS.map(option => new Option(op
 $('journal-filter').addEventListener('change', renderEntries);
 $('result-filter').addEventListener('change', renderEntries);
 $('new-entry').addEventListener('click', () => showEditor());
-$('cancel-edit').addEventListener('click', () => { if (editorDirty) $('discard-entry').showModal(); else closeEditor({ focus: true }); });
+$('cancel-edit').addEventListener('click', () => { if (editorDirty()) $('discard-entry').showModal(); else closeEditor({ focus: true }); });
 $('keep-writing').addEventListener('click', () => $('discard-entry').close());
 $('discard-writing').addEventListener('click', () => { $('discard-entry').close(); closeEditor({ focus: true }); });
 $('entry-form').addEventListener('submit', event => { event.preventDefault(); action(event.submitter, async () => {

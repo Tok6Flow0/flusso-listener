@@ -39,6 +39,8 @@ button svg{width:16px;height:16px}
 button.primary{color:var(--c-on-ink);background:var(--c-teal-deep);border-color:var(--c-teal-deep)}
 button.primary:hover{background:var(--c-teal-800);border-color:var(--c-teal-800)}
 button.primary:disabled:hover{background:var(--c-teal-deep)}
+button.warning{background:var(--c-warn-wash);border-color:var(--c-warn-soft);color:var(--c-warn-deep)}
+button.warning:hover{background:var(--c-warn-soft)}
 button.ghost{border-color:transparent;background:transparent;color:var(--c-ink-3)}
 button.ghost:hover{background:var(--c-paper-sand);color:var(--c-ink)}
 .icon-button{width:36px;padding:0;color:var(--c-ink-3)}
@@ -161,8 +163,9 @@ tr:last-child td{border-bottom:0}
 .empty-art button{margin-top:4px}
 
 /* Messages float over the page so a notice never shifts what is being read. */
-.notice{position:fixed;top:16px;left:50%;z-index:6;display:flex;gap:10px;align-items:flex-start;width:max-content;max-width:min(560px,calc(100vw - 32px));transform:translateX(-50%);padding:11px 8px 11px 16px;border:1px solid var(--c-warn-soft);border-radius:12px;background:var(--c-warn-wash);color:var(--c-warn-deep);font-size:var(--fs-body);box-shadow:0 10px 30px rgba(var(--c-shadow-rgb),.16);overflow-wrap:anywhere;animation:fade .2s ease}
-.notice.success{background:var(--c-teal-wash);color:var(--c-teal-deep);border-color:var(--c-teal-soft)}
+.notice{position:fixed;top:16px;left:50%;z-index:6;display:flex;gap:10px;align-items:flex-start;width:max-content;max-width:min(560px,calc(100vw - 32px));transform:translateX(-50%);padding:11px 8px 11px 16px;border:1px solid var(--c-info-soft);border-radius:12px;background:var(--c-info-wash);color:var(--c-info);font-size:var(--fs-body);box-shadow:0 10px 30px rgba(var(--c-shadow-rgb),.16);overflow-wrap:anywhere;animation:fade .2s ease}
+.notice.success{background:var(--c-pos-wash);color:var(--c-pos-deep);border-color:var(--c-pos-soft)}
+.notice.error{background:var(--c-warn-wash);color:var(--c-warn-deep);border-color:var(--c-warn-soft)}
 .notice>span{flex:1;min-width:0;padding-top:3px}
 .notice-close{width:32px;min-height:32px;padding:0;border-color:transparent;background:transparent;color:inherit;font-size:var(--fs-title);font-weight:var(--fw-regular);line-height:1}
 .notice-close:hover{background:rgba(var(--c-ink-rgb),.06)}
@@ -220,7 +223,7 @@ tr:last-child td{border-bottom:0}
 .output-status.warn{color:var(--c-warn-deep)}.output-status.warn::before{background:var(--c-warn)}
 .output-source{display:flex;align-items:baseline;gap:4px 12px;flex-wrap:wrap;min-width:0}
 .output-source time,.decision-top time,.activity-head time{font-size:var(--fs-caption);color:var(--c-ink-5)}
-.verdict{display:grid;gap:10px;padding:16px 18px;border-radius:12px;background:var(--c-paper-raise);border:1px solid var(--c-line);animation:rise .32s cubic-bezier(.2,.7,.2,1)}
+.verdict{display:grid;gap:10px;padding:16px 18px;border-radius:12px;background:var(--c-paper-raise);border:1px solid var(--c-line)}
 .verdict-kicker{font:var(--fw-regular) var(--fs-label)/1 var(--font-mono);text-transform:uppercase;letter-spacing:var(--ls-label);color:var(--c-ink-5)}
 .verdict-head{display:flex;align-items:center;gap:6px 10px;flex-wrap:wrap}
 /* The model's published words read as prose, in the same serif as the notes it reviews. */
@@ -299,7 +302,7 @@ tr:last-child td{border-bottom:0}
 .tags{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .tags .pill{min-height:18px;padding:0 6px;font-size:var(--fs-micro)}
 .entry-state{font:var(--fw-regular) var(--fs-micro)/1 var(--font-mono);text-transform:uppercase;letter-spacing:var(--ls-label);color:var(--c-ink-5)}
-.entry-state.watching{color:var(--c-teal-deep)}
+.entry-state.watching{color:var(--c-info)}
 .list-empty{display:grid;justify-items:center;gap:6px}
 .notebook-form{display:flex;gap:6px;padding:10px;border-top:1px solid var(--c-line)}
 .notebook-form input{min-height:34px;background:var(--c-surface)}
@@ -362,7 +365,7 @@ tr:last-child td{border-bottom:0}
 .activity-card[data-tone=pos]::before{background:var(--c-pos)}
 .activity-card[data-tone=neg]::before{background:var(--c-neg)}
 .activity-card[data-tone=warn]::before{background:var(--c-warn-mid)}
-.activity-card[data-tone=info]::before{background:var(--c-teal)}
+.activity-card[data-tone=info]::before{background:var(--c-info)}
 .activity-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
 .activity-card>h2{font-size:var(--fs-title-sm);min-width:0;overflow-wrap:anywhere}
 .activity-card h2 .source-link{font-size:var(--fs-title-sm)}

@@ -206,9 +206,28 @@ export function modelOutputPresentation(output, published = null, { disconnected
   const draftLabel = draft === null ? null : output.status === 'streaming' ? 'Reason so far' : output.status === 'complete' ? 'Model reason' : 'Partial reason';
   const note =output.status === 'streaming' ? (disconnected ? 'Reconnecting. Showing the last output received; nothing is accepted until the response completes.' : 'Partial output. Nothing is accepted until the response completes and passes validation.')
     : ['failed', 'stopped'].includes(output.status) ? (hasText ? 'Partial output shown. It was not accepted as a decision.' : 'No output was received. Nothing was accepted.')
-      : output.status === 'complete' && !accepted ? 'The response completed, but no published decision matches it.' : null;
+      : output.status === 'complete' && !accepted ? 'The response completed, but no accepted local decision matches it.' : null;
   const empty = hasText ? null : output.status === 'streaming' ? 'Waiting for the model’s first response token.' : 'The model returned no response.';
   return { status: output.status, label: disconnected && output.status === 'streaming' ? 'Reconnecting' : label, tone, live, accepted, verdict, draft, draftLabel, note, empty };
+}
+
+// Keep this identity across streaming/idle updates. A new clock alone is not a
+// changed outcome; an actual changed decision, reason, source, or error is.
+export function completionAnnouncement(view, output, previousKey = null, error = null) {
+  const identity = [output?.origin, output?.entryId, output?.version];
+  const outcome = error ? ['error', ...identity, error]
+    : view.accepted ? ['accepted', ...identity, view.verdict.label, view.verdict.reason]
+      : ['failed', 'stopped'].includes(view.status) ? [view.status, ...identity] : null;
+  if (!outcome) return null;
+  const key = JSON.stringify(outcome);
+  if (key === previousKey) return null;
+  return { key, message: error ? `Check needs attention. ${error}`
+    : view.accepted ? `Review complete: ${view.verdict.label}.` : `${view.label}. No decision was accepted.` };
+}
+
+// Compare the actual fields, without trimming away meaningful writing changes.
+export function localDraftDirty(base, current) {
+  return base !== null && ['notebookId', 'title', 'body', 'status', 'signal'].some(field => base[field] !== current[field]);
 }
 
 export function latestDecisions(activity = [], output = null, { limit = 5 } = {}) {
