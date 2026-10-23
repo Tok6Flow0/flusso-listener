@@ -76,6 +76,58 @@ test('public process state keeps active work, errors, and unknown stages distinc
   assert.equal(processStage('unrecognized'), 'Activity');
 });
 
+test('the Listener names one coarse state and keeps paused, ready, checked and error distinct', async () => {
+  const { processingPresentation } = await import('../public/desktop-ui.mjs');
+  assert.equal(processingPresentation({}, false).state, 'off');
+  assert.equal(processingPresentation({}, true).state, 'ready');
+  assert.equal(processingPresentation({ lastCheckedAtUtc: '2026-10-22T17:20:00Z' }, true).title, 'Checked');
+  const paused = processingPresentation({ lastCheckedAtUtc: '2026-10-22T17:20:00Z', processing: { stage: 'paused', message: 'Check paused after a settings change or shutdown.' } }, true);
+  assert.deepEqual([paused.state, paused.message], ['paused', 'Check paused after a settings change or shutdown.']);
+  assert.equal(processingPresentation({ lastError: 'Model unavailable.', processing: { stage: 'paused' } }, true).state, 'error');
+  const reviewing = processingPresentation({ busy: true, processing: { stage: 'model', index: 1, total: 2 } }, true);
+  assert.deepEqual([reviewing.state, reviewing.title, reviewing.label, reviewing.position], ['reviewing', 'Reviewing', 'Model review', { index: 1, total: 2 }]);
+  assert.equal(processingPresentation({ busy: true, processing: { stage: 'error' } }, true).state, 'error');
+  for (const counts of [{}, { index: 0, total: 2 }, { index: 3, total: 2 }, { index: '1', total: 2 }, { index: 1.5, total: 2 }]) {
+    assert.equal(processingPresentation({ busy: true, processing: { stage: 'read', ...counts } }, true).position, null);
+  }
+});
+
+test('check intervals read in whole units without inventing a schedule', async () => {
+  const { intervalLabel } = await import('../public/desktop-ui.mjs');
+  assert.deepEqual([15, 60, 90, 120, 3600, 7200].map(intervalLabel), ['15 seconds', '1 minute', '90 seconds', '2 minutes', '1 hour', '2 hours']);
+  for (const value of [0, -60, 1.5, null, '60']) assert.equal(intervalLabel(value), null);
+});
+
+test('partial or unmatched model output is never presented as an accepted decision', async () => {
+  const { modelOutputPresentation } = await import('../public/desktop-ui.mjs');
+  const output = { entryId: 'note-a', origin: 'local', title: 'Note', atUtc: '2026-10-22T17:20:00Z', text: '{"decision":"review","reason":"Needs a quantity."}' };
+  const published = { entryId: 'note-a', origin: 'local', decision: 'review', reason: 'Needs a quantity.', atUtc: '2026-10-22T17:20:04Z' };
+  for (const status of ['streaming', 'failed', 'stopped']) {
+    const view = modelOutputPresentation({ ...output, status }, published);
+    assert.equal(view.accepted, false); assert.equal(view.verdict, null); assert.match(view.note, /not accepted|Nothing is accepted/);
+  }
+  const complete = modelOutputPresentation({ ...output, status: 'complete' }, published);
+  assert.deepEqual([complete.accepted, complete.verdict], [true, { label: 'review needed', tone: 'warn', reason: 'Needs a quantity.' }]);
+  for (const other of [null, { ...published, entryId: 'note-b' }, { ...published, origin: 'cloud' }, { ...published, atUtc: '2026-10-22T17:19:00Z' }, { ...published, atUtc: undefined }, { ...published, atUtc: 'invalid' }, { ...published, decision: 'submit' }]) {
+    const view = modelOutputPresentation({ ...output, status: 'complete' }, other);
+    assert.equal(view.accepted, false); assert.equal(view.verdict, null);
+  }
+  for (const atUtc of [undefined, null, 'invalid']) assert.equal(modelOutputPresentation({ ...output, atUtc, status: 'complete' }, published).accepted, false);
+  const reconnecting = modelOutputPresentation({ ...output, status: 'streaming' }, null, { disconnected: true });
+  assert.deepEqual([reconnecting.label, reconnecting.live], ['Reconnecting', false]);
+  assert.equal(modelOutputPresentation({ ...output, status: 'streaming' }).live, true);
+  assert.equal(modelOutputPresentation({ ...output, text: '', status: 'streaming' }).empty, 'Waiting for the model’s first response token.');
+  assert.equal(modelOutputPresentation({ ...output, status: 'unexpected' }).label, 'Unavailable');
+});
+
+test('an empty model output names the next action for the current Listener state', async () => {
+  const { modelOutputPresentation } = await import('../public/desktop-ui.mjs');
+  assert.match(modelOutputPresentation(null, null, { enabled: false }).empty, /^Turn the Listener on/);
+  assert.match(modelOutputPresentation(null, null, { enabled: true }).empty, /Choose Check now/);
+  assert.match(modelOutputPresentation(null, null, { enabled: true, busy: true }).empty, /^Reading the Journal/);
+  assert.equal(modelOutputPresentation(null).label, 'Not run');
+});
+
 test('a published decision appears once when model start and completion timestamps differ', async () => {
   const { latestDecisions } = await import('../public/desktop-ui.mjs');
   const row = { entryId: 'note-a', origin: 'local', version: 1, decision: 'review', reason: 'An exact quantity is needed.', status: 'observed', atUtc: '2026-10-22T17:20:00Z' };

@@ -39,10 +39,11 @@
     </div>
   </aside>
   <main>
-    <div id="notice" class="notice" role="status" hidden></div>
+    <div id="notice" class="notice" role="status" hidden><span id="notice-text"></span><button id="dismiss-notice" type="button" class="notice-close" aria-label="Dismiss message">×</button></div>
     <section class="model-setup" id="model-setup" aria-labelledby="model-setup-title" hidden>
-      <div><h2 id="model-setup-title">Set up the local model</h2><p id="model-setup-status" role="status">Reads your notes on this computer. Order tickets work without it.</p><div class="setup-progress" id="model-progress-wrap" hidden><progress id="model-progress" max="100" aria-label="Local model setup"></progress><span id="model-progress-label" class="mono"></span></div></div>
-      <button id="setup-model" type="button">Set up</button>
+      <img class="setup-mark" src="/flusso-mark.png" alt="" width="36" height="36">
+      <div class="setup-copy"><h2 id="model-setup-title">Set up the local model</h2><p id="model-setup-status" role="status">Reads your notes on this computer. Order tickets work without it.</p><div class="setup-progress" id="model-progress-wrap" hidden><progress id="model-progress" max="100" aria-label="Local model setup"></progress><span id="model-progress-label" class="mono"></span></div></div>
+      <button id="setup-model" type="button" class="primary">Set up</button>
     </section>
 
     <section id="view-journal" class="view" hidden>
@@ -52,107 +53,127 @@
           <label class="sr-only" for="journal-filter">Notebook</label><select id="journal-filter"><option value="">All notebooks</option></select>
           <label class="sr-only" for="result-filter">Listener result</label><select id="result-filter"></select>
           <button id="sync" type="button" class="icon-button" title="Sync cloud Journal" aria-label="Sync cloud Journal"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16 10a6 6 0 0 1-10.4 4.1M4 10a6 6 0 0 1 10.4-4.1"/><path d="M14.5 2.5v3.6h-3.6M5.5 17.5v-3.6h3.6"/></svg></button>
-          <button id="new-entry" type="button" class="primary">New entry</button>
+          <button id="new-entry" type="button" class="primary"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg>New entry</button>
         </div>
       </header>
-      <section id="editor" class="card editor" hidden>
-        <div class="card-head"><h2 id="editor-title">New entry</h2><button id="cancel-edit" type="button" class="ghost">Cancel</button></div>
-        <form id="entry-form">
-          <div class="field-grid"><label>Notebook<select id="entry-notebook" required></select></label><label>Status<select id="entry-status"><option value="watching">Watching</option><option value="reviewed">Reviewed</option><option value="closed">Closed</option></select></label></div>
-          <label>Title<input id="entry-title" maxlength="200" required></label>
-          <div class="entry-body-field"><div class="label-row"><label for="entry-body">Text</label><div class="ticket-tools"><button id="insert-ticket" type="button" class="link-button">Add order ticket</button><button id="insert-close-ticket" type="button" class="link-button">Add close ticket</button></div></div><textarea id="entry-body" rows="10" maxlength="20000" placeholder="Markdown"></textarea></div>
-          <details><summary>Structured signal</summary><label class="sr-only" for="entry-signal">Signal JSON</label><textarea id="entry-signal" class="mono" rows="7" placeholder="product.journal_signal.v1"></textarea></details>
-          <div class="form-actions"><span class="hint">Saved on this computer.</span><button type="submit" class="primary">Save</button></div>
-        </form>
-      </section>
       <div class="journal-layout">
         <div class="entry-pane">
           <div class="entry-list" id="entry-list" aria-label="Journal entries"></div>
           <form id="notebook-form" class="notebook-form"><label class="sr-only" for="notebook-name">New notebook</label><input id="notebook-name" placeholder="New notebook" maxlength="120" required><button type="submit" class="icon-button" aria-label="Add notebook" title="Add notebook"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg></button></form>
         </div>
-        <article class="entry-detail" id="entry-detail"><div class="empty-art"><img src="/flusso-mark.png" alt="" width="48" height="48"><p>Pick an entry or write a new one.</p></div></article>
+        <article class="entry-detail" id="entry-detail" tabindex="-1" aria-label="Selected entry"><div class="empty-art"><img src="/flusso-mark.png" alt="" width="40" height="40"><p>Pick an entry or write a new one.</p></div></article>
+        <section id="editor" class="editor" aria-labelledby="editor-title" hidden>
+          <form id="entry-form">
+            <div class="editor-head"><h2 id="editor-title">New entry</h2><div class="editor-fields"><label>Notebook<select id="entry-notebook" required></select></label><label>Status<select id="entry-status"><option value="watching">Watching</option><option value="reviewed">Reviewed</option><option value="closed">Closed</option></select></label></div></div>
+            <label class="title-field">Title<input id="entry-title" maxlength="200" required placeholder="What is this note about?"></label>
+            <div class="entry-body-field"><div class="label-row"><label for="entry-body">Text</label><div class="ticket-tools"><button id="insert-ticket" type="button" class="chip-button">Add order ticket</button><button id="insert-close-ticket" type="button" class="chip-button">Add close ticket</button></div></div><textarea id="entry-body" rows="14" maxlength="20000" placeholder="Write in Markdown. Research notes never place orders; only an explicit ticket can."></textarea></div>
+            <details><summary>Structured signal</summary><label class="sr-only" for="entry-signal">Signal JSON</label><textarea id="entry-signal" class="mono" rows="7" placeholder="product.journal_signal.v1"></textarea></details>
+            <div class="form-actions"><span class="hint">Save to this computer.</span><button id="cancel-edit" type="button" class="ghost">Cancel</button><button type="submit" class="primary">Save</button></div>
+          </form>
+        </section>
       </div>
     </section>
 
     <section id="view-listener" class="view">
-      <header class="view-head">
-        <h1>Listener</h1>
+      <header class="view-head listener-head">
+        <div class="title-block"><h1>Listener</h1><p class="status-line" id="last-check">Not checked yet</p></div>
         <label class="switch switch-lg"><input id="enabled" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span id="enabled-label">Off</span></label>
       </header>
-      <p class="status-line" id="last-check">Not checked yet</p>
-      <div class="connect-hint" id="connect-hint" hidden><span>Connect Flusso for the cloud Journal and auto-trade.</span><button id="connect" type="button" class="primary">Connect</button></div>
+      <div class="connect-hint" id="connect-hint" hidden><span>Connect Flusso for the cloud Journal and auto-trade. Local notes work without it.</span><button id="connect" type="button">Connect</button></div>
       <div class="listener-toolbar">
-        <div class="watch-summary" id="watch-summary"></div>
-        <div class="listener-actions"><button id="check-now" type="button">Check now</button><button id="configure-listener" type="button" class="primary" aria-expanded="false" aria-controls="listener-configuration">Configure Listener</button></div>
+        <dl class="watch-summary" id="watch-summary"></dl>
+        <div class="listener-actions"><button id="check-now" type="button">Check now</button><button id="configure-listener" type="button" class="primary" aria-expanded="false" aria-controls="listener-configuration"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h7M15 6h1M4 14h1M9 14h7"/><circle cx="13" cy="6" r="2"/><circle cx="7" cy="14" r="2"/></svg>Configure</button></div>
       </div>
-      <section class="process-panel" aria-labelledby="model-output-heading">
-        <div class="process-head"><h2 id="model-output-heading">Model output</h2><span id="model-output-status" role="status">Not run</span></div>
-        <p id="model-output-source" class="process-message"></p>
-        <div id="model-output" class="event-body code-scroll mono" role="region" tabindex="0" aria-labelledby="model-output-heading model-output-source" hidden></div>
-        <p id="model-output-empty" class="process-message">Each check reviews the newest selected research note. Its actual response appears here as it is generated.</p>
-      </section>
-      <details class="process-panel">
-        <summary class="process-head">Operations log <span id="process-state" class="process-state">Waiting</span></summary>
-        <p id="process-message" class="process-message"></p>
-        <ol id="process-events" class="process-events" aria-label="Processing updates"></ol>
-      </details>
-      <section class="decisions-panel" aria-labelledby="decisions-heading">
-        <div class="process-head"><h2 id="decisions-heading">Latest decisions</h2><button id="all-activity" type="button" class="link-button">View all activity</button></div>
-        <div id="latest-decisions" class="latest-decisions"></div>
-      </section>
-      <section id="listener-configuration" class="listener-configuration" aria-labelledby="configuration-heading" hidden>
-      <div class="configuration-head"><h2 id="configuration-heading">Listener settings</h2><button id="close-configuration" type="button" class="ghost">Close settings</button></div>
-      <form id="settings-form" class="settings">
-        <section class="card">
-          <h2>Watch</h2>
-          <div class="field-grid">
-            <fieldset class="segmented"><legend>Source</legend>
-              <label><input type="radio" name="source" value="local"><span>Local</span></label>
-              <label><input type="radio" name="source" value="cloud"><span>Cloud</span></label>
-              <label><input type="radio" name="source" value="both"><span>Both</span></label>
-            </fieldset>
-            <label>Check every<select id="interval"><option value="15">15 seconds</option><option value="30">30 seconds</option><option value="60">1 minute</option><option value="120">2 minutes</option><option value="300">5 minutes</option><option value="900">15 minutes</option><option value="1800">30 minutes</option><option value="3600">1 hour</option></select></label>
+      <div class="listener-body">
+        <section class="review-desk" id="review-desk" data-state="off" aria-labelledby="model-output-heading">
+          <header class="desk-head">
+            <span class="agent" aria-hidden="true"><span class="agent-mark"><img src="/flusso-mark.png" alt="" width="44" height="44"></span><span class="agent-dot"></span></span>
+            <div class="desk-state">
+              <p class="desk-state-line"><strong id="process-state" class="process-state" role="status">Off</strong><span id="process-stage" class="stage-chip" hidden></span></p>
+              <p id="process-message" class="process-message"></p>
+            </div>
+          </header>
+          <div class="output-frame" id="output-frame" data-status="none">
+            <div class="output-head">
+              <h2 id="model-output-heading" tabindex="-1">Model output</h2>
+              <span id="model-output-status" class="output-status">Not run</span>
+            </div>
+            <div id="model-output-source" class="output-source" hidden></div>
+            <div id="model-verdict" class="verdict" hidden>
+              <p class="verdict-kicker">Published decision</p>
+              <div class="verdict-body"><span id="model-verdict-label" class="pill"></span><p id="model-verdict-reason" class="verdict-reason"></p></div>
+              <button id="model-raw-toggle" type="button" class="link-button" aria-expanded="false" aria-controls="model-output">Show raw response</button>
+            </div>
+            <div id="model-output" class="code-scroll mono output-raw" role="region" tabindex="0" aria-labelledby="model-output-heading" hidden></div>
+            <p id="model-output-note" class="output-note" hidden></p>
+            <p id="model-output-empty" class="output-empty">Each check reviews the newest selected research note. Its actual response appears here as it is generated.</p>
           </div>
-          <fieldset class="picks"><legend>Notebooks <span class="hint">· none selected means all</span></legend><div id="watch-notebooks" class="chips"></div></fieldset>
-          <details><summary>Model instructions</summary>
-            <label>Only notes under this heading<input id="section" maxlength="200" placeholder="Optional"></label>
-            <label>What the model should do<textarea id="instructions" rows="3" maxlength="1000" placeholder="Optional"></textarea></label>
+        </section>
+        <div class="listener-secondary">
+          <section class="decisions-panel" aria-labelledby="decisions-heading">
+            <div class="panel-head"><h2 id="decisions-heading">Latest decisions</h2><button id="all-activity" type="button" class="link-button">All activity</button></div>
+            <div id="latest-decisions" class="latest-decisions"></div>
+          </section>
+          <details class="ops-log">
+            <summary><span>Operations log</span><span id="process-count" class="ops-count mono"></span></summary>
+            <ol id="process-events" class="process-events" aria-label="Processing updates"></ol>
+            <p id="process-events-empty" class="empty">Journal reads, checks, validation and receipts are listed here during a check.</p>
           </details>
+        </div>
+        <section id="listener-configuration" class="listener-configuration" aria-labelledby="configuration-heading" hidden>
+        <div class="configuration-head"><h2 id="configuration-heading">Listener settings</h2><button id="close-configuration" type="button" class="ghost">Close</button></div>
+        <form id="settings-form" class="settings">
+          <section class="card">
+            <h2>Watch</h2>
+            <div class="field-grid">
+              <fieldset class="segmented"><legend>Source</legend>
+                <label><input type="radio" name="source" value="local"><span>Local</span></label>
+                <label><input type="radio" name="source" value="cloud"><span>Cloud</span></label>
+                <label><input type="radio" name="source" value="both"><span>Both</span></label>
+              </fieldset>
+              <label>Check every<select id="interval"><option value="15">15 seconds</option><option value="30">30 seconds</option><option value="60">1 minute</option><option value="120">2 minutes</option><option value="300">5 minutes</option><option value="900">15 minutes</option><option value="1800">30 minutes</option><option value="3600">1 hour</option></select></label>
+            </div>
+            <fieldset class="picks"><legend>Notebooks <span class="hint">· none selected means all</span></legend><div id="watch-notebooks" class="chips"></div></fieldset>
+            <details><summary>Model instructions</summary>
+              <label>Only notes under this heading<input id="section" maxlength="200" placeholder="Optional"></label>
+              <label>What the model should do<textarea id="instructions" rows="3" maxlength="1000" placeholder="Optional"></textarea></label>
+            </details>
+          </section>
+          <section class="card trade-card">
+            <div class="card-head"><h2>Auto-trade</h2><label class="switch"><input id="execution" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span class="sr-only">Auto-trade</span></label></div>
+            <p class="hint">Any <code>flusso-orders</code> ticket from the notebooks you pick, written within the window below and not yet acted on, is placed or refused, even if it arrived while the app was closed. Included with Flusso Automate and Pro; each order counts toward your plan’s daily connected-order allowance.</p>
+            <div class="field-grid">
+              <label>Account<select id="account"><option value="">Connect Flusso first</option></select></label>
+              <label>Act on tickets from the last<select id="max-age"><option value="900">15 minutes</option><option value="1800">30 minutes</option><option value="3600">1 hour</option><option value="7200">2 hours</option><option value="21600">6 hours</option><option value="43200">12 hours</option><option value="86400">24 hours</option></select></label>
+              <label>Max slippage<span class="affix"><input id="max-slippage" type="number" inputmode="decimal" step="any" min="0.01" max="100" placeholder="None"><span>%</span></span></label>
+              <label>Max per order<span class="affix"><span>$</span><input id="max-order" type="number" inputmode="decimal" step="any" min="0.01" placeholder="None"></span></label>
+              <label>Max per ticket<span class="affix"><span>$</span><input id="max-ticket" type="number" inputmode="decimal" step="any" min="0.01" placeholder="Required for auto-trade"></span></label>
+              <label>Max leverage<span class="affix"><input id="max-leverage" type="number" inputmode="decimal" step="any" min="1" placeholder="Required for auto-trade"><span>×</span></span></label>
+              <label>Tickets per day<input id="max-tickets" type="number" inputmode="numeric" step="1" min="1" max="500"></label>
+              <label>Min 24h volume<span class="affix"><span>$</span><input id="min-volume" type="number" inputmode="decimal" step="any" min="1" placeholder="None"></span></label>
+              <label class="switch switch-row"><input id="together" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span>Send legs together</span></label>
+              <label class="switch switch-row"><input id="write-back" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span>Note results on the entry</span></label>
+            </div>
+            <details><summary>Ticket format</summary><div class="code-scroll"><pre id="ticket-example"></pre></div><p class="hint">Quantity is in venue contracts. Use instrument ids from Flusso market facts. Your limits above tighten each order’s own conditions.</p></details>
+          </section>
+          <section class="card" id="model-card">
+            <h2>Local model</h2>
+            <p id="model-state" class="hint">Checking…</p>
+            <button id="setup-model-panel" type="button" hidden>Set up</button>
+            <div class="code-scroll" id="model-manual-command"><code>ollama pull qwen3:1.7b</code></div>
+          </section>
+          <div class="form-actions"><button id="save-settings" type="submit" class="primary">Saved</button></div>
+        </form>
         </section>
-        <section class="card">
-          <div class="card-head"><h2>Auto-trade</h2><label class="switch"><input id="execution" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span class="sr-only">Auto-trade</span></label></div>
-          <p class="hint">Any <code>flusso-orders</code> ticket from the notebooks you pick, written within the window below and not yet acted on, is placed or refused, even if it arrived while the app was closed. Included with Flusso Automate and Pro; each order counts toward your plan’s daily connected-order allowance.</p>
-          <div class="field-grid">
-            <label>Account<select id="account"><option value="">Connect Flusso first</option></select></label>
-            <label>Act on tickets from the last<select id="max-age"><option value="900">15 minutes</option><option value="1800">30 minutes</option><option value="3600">1 hour</option><option value="7200">2 hours</option><option value="21600">6 hours</option><option value="43200">12 hours</option><option value="86400">24 hours</option></select></label>
-            <label>Max slippage<span class="affix"><input id="max-slippage" type="number" inputmode="decimal" step="any" min="0.01" max="100" placeholder="None"><span>%</span></span></label>
-            <label>Max per order<span class="affix"><span>$</span><input id="max-order" type="number" inputmode="decimal" step="any" min="0.01" placeholder="None"></span></label>
-            <label>Max per ticket<span class="affix"><span>$</span><input id="max-ticket" type="number" inputmode="decimal" step="any" min="0.01" placeholder="Required for auto-trade"></span></label>
-            <label>Max leverage<span class="affix"><input id="max-leverage" type="number" inputmode="decimal" step="any" min="1" placeholder="Required for auto-trade"><span>×</span></span></label>
-            <label>Tickets per day<input id="max-tickets" type="number" inputmode="numeric" step="1" min="1" max="500"></label>
-            <label>Min 24h volume<span class="affix"><span>$</span><input id="min-volume" type="number" inputmode="decimal" step="any" min="1" placeholder="None"></span></label>
-            <label class="switch switch-row"><input id="together" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span>Send legs together</span></label>
-            <label class="switch switch-row"><input id="write-back" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span>Note results on the entry</span></label>
-          </div>
-          <details><summary>Ticket format</summary><div class="code-scroll"><pre id="ticket-example"></pre></div><p class="hint">Quantity is in venue contracts. Use instrument ids from Flusso market facts. Your limits above tighten each order’s own conditions.</p></details>
-        </section>
-        <section class="card" id="model-card">
-          <h2>Local model</h2>
-          <p id="model-state" class="hint">Checking…</p>
-          <button id="setup-model-panel" type="button" hidden>Set up</button>
-          <div class="code-scroll" id="model-manual-command"><code>ollama pull qwen3:1.7b</code></div>
-        </section>
-        <div class="form-actions"><button id="save-settings" type="submit" class="primary">Saved</button></div>
-      </form>
-      </section>
+      </div>
     </section>
 
     <section id="view-activity" class="view" hidden>
-      <header class="view-head"><h1>Activity</h1></header>
+      <header class="view-head"><div class="title-block"><h1>Activity</h1><p class="status-line">Every Listener decision and order receipt, newest first. Unconfirmed results stay on top.</p></div></header>
       <div id="activity-list" class="activity-list"></div>
     </section>
   </main>
 </div>
-<aside class="update-corner" id="update-corner" aria-label="App update" hidden><button id="dismiss-update" class="dismiss-update" type="button" aria-label="Dismiss">×</button><div><strong id="update-title">Update ready</strong><p class="hint" id="update-detail" role="status"></p><div class="setup-progress" id="update-progress-wrap" hidden><progress id="update-progress" max="100" aria-label="Update download"></progress><span id="update-progress-label" class="mono"></span></div></div><button id="update-action" type="button">Download</button></aside>
+<aside class="update-corner" id="update-corner" aria-label="App update" hidden><button id="dismiss-update" class="dismiss-update" type="button" aria-label="Dismiss">×</button><img class="update-mark" src="/flusso-mark.png" alt="" width="28" height="28"><div><strong id="update-title">Update ready</strong><p class="hint" id="update-detail" role="status"></p><div class="setup-progress" id="update-progress-wrap" hidden><progress id="update-progress" max="100" aria-label="Update download"></progress><span id="update-progress-label" class="mono"></span></div></div><button id="update-action" type="button">Download</button></aside>
 </body>
 </html>

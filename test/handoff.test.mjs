@@ -32,7 +32,12 @@ test('handoff explains reviewed research, startup baseline, malformed/stale tick
     assert.equal(describe().code, 'research_only'); assert.match(describe().reason, /do not authorize submission/);
     const reviewed = describe({ status: 'reviewed', body: '```json\n{"proposedOrders":[]}\n```' });
     assert.equal(reviewed.code, 'reviewed'); assert.equal(reviewed.kind, 'research'); assert.match(reviewed.reason, /No explicit flusso-orders/);
+    assert.match(reviewed.reason, /newest selected note/);
+    assert.doesNotMatch(reviewed.reason, /only watching entries are considered/);
     assert.equal(describe({}, { checkpoint: { version: entry.version, state: 'baseline' } }).code, 'baselined');
+    assert.match(describe({}, { checkpoint: { version: entry.version, state: 'baseline' } }).reason, /still reviewed each period/);
+    assert.doesNotMatch(describe({ status: 'closed' }).reason, /can be reviewed again/);
+    assert.doesNotMatch(describe({ status: 'reviewed', body: ticket() }).reason, /can be reviewed again/);
     assert.equal(describe({}, { checkpoint: { version: entry.version - 1, state: 'baseline' } }).code, 'research_only');
     assert.equal(describe({ body: '```flusso-orders\ninvalid\n```' }).code, 'malformed_ticket');
     assert.equal(describe({ body: ticket(), updatedAtUtc: new Date(now - 86400000).toISOString() }).code, 'stale_ticket');

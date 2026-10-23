@@ -1,6 +1,6 @@
 import { formatCount, formatPrice, formatQuantity, formatPercentLabel, formatMoney, formatPercent } from './format.mjs';
 import { renderMarkdown } from './markdown.mjs';
-import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, activityStatus, listenerResult, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions, receiptDetails } from './desktop-ui.mjs';
+import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, activityStatus, listenerResult, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions, receiptDetails, modelOutputPresentation, intervalLabel } from './desktop-ui.mjs';
 
 const $ = id => document.getElementById(id);
 let csrf, snapshot, selected = null, editing = null, entryRetryKey = crypto.randomUUID();
@@ -18,7 +18,7 @@ const TICKET_FENCE = /^(```|~~~)[ \t]*flusso-(?:orders|close)[ \t]*\n[\s\S]*?^\1
 
 function element(tag, content, className) { const node = document.createElement(tag); if (content != null) node.textContent = content; if (className) node.className = className; return node; }
 function pill(text, tone) { return element('span', text, `pill${tone ? ' ' + tone : ''}`); }
-function notify(message, success = false) { $('notice').hidden = false; $('notice').textContent = message; $('notice').className = `notice${success ? ' success' : ''}`; clearTimeout(notify.timer); if (success) notify.timer = setTimeout(() => { $('notice').hidden = true; }, 5000); }
+function notify(message, success = false) { $('notice').hidden = false; $('notice-text').textContent = message; $('notice').className = `notice${success ? ' success' : ''}`; clearTimeout(notify.timer); if (success) notify.timer = setTimeout(() => { $('notice').hidden = true; }, 5000); }
 async function api(path, body, headers = {}) {
   const response = await fetch(path, { method: body === undefined ? 'GET' : 'POST', headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json', 'x-flusso-csrf': csrf }), ...headers }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const value = await response.json(); if (!response.ok) throw new Error(value.error || 'That did not work. Try again.'); return value;
@@ -27,6 +27,11 @@ async function action(button, work) { if (button?.disabled) return; if (button) 
 function when(value) { const date = new Date(value); return Number.isFinite(date.getTime()) ? date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'; }
 function timeOf(value) { const date = new Date(value); return Number.isFinite(date.getTime()) ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'; }
 function changed(key, value) { const next = JSON.stringify(value); if (renderKeys.get(key) === next) return false; renderKeys.set(key, next); return true; }
+// Writes only real changes, so live regions announce a state once rather than on every token.
+function setText(id, value) { const node = $(id); if (node.textContent !== value) node.textContent = value; }
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+function reveal(node, block = 'start') { node.scrollIntoView({ behavior: reducedMotion.matches ? 'auto' : 'smooth', block }); }
+$('dismiss-notice').addEventListener('click', () => { clearTimeout(notify.timer); $('notice').hidden = true; });
 
 /* ------------------------------------------------------------ appearance */
 function applyTheme(mode = themeMode) {
@@ -142,6 +147,8 @@ for (const id of ['setup-model', 'setup-model-panel']) $(id).addEventListener('c
 
 /* ----------------------------------------------------------------- views */
 function switchView(view) {
+  // A new page opens at its top; returning to the same page keeps the reader's place.
+  if ($(`view-${view}`).hidden) window.scrollTo({ top: 0 });
   document.querySelectorAll('.view').forEach(node => { node.hidden = node.id !== `view-${view}`; });
   document.querySelectorAll('[data-view]').forEach(button => { button.classList.toggle('active', button.dataset.view === view); if (button.dataset.view === view) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current'); });
   if (view === 'listener') loadAccounts();
@@ -163,23 +170,25 @@ async function load({ forms = false } = {}) {
   $('journal-filter').replaceChildren(new Option('All notebooks', ''), ...snapshot.notebooks.map(row => new Option(row.origin === 'cloud' ? `${row.name} · cloud` : row.name, `${row.origin}:${row.id}`)));
   $('journal-filter').value = selectedFilter;
   if (changed('entries', snapshot.entries)) renderEntries();
-  if (changed('activity', [snapshot.activity, snapshot.attempts])) renderActivity();
+  if (changed('activity', [snapshot.activity, snapshot.attempts, snapshot.settings.enabled])) renderActivity();
   renderProcess(); renderDecisions();
   if (forms || !formDirty) fillSettings();
 }
 function renderStatus() {
   const { settings, listener } = snapshot;
   const tone = !settings.enabled ? '' : listener.lastError ? 'warn' : 'on';
-  $('listener-dot').className = `nav-dot ${tone}`;
-  $('listener-dot-label').textContent = !settings.enabled ? 'Off' : listener.lastError ? 'Needs attention' : 'On';
-  const parts = [];
-  if (!settings.enabled) parts.push('Off. Turn it on to start watching.');
-  else if (listener.lastError) parts.push(listener.lastError);
-  else parts.push(listener.lastCheckedAtUtc ? `Last checked ${when(listener.lastCheckedAtUtc)}` : 'Waiting for the first check');
-  if (settings.enabled && listener.cloudComplete === false) parts.push('Cloud read incomplete');
-  if (settings.enabled) parts.push(settings.executionEnabled ? 'Auto-trade on' : 'Auto-trade off');
-  $('last-check').textContent = parts.join(' · ');
-  $('last-check').classList.toggle('warn', Boolean(settings.enabled && listener.lastError));
+  $('listener-dot').className = `nav-dot ${tone}${settings.enabled && listener.busy ? ' busy' : ''}`;
+  $('listener-dot-label').textContent = !settings.enabled ? 'Off' : listener.lastError ? 'Needs attention' : listener.busy ? 'Reviewing' : 'On';
+  // The schedule lives here; the review desk owns state, errors and the next action.
+  const interval = intervalLabel(settings.intervalSeconds), parts = [];
+  if (!settings.enabled) parts.push('Not checking');
+  else {
+    if (interval) parts.push(`Checks every ${interval}`);
+    parts.push(listener.lastCheckedAtUtc ? `Last checked ${when(listener.lastCheckedAtUtc)}` : 'Not checked yet');
+    if (listener.cloudComplete === false) parts.push('Cloud read incomplete');
+  }
+  setText('last-check', parts.join(' · '));
+  $('last-check').classList.toggle('warn', Boolean(settings.enabled && listener.cloudComplete === false));
   const pending = snapshot.attempts.filter(row => ['pending', 'unknown'].includes(row.status)).length;
   $('activity-count').hidden = !pending; $('activity-count').textContent = formatCount(pending);
   $('check-now').disabled = !settings.enabled || Boolean(listener.busy);
@@ -191,15 +200,23 @@ function renderWatchSummary() {
   const { settings, notebooks } = snapshot;
   const names = notebooks.filter(row => settings.notebookIds.includes(row.id)).map(row => row.name);
   const account = accounts.find(row => row.id === settings.accountId);
-  $('watch-summary').replaceChildren(element('span', names.length ? `Watching ${names.join(', ')}` : 'Watching all notebooks'), element('span', settings.executionEnabled ? 'Auto-trade on' : 'Auto-trade off'), element('span', account ? account.displayName || account.publicId : settings.accountId ? 'Account selected' : 'No trading account'));
+  const item = (term, value, state) => { const row = element('div', null, 'watch-item'); if (state) row.dataset.state = state; const detail = element('dd', value); detail.title = value; row.append(element('dt', term), detail); return row; };
+  const next = [
+    ['Watching', names.length ? names.join(', ') : 'All notebooks'],
+    ['Auto-trade', settings.executionEnabled ? 'On' : 'Off', settings.executionEnabled ? 'on' : ''],
+    ['Account', account ? account.displayName || account.publicId : settings.accountId ? 'Selected' : 'None'],
+  ];
+  if (!changed('watch-summary', next)) return;
+  $('watch-summary').replaceChildren(...next.map(row => item(...row)));
 }
 
 function configureListener(open) {
   $('listener-configuration').hidden = !open;
   $('configure-listener').setAttribute('aria-expanded', String(open));
-  if (open) { $('listener-configuration').scrollIntoView({ behavior: 'smooth', block: 'start' }); $('close-configuration').focus({ preventScroll: true }); }
+  if (open) { reveal($('listener-configuration'), 'nearest'); $('close-configuration').focus({ preventScroll: true }); }
   else $('configure-listener').focus();
 }
+$('listener-configuration').addEventListener('keydown', event => { if (event.key === 'Escape' && !event.defaultPrevented) { event.preventDefault(); configureListener(false); } });
 $('configure-listener').addEventListener('click', () => configureListener($('listener-configuration').hidden));
 $('close-configuration').addEventListener('click', () => configureListener(false));
 $('all-activity').addEventListener('click', () => switchView('activity'));
@@ -208,48 +225,92 @@ function sourceButton(row, label = row.title || 'Open Journal entry') {
   const entry = snapshot.entries.find(item => item.id === row.entryId && (!row.origin || row.origin === item.origin));
   if (!entry) return element('span', label);
   const button = element('button', label, 'source-link'); button.type = 'button';
-  button.addEventListener('click', () => { selected = entry; switchView('journal'); renderEntries(); renderDetail(); $('entry-detail').scrollIntoView({ block: 'nearest' }); });
+  button.addEventListener('click', () => { openEntry(entry); });
   return button;
+}
+function openEntry(entry) {
+  switchView('journal'); if (!leaveEditor()) return;
+  selected = entry; renderEntries();
+  reveal($('entry-detail'), 'start'); $('entry-detail').focus({ preventScroll: true });
+}
+
+// The raw response stays one click away once a decision is published.
+let rawOpen = false;
+$('model-raw-toggle').addEventListener('click', () => { rawOpen = !rawOpen; renderProcess(); if (rawOpen) $('model-output').focus({ preventScroll: true }); });
+
+// Appends only what arrived, and follows new text only while the reader is already
+// at the end of it. Scrolling up to read holds the position; the page never moves.
+function renderOutputText(output) {
+  const node = $('model-output'), text = output?.text ?? '', key = output ? `${output.origin}:${output.entryId}:${output.atUtc}` : '';
+  if (node.dataset.key !== key) { node.dataset.key = key; node.textContent = text; node.scrollTop = 0; return; }
+  const current = node.textContent;
+  if (text === current) return;
+  const following = node.scrollHeight - node.scrollTop - node.clientHeight < 24;
+  if (current && text.startsWith(current)) node.append(text.slice(current.length)); else node.textContent = text;
+  if (following) node.scrollTop = node.scrollHeight;
 }
 
 function renderProcess() {
-  const output = snapshot.listener.modelOutput;
-  const partial = output?.text ? 'partial output shown' : 'no output';
-  $('model-output-status').textContent = output ? ({ streaming: streamDisconnected ? 'Reconnecting · last received output' : 'Streaming', complete: 'Complete', failed: `Failed · ${partial}`, stopped: `Stopped · ${partial}` }[output.status] ?? 'Unavailable') : 'Not run';
-  $('model-output-source').hidden = !output;
-  $('model-output-source').textContent = output ? `${output.title} · ${when(output.atUtc)}` : '';
-  $('model-output').hidden = !output?.text;
-  $('model-output').textContent = output?.text ?? '';
-  $('model-output-empty').hidden = Boolean(output?.text);
-  if (output && !output.text) $('model-output-empty').textContent = output.status === 'streaming' ? 'Waiting for the model’s first response token.' : 'The model returned no response.';
+  const { listener, settings } = snapshot, output = listener.modelOutput;
+  const state = processingPresentation(listener, settings.enabled);
+  const view = modelOutputPresentation(output, listener.lastModelOutput, { disconnected: streamDisconnected, enabled: settings.enabled, busy: listener.busy });
+  const desk = $('review-desk');
+  desk.dataset.state = state.state; desk.dataset.live = String(view.live);
+  setText('process-state', state.title);
+  const stage = state.busy ? `${state.label}${state.position ? ` · ${formatCount(state.position.index)} of ${formatCount(state.position.total)}` : ''}` : '';
+  setText('process-stage', stage); $('process-stage').hidden = !stage;
+  setText('process-message', state.message);
 
-  const state = processingPresentation(snapshot.listener, snapshot.settings.enabled);
-  $('process-state').textContent = state.label; $('process-state').className = `process-state ${state.tone}${state.busy ? ' busy' : ''}`;
-  $('process-message').textContent = state.message;
-  const events = (snapshot.listener.events ?? []).slice(-30);
+  $('output-frame').dataset.status = view.status;
+  setText('model-output-heading', !settings.enabled && output ? 'Last model response' : 'Model output');
+  setText('model-output-status', !settings.enabled && view.status === 'complete' ? 'Last check complete' : view.label); $('model-output-status').className = `output-status ${view.tone}`;
+  if (changed('model-output-source', output ? [output.entryId, output.origin, output.title, output.atUtc, snapshot.entries.some(row => row.id === output.entryId && row.origin === output.origin)] : null)) {
+    const source = $('model-output-source');
+    if (output) { const time = element('time', when(output.atUtc)); time.dateTime = output.atUtc; source.replaceChildren(sourceButton(output, output.title || 'Journal entry'), time); }
+    else source.replaceChildren();
+    source.hidden = !output;
+  }
+  // Keep the raw answer open if a keyboard reader is using it as it completes.
+  if (view.verdict && $('model-output').contains(document.activeElement)) rawOpen = true;
+  // Scheduled checks must not strand a keyboard reader inside a hidden verdict.
+  if (!view.verdict && $('model-verdict').contains(document.activeElement)) $('model-output-heading').focus({ preventScroll: true });
+  $('model-verdict').hidden = !view.verdict;
+  if (view.verdict) {
+    setText('model-verdict-label', view.verdict.label); $('model-verdict-label').className = `pill ${view.verdict.tone}`;
+    setText('model-verdict-reason', view.verdict.reason || 'The model gave no reason.');
+    setText('model-raw-toggle', rawOpen ? 'Hide raw response' : 'Show raw response'); $('model-raw-toggle').setAttribute('aria-expanded', String(rawOpen));
+  }
+  renderOutputText(output);
+  $('model-output').hidden = !output?.text || (Boolean(view.verdict) && !rawOpen);
+  setText('model-output-note', view.note ?? ''); $('model-output-note').hidden = !view.note;
+  setText('model-output-empty', view.empty ?? ''); $('model-output-empty').hidden = !view.empty;
+
+  const events = (listener.events ?? []).slice(-30);
   if (!changed('process-events', events)) return;
   const list = $('process-events'), atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
   list.replaceChildren(...events.map(row => {
     const item = element('li', null, `process-event${row.stage === 'error' ? ' warn' : ''}`), time = element('time', timeOf(row.atUtc)); time.dateTime = row.atUtc;
-    const body = element('div', null, 'event-body');
+    const head = element('div', null, 'event-head'), body = element('div', null, 'event-body');
+    head.append(element('span', processStage(row.stage), 'event-stage'), time);
     if (row.title) body.append(sourceButton(row));
     if (row.message) body.append(element('p', row.message));
-    item.append(time, element('span', processStage(row.stage), 'event-stage'), body); return item;
+    item.append(head, body); return item;
   }));
-  list.hidden = !events.length;
+  list.hidden = !events.length; $('process-events-empty').hidden = Boolean(events.length);
+  setText('process-count', events.length ? `${formatCount(events.length)} update${events.length === 1 ? '' : 's'}` : '');
   if (atBottom) list.scrollTop = list.scrollHeight;
 }
 
 function renderDecisions() {
   const latest = latestDecisions(snapshot.activity, snapshot.listener.lastModelOutput);
-  if (!changed('decisions', latest)) return;
+  if (!changed('decisions', [latest, snapshot.settings.enabled])) return;
   $('latest-decisions').replaceChildren(...latest.map(row => {
-    const item = element('article', null, 'decision-row'), source = element('div', null, 'decision-source'), status = activityStatus(row);
+    const item = element('article', null, 'decision-row'), top = element('div', null, 'decision-top'), source = element('div', null, 'decision-source'), status = activityStatus(row);
     const time = element('time', when(row.atUtc)); time.dateTime = row.atUtc;
-    source.append(sourceButton(row), time);
-    item.append(source, pill(status.label, status.tone), element('p', row.reason || 'Processing this entry.')); return item;
+    top.append(pill(status.label, status.tone), time); source.append(sourceButton(row));
+    item.append(top, source, element('p', row.reason || 'Processing this entry.', 'decision-excerpt')); return item;
   }));
-  if (!latest.length) $('latest-decisions').append(element('p', 'Published model summaries and order results will appear here after a check.', 'empty'));
+  if (!latest.length) $('latest-decisions').append(element('p', snapshot.settings.enabled ? 'No decisions yet. Each published model decision and order result is listed here after a check.' : 'No decisions yet. Turn the Listener on; published model decisions and order results are listed here.', 'empty'));
 }
 
 /* -------------------------------------------------------------- settings */
@@ -295,7 +356,7 @@ async function saveSettings(message) {
 $('settings-form').addEventListener('input', () => { formDirty = true; $('save-settings').disabled = false; $('save-settings').textContent = 'Save'; });
 $('settings-form').addEventListener('submit', event => { event.preventDefault(); action(event.submitter, () => saveSettings('Saved.')); });
 // Switches act immediately, like any other switch.
-$('enabled').addEventListener('change', event => { event.stopPropagation(); action(null, () => saveSettings($('enabled').checked ? 'Listener on. Existing notes are skipped.' : 'Listener off.')); });
+$('enabled').addEventListener('change', event => { event.stopPropagation(); action(null, () => saveSettings($('enabled').checked ? 'Listener on. The newest selected research note will be reviewed each period.' : 'Listener off.')); });
 $('execution').addEventListener('change', event => { event.stopPropagation(); action(null, () => saveSettings($('execution').checked ? 'Auto-trade on.' : 'Auto-trade off.')); });
 $('enabled').addEventListener('input', event => event.stopPropagation());
 $('execution').addEventListener('input', event => event.stopPropagation());
@@ -307,18 +368,36 @@ function renderEntries() {
   const filter = $('journal-filter').value, result = $('result-filter').value;
   const rows = snapshot.entries.filter(row => (!filter || `${row.origin}:${row.notebookId}` === filter) && matchesResultFilter(row, result));
   $('entry-list').replaceChildren(...rows.map(row => {
-    const button = element('button', null, 'entry-card'); button.type = 'button'; button.classList.toggle('selected', selected?.id === row.id && selected.origin === row.origin);
-    const meta = element('span', null, 'meta'), status = entryStatus(row), outcome = listenerResult(row);
-    meta.append(element('span', when(row.updatedAtUtc)));
-    if (row.ticket?.error && status) meta.append(pill(status.label, status.tone));
-    else if (outcome) meta.append(pill(outcome.label, outcome.tone));
-    if (row.origin === 'cloud') meta.append(pill('cloud'));
-    button.append(element('strong', row.title), meta);
-    button.addEventListener('click', () => { selected = row; renderEntries(); renderDetail(); }); return button;
+    const button = element('button', null, 'entry-card'), isSelected = selected?.id === row.id && selected.origin === row.origin; button.type = 'button';
+    button.classList.toggle('selected', isSelected); if (isSelected) button.setAttribute('aria-current', 'true');
+    const meta = element('span', null, 'meta'), status = entryStatus(row), outcome = listenerResult(row), book = notebookName(row);
+    meta.append(element('time', when(row.updatedAtUtc)));
+    if (book) meta.append(element('span', book, 'meta-book'));
+    const tags = element('span', null, 'tags');
+    tags.append(element('span', row.status, `entry-state ${row.status}`));
+    if (row.ticket?.error && status) tags.append(pill(status.label, status.tone));
+    else if (outcome) tags.append(pill(outcome.label, outcome.tone));
+    if (row.origin === 'cloud') tags.append(pill('cloud'));
+    button.append(element('strong', row.title), meta, tags);
+    button.addEventListener('click', () => openEntry(row)); return button;
   }));
-  if (!rows.length) $('entry-list').append(element('p', 'Nothing here yet.', 'empty'));
+  if (!rows.length) {
+    const empty = element('div', null, 'empty list-empty');
+    if (snapshot.entries.length) {
+      const clear = element('button', 'Show all entries', 'link-button'); clear.type = 'button';
+      clear.addEventListener('click', () => { $('journal-filter').value = ''; $('result-filter').value = ''; renderEntries(); });
+      empty.append(element('p', 'No entries match these filters.'), clear);
+    } else {
+      const write = element('button', 'Write the first entry', 'link-button'); write.type = 'button';
+      write.addEventListener('click', () => showEditor());
+      empty.append(element('p', 'Your Journal is empty.'), write);
+    }
+    $('entry-list').append(empty);
+  }
   if (selected) { const current = snapshot.entries.find(row => row.id === selected.id && row.origin === selected.origin); if (current) { selected = current; renderDetail(); } }
+  else renderDetail();
 }
+function notebookName(row) { return snapshot.notebooks.find(book => book.id === row.notebookId && book.origin === row.origin)?.name ?? ''; }
 function receiptDetailsCell(line) {
   const cell = element('td', null, 'wrap'), details = receiptDetails(line);
   cell.append(document.createTextNode(details.message));
@@ -351,17 +430,40 @@ function positionsTable(positions, withResults = false) {
   table.append(tbody); wrap.append(table); return wrap;
 }
 function renderDetail() {
-  if (!selected) return;
-  const row = selected, detail = $('entry-detail'); detail.replaceChildren(element('h2', row.title));
-  const meta = element('div', null, 'detail-meta'), status = entryStatus(row);
+  const detail = $('entry-detail');
+  if (!selected) {
+    const empty = element('div', null, 'empty-art'), mark = element('img'); mark.src = '/flusso-mark.png'; mark.alt = ''; mark.width = mark.height = 40;
+    const write = element('button', snapshot?.entries.length ? 'New entry' : 'Write the first entry'); write.type = 'button';
+    write.addEventListener('click', () => showEditor());
+    empty.append(mark, element('p', snapshot?.entries.length ? 'Pick an entry to read it, or write a new one.' : 'Write research, questions or an explicit order ticket. Notes stay on this computer unless you copy them.'), write);
+    detail.replaceChildren(empty); return;
+  }
+  const row = selected; detail.setAttribute('aria-label', row.title); detail.replaceChildren();
+  const head = element('header', null, 'detail-head'), heading = element('div', null, 'detail-title');
+  const meta = element('div', null, 'detail-meta'), status = entryStatus(row), book = notebookName(row);
   meta.append(pill(row.status, row.status === 'watching' ? 'info' : ''));
   if (status) meta.append(pill(status.label, status.tone));
-  meta.append(pill(row.origin), pill(`v${formatCount(row.version)}`), pill(when(row.updatedAtUtc)));
+  const facts = element('span', null, 'detail-facts mono'), time = element('time', when(row.updatedAtUtc)); time.dateTime = row.updatedAtUtc ?? '';
+  facts.append(document.createTextNode(`${book ? `${book} · ` : ''}${row.origin} · v${formatCount(row.version)} · `), time);
+  meta.append(facts);
+  heading.append(element('h2', row.title), meta);
+  const actions = element('div', null, 'detail-actions'), button = element('button', row.origin === 'local' ? 'Edit' : 'Copy to local'); button.type = 'button';
+  button.addEventListener('click', () => showEditor(row.origin === 'local' ? row : { ...row, id: null, version: null })); actions.append(button);
+  head.append(heading, actions);
   const prose = element('div', null, 'note-body'); renderMarkdown(prose, (row.body || '').replace(TICKET_FENCE, '').trim() || ' ');
-  detail.append(meta, prose);
-  if (row.handoff) {
-    const section = element('section', null, 'detail-section handoff-section');
-    section.append(element('h3', 'Listener status'), element('p', row.handoff.reason, 'hint'));
+  detail.append(head, prose);
+  if (row.handoff || (!row.ticket && row.listener?.status === 'observed')) {
+    const section = element('aside', null, 'detail-section handoff-section'), title = element('div', null, 'handoff-head'), mark = element('img');
+    mark.src = '/flusso-mark.png'; mark.alt = ''; mark.width = mark.height = 18;
+    title.append(mark, element('h3', 'Listener status'));
+    section.append(title);
+    const review = listenerResult(row);
+    if (!row.ticket && row.listener?.status === 'observed' && review) {
+      const line = element('p', null, 'handoff-review'), at = element('time', when(row.listener.atUtc)); at.dateTime = row.listener.atUtc ?? '';
+      line.append(pill(review.label, review.tone), element('span', row.listener.reason || 'No reason given.'), at);
+      section.append(line);
+    }
+    if (row.handoff) section.append(element('p', row.handoff.reason, 'hint'));
     detail.append(section);
   }
   if (row.ticket) {
@@ -387,35 +489,48 @@ function renderDetail() {
     for (const leg of row.signal.legs) { const tr = element('tr'); [leg.asset.instrumentId, leg.side ?? '—', leg.direction ?? '—', formatQuantity(leg.quantity), leg.quantityUnit ? `${leg.quantityUnit} ${leg.quantityAsset ?? ''}` : '—', formatPrice(leg.referencePrice)].forEach((value, index) => tr.append(element('td', value, index === 3 || index === 5 ? 'num' : index === 0 ? 'mono' : ''))); tbody.append(tr); }
     table.append(tbody); wrap.append(table); section.append(wrap); detail.append(section);
   }
-  const actions = element('div', null, 'detail-actions'), button = element('button', row.origin === 'local' ? 'Edit' : 'Copy to local'); button.type = 'button';
-  button.addEventListener('click', () => showEditor(row.origin === 'local' ? row : { ...row, id: null, version: null })); actions.append(button); detail.append(actions);
 }
+// The editor takes the reading pane's place, so the list stays in view while writing.
 function showEditor(row = null) {
+  if (!$('editor').hidden && editorDirty) { notify('Save or cancel the entry you are writing first.'); $('entry-title').focus(); return; }
   editing = row?.id ? row : null; entryRetryKey = crypto.randomUUID();
-  $('editor').hidden = false; $('editor-title').textContent = editing ? 'Edit entry' : 'New entry';
+  $('editor').hidden = false; $('entry-detail').hidden = true; $('editor-title').textContent = editing ? 'Edit entry' : row ? 'Copy to local' : 'New entry';
   const notebooks = snapshot.notebooks.filter(item => item.origin === 'local');
   $('entry-notebook').replaceChildren(...notebooks.map(item => new Option(item.name, item.id)));
   if (row?.origin === 'local') $('entry-notebook').value = row.notebookId;
   $('entry-title').value = row?.title ?? ''; $('entry-body').value = row?.body ?? ''; $('entry-status').value = row?.status ?? 'watching'; $('entry-signal').value = row?.signal ? JSON.stringify(row.signal, null, 2) : '';
-  $('editor').scrollIntoView({ behavior: 'smooth', block: 'start' }); $('entry-title').focus();
+  editorDirty = false; reveal($('editor'), 'nearest'); $('entry-title').focus({ preventScroll: true });
+}
+// Unsaved writing is never discarded by picking another entry; only Cancel discards it.
+let editorDirty = false;
+$('entry-form').addEventListener('input', () => { editorDirty = true; });
+function leaveEditor() {
+  if ($('editor').hidden) return true;
+  if (editorDirty) { notify('Save or cancel the entry you are writing first.'); $('entry-title').focus(); return false; }
+  closeEditor(); return true;
+}
+function closeEditor({ focus = false } = {}) {
+  if ($('editor').hidden) return;
+  $('editor').hidden = true; $('entry-detail').hidden = false; editorDirty = false;
+  if (focus) (document.querySelector('.entry-card.selected') ?? $('new-entry')).focus();
 }
 function insertTicket(close = false) {
   const id = `ticket-${new Date().toISOString().slice(0, 16).replace(/[-:]/g, '')}`;
   const body = $('entry-body'), block = '```' + (close ? 'flusso-close' : 'flusso-orders') + '\n' + JSON.stringify(close ? { id, positionIds: [] } : { ...TICKET_EXAMPLE, id }, null, 2) + '\n```\n';
   if (TICKET_FENCE.test(body.value)) { TICKET_FENCE.lastIndex = 0; notify('This entry already has an order ticket.'); return; }
-  TICKET_FENCE.lastIndex = 0; body.value = `${body.value.trimEnd()}${body.value.trim() ? '\n\n' : ''}${block}`; $('entry-status').value = 'watching'; body.focus();
+  TICKET_FENCE.lastIndex = 0; body.value = `${body.value.trimEnd()}${body.value.trim() ? '\n\n' : ''}${block}`; $('entry-status').value = 'watching'; editorDirty = true; body.focus();
 }
 $('insert-ticket').addEventListener('click', () => insertTicket());
 $('insert-close-ticket').addEventListener('click', () => insertTicket(true));
 $('result-filter').replaceChildren(...RESULT_FILTERS.map(option => new Option(option.label, option.value)));
 $('journal-filter').addEventListener('change', renderEntries);
 $('result-filter').addEventListener('change', renderEntries);
-$('new-entry').addEventListener('click', () => showEditor()); $('cancel-edit').addEventListener('click', () => { $('editor').hidden = true; });
+$('new-entry').addEventListener('click', () => showEditor()); $('cancel-edit').addEventListener('click', () => closeEditor({ focus: true }));
 $('entry-form').addEventListener('submit', event => { event.preventDefault(); action(event.submitter, async () => {
   let signal = null; if ($('entry-signal').value.trim()) { try { signal = JSON.parse($('entry-signal').value); } catch { throw new Error('The structured signal is not valid JSON.'); } }
   const body = { notebookId: $('entry-notebook').value, title: $('entry-title').value, body: $('entry-body').value, status: $('entry-status').value, source: editing?.source ?? 'manual', observedAtUtc: editing?.observedAtUtc ?? null, instrument: editing?.instrument ?? null, venue: editing?.venue ?? null, signal, ...(editing ? { version: editing.version } : {}) };
   const saved = await api(editing ? `/api/entries/${editing.id}` : '/api/entries', body, { 'Idempotency-Key': entryRetryKey });
-  selected = { ...saved, origin: 'local' }; $('editor').hidden = true; await load(); notify('Saved.', true);
+  selected = { ...saved, origin: 'local' }; closeEditor(); await load(); renderEntries(); notify('Saved.', true);
 }); });
 $('notebook-form').addEventListener('submit', event => { event.preventDefault(); action(event.submitter, async () => { await api('/api/notebooks', { name: $('notebook-name').value }); $('notebook-name').value = ''; await load({ forms: !formDirty }); notify('Notebook added.', true); }); });
 $('sync').addEventListener('click', event => action(event.currentTarget, async () => { const result = await api('/api/sync', {}); await load(); notify(result.complete ? 'Cloud Journal synced.' : result.reason, result.complete); }));
@@ -442,20 +557,32 @@ function renderActivity() {
   $('activity-list').replaceChildren(...snapshot.activity.map(row => {
     const card = element('article', null, 'activity-card'), head = element('div', null, 'activity-head'), status = activityStatus(row), attempt = row.attemptId ? attempts.get(row.attemptId) : null;
     const time = element('time', when(row.atUtc)); time.dateTime = row.atUtc;
+    card.dataset.tone = status.tone;
+    head.append(pill(status.label, status.tone), time);
     const title = element('h2'); title.append(sourceButton(row));
-    head.append(title, pill(status.label, status.tone), time);
-    card.append(head, element('p', row.reason));
-    if (attempt) card.append(element('p', `Request ${attempt.id}`, 'hint mono'));
-    if (attempt?.receipt?.lines?.length) card.append(attempt.kind === 'close' ? positionsTable(attempt.receipt.lines, true) : ordersTable(attempt.receipt.lines, true));
-    else if (attempt) card.append(attempt.kind === 'close' ? positionsTable(attempt.positionIds ?? []) : ordersTable(attempt.orders));
+    card.append(head, title, element('p', row.reason, 'activity-reason'));
+    if (attempt) {
+      const receipt = element('section', null, 'receipt'), receiptHead = element('div', null, 'receipt-head'), settled = attempt.receipt?.lines?.length;
+      receiptHead.append(element('h3', settled ? 'Receipt' : attempt.kind === 'close' ? 'Requested close' : 'Requested orders'), element('p', `Request ${attempt.id}`, 'hint mono'));
+      receipt.append(receiptHead);
+      if (settled) receipt.append(attempt.kind === 'close' ? positionsTable(attempt.receipt.lines, true) : ordersTable(attempt.receipt.lines, true));
+      else receipt.append(attempt.kind === 'close' ? positionsTable(attempt.positionIds ?? []) : ordersTable(attempt.orders));
+      card.append(receipt);
+    }
     if (attempt && ['pending', 'unknown'].includes(attempt.status)) {
-      const actions = element('div', null, 'form-actions'), resolve = element('button', 'I checked Flusso. Mark resolved'); resolve.type = 'button';
+      const actions = element('div', null, 'form-actions resolve-actions'), resolve = element('button', 'I checked Flusso. Mark resolved'); resolve.type = 'button';
       resolve.addEventListener('click', () => action(resolve, async () => { await api(`/api/attempts/${encodeURIComponent(attempt.id)}/resolve`, {}); await load(); notify('Marked resolved. New tickets can be placed.', true); }));
-      actions.append(resolve); card.append(actions);
+      actions.append(element('p', 'This result is unconfirmed and will never be resent. New tickets wait until you check orders and positions in Flusso and mark it resolved.', 'hint'), resolve); card.append(actions);
     }
     return card;
   }));
-  if (!snapshot.activity.length) $('activity-list').append(element('p', 'Nothing yet. Turn the Listener on to start.', 'empty'));
+  if (!snapshot.activity.length) {
+    const empty = element('div', null, 'empty-art'), mark = element('img'), open = element('button', 'Open Listener'); open.type = 'button';
+    mark.src = '/flusso-mark.png'; mark.alt = ''; mark.width = mark.height = 40;
+    open.addEventListener('click', () => switchView('listener'));
+    empty.append(mark, element('p', snapshot.settings.enabled ? 'Nothing yet. Decisions and order receipts are listed here after the Listener reviews a selected note.' : 'Nothing yet. Turn the Listener on to review selected notes; its decisions and order receipts are listed here.'), open);
+    $('activity-list').append(empty);
+  }
 }
 
 // EventSource reconnects to the same authenticated local status resource. A

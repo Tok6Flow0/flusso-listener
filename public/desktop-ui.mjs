@@ -1,3 +1,4 @@
+import { formatCount } from './format.mjs';
 // Presentation only: identity and native capabilities remain owned by the backend.
 function text(value) { return typeof value === 'string' ? value.trim() : ''; }
 function progress(value) { return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null; }
@@ -98,12 +99,57 @@ export function matchesResultFilter(entry, filter) {
 const STAGES = Object.freeze({ sync: 'Read Journal', reconcile: 'Check earlier orders', queued: 'Queued', read: 'Read entry', model: 'Model review', decision: 'Decision', validate: 'Check limits', waiting: 'Waiting', submit: 'Submit', result: 'Result', error: 'Needs attention', idle: 'Idle', paused: 'Paused' });
 export function processStage(stage) { return STAGES[stage] ?? 'Activity'; }
 
+// A counted position is shown only when the Listener reported both whole numbers.
+function position(current) {
+  const { index, total } = current ?? {};
+  return Number.isInteger(index) && Number.isInteger(total) && index >= 1 && total >= index ? { index, total } : null;
+}
+
+// `state` is the one coarse word a person scans for; `label` keeps the exact stage.
 export function processingPresentation(listener = {}, enabled = false) {
   const current = listener.processing;
-  if (listener.busy) return { label: processStage(current?.stage), message: text(current?.message) || 'Checking Journal entries.', tone: current?.stage === 'error' ? 'warn' : 'info', busy: true };
-  if (!enabled) return { label: 'Listener off', message: 'Turn on the Listener to read new Journal entries.', tone: '', busy: false };
-  if (listener.lastError) return { label: 'Needs attention', message: text(listener.lastError), tone: 'warn', busy: false };
-  return { label: listener.lastCheckedAtUtc ? 'Check complete' : 'Ready', message: text(current?.message) || 'Waiting for the next check.', tone: '', busy: false };
+  if (listener.busy) {
+    const error = current?.stage === 'error';
+    return { state: error ? 'error' : 'reviewing', title: error ? 'Needs attention' : 'Reviewing', label: processStage(current?.stage), message: text(current?.message) || 'Checking Journal entries.', tone: error ? 'warn' : 'info', busy: true, position: position(current) };
+  }
+  if (!enabled) return { state: 'off', title: 'Off', label: 'Listener off', message: 'Not watching your Journal.', tone: '', busy: false, position: null };
+  if (listener.lastError) return { state: 'error', title: 'Needs attention', label: 'Needs attention', message: text(listener.lastError), tone: 'warn', busy: false, position: null };
+  if (current?.stage === 'paused') return { state: 'paused', title: 'Paused', label: 'Paused', message: text(current.message) || 'The last check paused before it finished.', tone: 'warn', busy: false, position: null };
+  const checked = Boolean(listener.lastCheckedAtUtc);
+  return { state: checked ? 'complete' : 'ready', title: checked ? 'Checked' : 'Ready', label: checked ? 'Check complete' : 'Ready', message: text(current?.message) || 'Waiting for the next check.', tone: '', busy: false, position: null };
+}
+
+const INTERVALS = [[3600, 'hour'], [60, 'minute'], [1, 'second']];
+export function intervalLabel(seconds) {
+  if (!Number.isInteger(seconds) || seconds <= 0) return null;
+  const [size, unit] = INTERVALS.find(([size]) => seconds % size === 0);
+  const count = seconds / size;
+  return `${formatCount(count)} ${unit}${count === 1 ? '' : 's'}`;
+}
+
+const OUTPUT_STATUS = { streaming: ['Streaming', 'info'], complete: ['Complete', 'pos'], failed: ['Failed', 'warn'], stopped: ['Stopped', 'warn'] };
+// The streamed text is shown exactly as received. A readable decision appears only
+// when that same run completed and the Listener published its validated decision.
+export function modelOutputPresentation(output, published = null, { disconnected = false, enabled = false, busy = false } = {}) {
+  if (!output) {
+    const empty = !enabled ? 'Turn the Listener on to begin. Each check reviews the newest selected research note, and the model’s real response streams here.'
+      : busy ? 'Reading the Journal. The model’s response appears here as soon as it starts.'
+        : 'Nothing reviewed yet. Choose Check now to review the newest selected research note.';
+    return { status: 'none', label: 'Not run', tone: '', live: false, accepted: false, verdict: null, note: null, empty };
+  }
+  const [label, tone] = OUTPUT_STATUS[output.status] ?? ['Unavailable', 'warn'];
+  const live = output.status === 'streaming' && !disconnected;
+  const startedAt = Date.parse(output.atUtc), publishedAt = Date.parse(published?.atUtc);
+  const accepted = output.status === 'complete' && Boolean(published) && published.entryId === output.entryId && published.origin === output.origin
+    && ['candidate', 'review', 'ignore'].includes(published.decision)
+    && Number.isFinite(startedAt) && Number.isFinite(publishedAt) && publishedAt >= startedAt;
+  const verdict = accepted ? { ...activityStatus({ status: 'observed', decision: published.decision }), reason: text(published.reason) } : null;
+  const hasText = Boolean(output.text);
+  const note = output.status === 'streaming' ? (disconnected ? 'Reconnecting. Showing the last output received; nothing is accepted until the response completes.' : 'Partial output. Nothing is accepted until the response completes and passes validation.')
+    : ['failed', 'stopped'].includes(output.status) ? (hasText ? 'Partial output shown. It was not accepted as a decision.' : 'No output was received. Nothing was accepted.')
+      : output.status === 'complete' && !accepted ? 'The response completed, but no published decision matches it.' : null;
+  const empty = hasText ? null : output.status === 'streaming' ? 'Waiting for the model’s first response token.' : 'The model returned no response.';
+  return { status: output.status, label: disconnected && output.status === 'streaming' ? 'Reconnecting' : label, tone, live, accepted, verdict, note, empty };
 }
 
 export function latestDecisions(activity = [], output = null) {

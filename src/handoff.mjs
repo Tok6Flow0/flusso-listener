@@ -47,8 +47,12 @@ export function describeEntryHandoff({ entry, settings, checkpoint = null, activ
     section: 'This entry does not contain the selected Markdown heading.',
   }[mismatch]);
   const research = 'No explicit flusso-orders or flusso-close ticket is present. Research and model classifications do not authorize submission.';
-  if (entry.status !== 'watching') return result(entry.status, `This entry is ${entry.status}; only watching entries are considered.${kind === 'research' ? ` ${research}` : ''}`);
-  if (currentCheckpoint?.state === 'baseline') return result('baselined', `This existing revision was baselined and will be skipped.${kind === 'research' ? ` ${research}` : ''}`);
+  if (entry.status !== 'watching') return result(entry.status, kind === 'research' && entry.status === 'reviewed'
+    ? `Reviewed research can be reviewed again when it is the newest selected note and the Listener is on. ${research}`
+    : `This entry is ${entry.status}; only watching entries can supply an action ticket.${kind === 'research' ? ` ${research}` : ''}`);
+  if (currentCheckpoint?.state === 'baseline') return result('baselined', kind === 'research'
+    ? `This existing revision was baselined. The newest selected research note is still reviewed each period while the Listener is on. ${research}`
+    : 'This existing revision was baselined and will be skipped.');
   if (!settings.enabled) return result('listener_off', 'The Listener is off; no entry is checked or submitted.');
   if (ticket === null) return result('research_only', research);
   if (ticket.error) return result('malformed_ticket', ticket.error);
