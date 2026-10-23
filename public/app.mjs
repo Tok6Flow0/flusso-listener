@@ -58,7 +58,9 @@ async function api(path, body, headers = {}) {
   let response;
   try { response = await fetch(path, { method: body === undefined ? 'GET' : 'POST', headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json', 'x-flusso-csrf': csrf }), ...headers }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }); }
   catch { throw new Error('Journal could not reach its local service. Keep Journal running, or reopen it to reconnect.'); }
-  const value = await response.json(); if (!response.ok) throw Object.assign(new Error(value.error || 'That did not work. Try again.'), { status: response.status }); return value;
+  let value;
+  try { value = await response.json(); } catch { throw new Error('Journal received an incomplete or unreadable response. The result could not be confirmed.'); }
+  if (!response.ok) throw Object.assign(new Error(value.error || 'That did not work. Try again.'), { status: response.status }); return value;
 }
 function initialLocalSaveRefusal(error) {
   return error.status >= 400 && error.status < 500 && error.status !== 408 && !(error.status === 409 && error.message === 'Retry key was used for different content.');
@@ -837,9 +839,10 @@ function renderEntrySaveState() {
 }
 function editorValues() { return { notebookId: $('entry-notebook').value, title: $('entry-title').value, body: $('entry-body').value, status: $('entry-status').value, signal: $('entry-signal').value }; }
 function editorDirty() { return !$('editor').hidden && (Boolean(entryIntent?.uncertain) || localDraftDirty(editorBase, editorValues())); }
-function protectDraftOnLeave(event) { if (entrySaving || editorDirty()) { event.preventDefault(); event.returnValue = ''; } }
+function hasProtectedDraft() { return entrySaving || editorDirty() || Boolean(notebookIntent && (notebookSaving || notebookIntent.uncertain)); }
+function protectDraftOnLeave(event) { if (hasProtectedDraft()) { event.preventDefault(); event.returnValue = ''; } }
 function updateDraftProtection() {
-  const dirty = entrySaving || editorDirty();
+  const dirty = hasProtectedDraft();
   if (desktop?.setDraftDirty && dirty !== reportedDraftDirty) {
     try { if (desktop.setDraftDirty(dirty) === true) reportedDraftDirty = dirty; } catch { /* Keep the renderer unload fallback; native unknown state requires confirmation. */ }
   }
@@ -929,23 +932,24 @@ $('notebook-form').addEventListener('submit', event => {
   notebookIntent ??= { name: input.value, key: crypto.randomUUID(), uncertain: false };
   const intent = notebookIntent;
   input.disabled = submit.disabled = true; $('notebook-form').setAttribute('aria-busy', 'true');
-  $('notebook-error').textContent = ''; $('notebook-error').hidden = true;
+  $('notebook-error').textContent = ''; $('notebook-error').hidden = true; updateDraftProtection();
   action(null, async () => {
     try {
       try { await api('/api/notebooks', { name: intent.name }, { 'Idempotency-Key': intent.key }); } catch (error) {
         if (!intent.uncertain && initialLocalSaveRefusal(error)) notebookIntent = null;
         else intent.uncertain = true;
+        updateDraftProtection();
         const message = notebookIntent ? `${error.message} Notebook creation is unconfirmed. Retry to check the same request.` : error.message;
         input.value = intent.name;
         $('notebook-error').textContent = message; $('notebook-error').hidden = false;
         if (!$('notebook-dialog').open) notify(message, false, true);
         return;
       }
-      confirmed = true; notebookIntent = null; input.value = ''; $('notebook-dialog').close();
+      confirmed = true; notebookIntent = null; input.value = ''; $('notebook-dialog').close(); updateDraftProtection();
       try { await load({ forms: !formDirty }); } catch { notify('Notebook added, but the list could not refresh. Refresh to see it.', false, true); return; }
       notify('Notebook added.', true);
     } finally {
-      notebookSaving = false; input.disabled = submit.disabled = false; input.readOnly = Boolean(notebookIntent); submit.textContent = notebookIntent ? 'Retry notebook' : 'Create notebook'; $('notebook-form').removeAttribute('aria-busy');
+      notebookSaving = false; input.disabled = submit.disabled = false; input.readOnly = Boolean(notebookIntent); submit.textContent = notebookIntent ? 'Retry notebook' : 'Create notebook'; $('notebook-form').removeAttribute('aria-busy'); updateDraftProtection();
       if (!confirmed && $('notebook-dialog').open && document.activeElement === document.body && focusBeforeSave?.isConnected && (focusBeforeSave === input || focusBeforeSave === submit)) focusBeforeSave.focus();
     }
   });

@@ -44,7 +44,7 @@ test('a local service outage explains recovery without exposing raw browser fetc
   context.fetch = async () => ({ ok: false, status: 403, json: async () => ({ error: 'The session expired. Reopen Journal.' }) });
   await assert.rejects(context.api('/api/status'), error => error.status === 403 && /The session expired/.test(error.message));
   context.fetch = async () => ({ ok: true, status: 201, json: async () => { throw new SyntaxError('Truncated reply.'); } });
-  await assert.rejects(context.api('/api/notebooks', { name: 'Unconfirmed' }), error => error instanceof SyntaxError && error.status === undefined);
+  await assert.rejects(context.api('/api/notebooks', { name: 'Unconfirmed' }), error => error.name === 'Error' && /incomplete or unreadable response.*could not be confirmed/.test(error.message) && error.status === undefined && !/Truncated reply/.test(error.message));
 });
 
 test('interface prose keeps numbers mono without making its whole sentence a data readout', async () => {
@@ -376,7 +376,7 @@ test('native notebook creation retains failures in the dialog and a confirmed sa
     const pending = new Promise(resolve => { release = resolve; });
     const get = id => { if (!nodes.has(id)) nodes.set(id, { value: id === 'notebook-name' ? 'Exact new notebook' : '', hidden: true, disabled: false,
       addEventListener: (event, callback) => callbacks.set(`${id}:${event}`, callback), setAttribute(name, value) { this[name] = value; }, removeAttribute(name) { delete this[name]; }, showModal() { this.open = true; }, close() { this.open = false; } }); return nodes.get(id); };
-    const context = { $: get, document: { activeElement: {}, body: {} }, crypto: { randomUUID: () => 'stable-notebook-key' }, formDirty: false, api: async (_path, input) => { requests++; assert.equal(input.name, 'Exact new notebook'); await pending; if (mode === 'refused') throw Object.assign(new Error('Actual create refusal.'), { status: 400 }); return {}; },
+    const context = { updateDraftProtection() {}, $: get, document: { activeElement: {}, body: {} }, crypto: { randomUUID: () => 'stable-notebook-key' }, formDirty: false, api: async (_path, input) => { requests++; assert.equal(input.name, 'Exact new notebook'); await pending; if (mode === 'refused') throw Object.assign(new Error('Actual create refusal.'), { status: 400 }); return {}; },
       load: async () => { if (mode === 'refresh-failed') throw new Error('Actual read failure.'); }, notify: (message, success) => notices.push({ message, success }),
       action: (_button, work) => jobs.push(work()) };
     runInNewContext(source.slice(source.indexOf('function initialLocalSaveRefusal('), source.indexOf('async function action(')), context);
@@ -1036,7 +1036,7 @@ test('dismissed pending notebook creation cannot submit twice and its later refu
     const get = id => { if (!nodes.has(id)) nodes.set(id, { value: id === 'notebook-name' ? 'Retained name' : '', hidden: true, disabled: false,
       addEventListener: (event, callback) => callbacks.set(`${id}:${event}`, callback), setAttribute(name, value) { this[name] = value; }, removeAttribute(name) { delete this[name]; },
       showModal() { this.open = true; }, close() { this.open = false; } }); return nodes.get(id); };
-    const context = { $: get, document: { activeElement: {}, body: {} }, crypto: { randomUUID: () => 'stable-notebook-key' }, formDirty: false, api: async () => { requests++; await pending; }, load: async () => assert.fail('A refused create must not refresh or report success.'),
+    const context = { updateDraftProtection() {}, $: get, document: { activeElement: {}, body: {} }, crypto: { randomUUID: () => 'stable-notebook-key' }, formDirty: false, api: async () => { requests++; await pending; }, load: async () => assert.fail('A refused create must not refresh or report success.'),
       action: (_button, work) => jobs.push(work()), notify: (message, success, error) => notices.push({ message, success, error }) };
     runInNewContext(source.slice(source.indexOf('function initialLocalSaveRefusal('), source.indexOf('async function action(')), context);
     runInNewContext(handlers, context); callbacks.get('new-notebook:click')(); const submit = () => callbacks.get('notebook-form:submit')({ preventDefault() {}, submitter: get('create-notebook') });
@@ -1058,7 +1058,7 @@ test('an uncertain notebook create retains its original request through dismissa
     const pending = new Promise((_resolve, refuse) => { reject = refuse; });
     const get = id => { if (!nodes.has(id)) nodes.set(id, { value: id === 'notebook-name' ? 'Original requested name' : '', hidden: true, disabled: false,
       addEventListener: (event, callback) => callbacks.set(`${id}:${event}`, callback), setAttribute(name, value) { this[name] = value; }, removeAttribute(name) { delete this[name]; }, showModal() { this.open = true; }, close() { this.open = false; } }); return nodes.get(id); };
-    const context = { $: get, document: { activeElement: {}, body: {} }, crypto: { randomUUID: () => `intent-${++key}` }, formDirty: false,
+    const context = { updateDraftProtection() {}, $: get, document: { activeElement: {}, body: {} }, crypto: { randomUUID: () => `intent-${++key}` }, formDirty: false,
       api: async (path, body, headers) => { requests.push({ path, body: { ...body }, headers: { ...headers } }); if (requests.length === 1) await pending; return { id: 'committed-notebook' }; },
       load: async () => { throw new Error('Readback unavailable after confirmed save.'); }, action: (_button, work) => jobs.push(work()), notify: (message, success, error) => notices.push({ message, success, error }) };
     runInNewContext(source.slice(source.indexOf('function initialLocalSaveRefusal('), source.indexOf('async function action(')), context);
@@ -1129,7 +1129,7 @@ test('a refused notebook save restores its disabled trigger only if the dialog r
     const get = id => { if (!nodes.has(id)) nodes.set(id, { value: id === 'notebook-name' ? 'Original name' : '', isConnected: true, hidden: true,
       get disabled() { return this.off; }, set disabled(value) { this.off = value; if (value && doc.activeElement === this) doc.activeElement = body; },
       addEventListener: (event, callback) => callbacks.set(`${id}:${event}`, callback), setAttribute() {}, removeAttribute() {}, showModal() { this.open = true; }, close() { this.open = false; }, focus() { doc.activeElement = this; restores++; } }); return nodes.get(id); };
-    const context = { $: get, document: doc, crypto: { randomUUID: () => 'notebook-key' }, formDirty: false, action(_button, work) { job = work(); },
+    const context = { updateDraftProtection() {}, $: get, document: doc, crypto: { randomUUID: () => 'notebook-key' }, formDirty: false, action(_button, work) { job = work(); },
       api: () => new Promise((_resolve, reject) => { refuse = reject; }), notify() {} };
     runInNewContext(source.slice(source.indexOf('function initialLocalSaveRefusal('), source.indexOf('async function action(')), context);
     runInNewContext(handlers, context); callbacks.get('new-notebook:click')(); doc.activeElement = get('create-notebook');
@@ -1167,7 +1167,7 @@ test('local entry create/edit retain the exact committed intent through lost rep
       const get = id => { if (!nodes.has(id)) nodes.set(id, { id, value: ({ 'entry-notebook': w.store.notebooks()[0].id, 'entry-title': 'Exact original title', 'entry-body': 'Exact submitted research', 'entry-status': 'watching', 'entry-signal': '' })[id] ?? '', hidden: false, disabled: false, dataset: {},
         setAttribute() {}, removeAttribute() {}, focus() {}, contains: () => false, addEventListener(_event, callback) { if (id === 'entry-form') submit = callback; } }); return nodes.get(id); };
       get('entry-form').elements = ['entry-notebook', 'entry-title', 'entry-body', 'entry-status', 'entry-signal', 'entry-save', 'cancel-edit', 'insert-ticket', 'insert-close-ticket'].map(get);
-      const context = { $: get, document: doc, entrySaving: false, entryIntent: null, entrySavePendingMessage: 'The original save is unconfirmed.', entryRetryKey: 'stable-original-entry', editing: original, selected: null, snapshot: { entries: original ? [original] : [] }, crypto: { randomUUID: () => 'new-intent-key' },
+      const context = { updateDraftProtection() {}, $: get, document: doc, entrySaving: false, entryIntent: null, entrySavePendingMessage: 'The original save is unconfirmed.', entryRetryKey: 'stable-original-entry', editing: original, selected: null, snapshot: { entries: original ? [original] : [] }, crypto: { randomUUID: () => 'new-intent-key' },
         updateDraftProtection() {}, showSelectedEntry() {}, renderEntries() {}, notify: message => notices.push(message), load: async () => { throw new Error('Readback failed after confirmed reply.'); }, closeEditor() { get('editor').hidden = true; },
         action(_button, work) { job = work().catch(error => notices.push(error.message)); },
         api: async (path, body, headers) => {
@@ -1197,7 +1197,7 @@ test('notebook auth and route refusals after an uncertain create preserve its or
   const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
   const callbacks = new Map(), nodes = new Map(), requests = []; let job, key = 0;
   const get = id => { if (!nodes.has(id)) nodes.set(id, { id, value: id === 'notebook-name' ? 'Original name' : '', hidden: false, setAttribute() {}, removeAttribute() {}, showModal() { this.open = true; }, close() { this.open = false; }, addEventListener(event, callback) { callbacks.set(`${id}:${event}`, callback); } }); return nodes.get(id); };
-  const context = { $: get, document: { activeElement: {}, body: {} }, crypto: { randomUUID: () => `key-${++key}` }, formDirty: false, notify() {}, load: async () => {}, action(_button, work) { job = work(); },
+  const context = { updateDraftProtection() {}, $: get, document: { activeElement: {}, body: {} }, crypto: { randomUUID: () => `key-${++key}` }, formDirty: false, notify() {}, load: async () => {}, action(_button, work) { job = work(); },
     api: async (path, body, headers) => { requests.push({ path, body: { ...body }, headers: { ...headers } }); if (requests.length === 1) throw new SyntaxError('The committed reply was truncated.'); if (requests.length < 4) throw Object.assign(new Error('Current authentication or route refusal.'), { status: requests.length === 2 ? 401 : 404 }); return { id: 'saved-notebook' }; } };
   runInNewContext(source.slice(source.indexOf('function initialLocalSaveRefusal('), source.indexOf('async function action(')), context);
   runInNewContext(source.slice(source.indexOf('let notebookSaving'), source.indexOf("$('sync').addEventListener")), context);
@@ -1263,4 +1263,58 @@ test('an initial definite entry refusal unlocks correction while timeout and ret
     assert.equal(get('entry-body').readOnly, retained); assert.equal(get('entry-notebook').disabled, retained); assert.equal(Boolean(context.entryIntent), retained);
     assert.equal(context.entryRetryKey, retained ? 'initial-key' : 'fresh-1'); assert.equal(get('entry-body').value, 'Notes');
   }
+});
+
+
+test('pending and uncertain notebook requests reuse unload and native quit protection until actually confirmed', async () => {
+  const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8'), { createDraftExitGuard } = await import('../desktop/policy.mjs');
+  for (const entryDirty of [false, true]) {
+    const callbacks = new Map(), nodes = new Map(), listeners = new Map(), jobs = [], nativeReports = []; let requests = 0, release, entryStillDirty = entryDirty, exits = 0;
+    const pending = new Promise(resolve => { release = resolve; });
+    const native = createDraftExitGuard({ confirmDiscard: async () => false });
+    const get = id => { if (!nodes.has(id)) nodes.set(id, { value: id === 'notebook-name' ? 'Original request' : '', hidden: false, setAttribute() {}, removeAttribute() {}, showModal() { this.open = true; }, close() { this.open = false; }, addEventListener(event, callback) { callbacks.set(`${id}:${event}`, callback); } }); return nodes.get(id); };
+    const context = { updateDraftProtection() {}, $: get, document: { activeElement: {}, body: {} }, desktop: { setDraftDirty(value) { nativeReports.push(value); native.reportDirty(value); return true; } },
+      window: { addEventListener(type, callback) { listeners.set(type, callback); }, removeEventListener(type) { listeners.delete(type); } }, reportedDraftDirty: undefined, entrySaving: false, editorDirty: () => entryStillDirty,
+      crypto: { randomUUID: () => 'protected-notebook-key' }, formDirty: false, notify() {}, action(_button, work) { jobs.push(work()); },
+      api: async () => { requests++; if (requests === 1) { await pending; throw new Error('The original committed response was lost.'); } if (requests === 2) throw Object.assign(new Error('Replay authentication refused.'), { status: 401 }); return { id: 'original-notebook' }; },
+      load: async () => { assert.equal(listeners.has('beforeunload'), entryStillDirty, 'A confirmed write must not remain uncertain merely because readback is pending.'); } };
+    runInNewContext(source.slice(source.indexOf('function initialLocalSaveRefusal('), source.indexOf('async function action(')), context);
+    const guardStart = source.indexOf('function hasProtectedDraft(') >= 0 ? source.indexOf('function hasProtectedDraft(') : source.indexOf('function protectDraftOnLeave(');
+    runInNewContext(source.slice(guardStart, source.indexOf('function keepDraftVisible(')), context);
+    runInNewContext(source.slice(source.indexOf('let notebookSaving'), source.indexOf("$('sync').addEventListener")), context);
+    callbacks.get('new-notebook:click')(); const submit = () => callbacks.get('notebook-form:submit')({ preventDefault() {} });
+    submit(); assert.equal(nativeReports.at(-1), true); assert.equal(listeners.has('beforeunload'), true); callbacks.get('cancel-notebook:click')();
+    let prevented = false; listeners.get('beforeunload')({ preventDefault() { prevented = true; } }); assert.equal(prevented, true);
+    assert.equal(await native.run('quit', async () => { exits++; }), false); assert.equal(exits, 0);
+    release(); await jobs[0]; assert.equal(nativeReports.at(-1), true); assert.equal(listeners.has('beforeunload'), true);
+    callbacks.get('new-notebook:click')(); submit(); await jobs[1]; assert.equal(nativeReports.at(-1), true, 'A later authentication refusal cannot drop an uncertain operation.');
+    submit(); await jobs[2]; assert.equal(nativeReports.at(-1), entryDirty); assert.equal(listeners.has('beforeunload'), entryDirty);
+    entryStillDirty = false; context.updateDraftProtection(); assert.equal(nativeReports.at(-1), false);
+    assert.equal(await native.run('restart', async () => { exits++; }), true); assert.equal(exits, 1);
+  }
+});
+
+test('an initial definitive notebook refusal releases only its own exit protection', async () => {
+  const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
+  const callbacks = new Map(), nodes = new Map(), reports = []; let job;
+  const get = id => { if (!nodes.has(id)) nodes.set(id, { value: 'Refused notebook', setAttribute() {}, removeAttribute() {}, showModal() { this.open = true; }, addEventListener(event, callback) { callbacks.set(`${id}:${event}`, callback); } }); return nodes.get(id); };
+  const context = { updateDraftProtection() {}, $: get, document: { activeElement: {}, body: {} }, crypto: { randomUUID: () => 'refused-key' }, formDirty: false, entrySaving: false, editorDirty: () => false, reportedDraftDirty: undefined,
+    desktop: { setDraftDirty(value) { reports.push(value); return true; } }, window: { addEventListener() {}, removeEventListener() {} }, notify() {}, action(_button, work) { job = work(); }, api: async () => { throw Object.assign(new Error('Invalid notebook name.'), { status: 400 }); } };
+  runInNewContext(source.slice(source.indexOf('function initialLocalSaveRefusal('), source.indexOf('async function action(')), context);
+  const guardStart = source.indexOf('function hasProtectedDraft(') >= 0 ? source.indexOf('function hasProtectedDraft(') : source.indexOf('function protectDraftOnLeave(');
+  runInNewContext(source.slice(guardStart, source.indexOf('function keepDraftVisible(')), context);
+  runInNewContext(source.slice(source.indexOf('let notebookSaving'), source.indexOf("$('sync').addEventListener")), context);
+  callbacks.get('new-notebook:click')(); callbacks.get('notebook-form:submit')({ preventDefault() {} }); await job;
+  assert.equal(reports[0], true); assert.equal(reports.at(-1), false); assert.equal(get('notebook-name').readOnly, false);
+});
+
+test('native exit warning covers unconfirmed saves honestly and interval help belongs to its selector', async () => {
+  const main = await readFile(new URL('../desktop/main.mjs', import.meta.url), 'utf8'), html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  let confirm, shown;
+  const context = { window: { show() {}, isDestroyed: () => false }, createDraftExitGuard: ({ confirmDiscard }) => { confirm = confirmDiscard; return {}; }, dialog: { async showMessageBox(_window, options) { shown = options; return { response: 0 }; } } };
+  runInNewContext(main.slice(main.indexOf('const draftExit = createDraftExitGuard('), main.indexOf('async function prepareExit(')), context);
+  assert.equal(await confirm('restart', false), false); assert.match(shown.message, /Save or confirm/); assert.match(shown.detail, /retry information.*cannot undo.*already completed/i); assert.equal(shown.defaultId, 0); assert.equal(shown.cancelId, 0);
+  assert.doesNotMatch(shown.detail, /only the unsaved writing/);
+  assert.match(html, /<div class="interval-field"><label for="interval">Wait between checks<\/label><select id="interval" aria-describedby="interval-hint">[\s\S]*?<\/select><p id="interval-hint" class="hint">The interval starts after the previous check finishes\.<\/p><\/div>/);
+  assert.equal((html.match(/The interval starts after the previous check finishes/g) ?? []).length, 1);
 });

@@ -151,9 +151,8 @@
                 <label><input type="radio" name="source" value="cloud"><span>Cloud</span></label>
                 <label><input type="radio" name="source" value="both"><span>Both</span></label>
               </fieldset>
-              <label>Wait between checks<select id="interval"><option value="15">15 seconds</option><option value="30">30 seconds</option><option value="60">1 minute</option><option value="120">2 minutes</option><option value="300">5 minutes</option><option value="900">15 minutes</option><option value="1800">30 minutes</option><option value="3600">1 hour</option></select></label>
+              <div class="interval-field"><label for="interval">Wait between checks</label><select id="interval" aria-describedby="interval-hint"><option value="15">15 seconds</option><option value="30">30 seconds</option><option value="60">1 minute</option><option value="120">2 minutes</option><option value="300">5 minutes</option><option value="900">15 minutes</option><option value="1800">30 minutes</option><option value="3600">1 hour</option></select><p id="interval-hint" class="hint">The interval starts after the previous check finishes.</p></div>
             </div>
-            <p class="hint">The interval starts after the previous check finishes.</p>
             <fieldset class="picks"><legend>Notebooks <span class="hint">· none selected means all for research</span></legend><p class="hint">Auto-trade requires explicitly picked notebooks. Only Watching entries can supply <code>flusso-orders</code> or <code>flusso-close</code> tickets.</p><div id="watch-notebooks" class="chips"></div></fieldset>
             <details><summary>Model instructions</summary>
               <label>Only notes under this heading<input id="section" maxlength="200" placeholder="Optional"></label>

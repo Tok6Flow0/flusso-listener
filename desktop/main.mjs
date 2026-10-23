@@ -25,7 +25,7 @@ const stoppedUpdateFailure = createStoppedUpdateFailureHandler({
 function showJournal() { if (!closed && !quitting && window && !window.isDestroyed()) { window.show(); window.focus(); } }
 const draftExit = createDraftExitGuard({ confirmDiscard: async (reason, unknown) => {
   window?.show();
-  const options = { type: 'warning', title: 'Unsaved local draft', message: unknown ? 'A local draft may still be unsaved.' : 'Discard your unsaved local draft?', detail: 'Keep writing to save your changes first. Discarding loses only the unsaved writing.', buttons: ['Keep writing', reason === 'restart' ? 'Discard draft and restart' : 'Discard draft and quit'], defaultId: 0, cancelId: 0, noLink: true };
+  const options = { type: 'warning', title: 'Local changes need attention', message: unknown ? 'Local changes may still need saving or confirmation.' : 'Save or confirm your local changes before leaving.', detail: 'Leaving discards unsaved draft or retry information. It cannot undo a save that already completed.', buttons: ['Keep Journal open', reason === 'restart' ? 'Leave and restart' : 'Leave and quit'], defaultId: 0, cancelId: 0, noLink: true };
   const answer = window && !window.isDestroyed() ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
   return answer.response === 1;
 } });
