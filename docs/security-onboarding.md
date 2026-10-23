@@ -43,12 +43,13 @@ repository instructions and packaging exclusions do not replace platform IAM.
 
 The desktop workflow signs and publishes previews from main. Both its plan and
 build jobs use the `release-signing` environment, which requires Aaron's approval,
-disallows admin bypass, and permits only `main` and `v*` tags. Active GitHub tag
-rulesets restrict production-tag creation and all version-tag updates/deletions
-to repository admins. Preview-tag creation (`v*-preview.*`) is open to writers so
-CI can publish automatically; signing remains owner-approved. Aaron must review
-the exact commit and workflow before approving any signing request. Ordinary
-development branches cannot obtain the update-signing key. The
+disallows admin bypass, and permits only `main` and `v*` tags. Tag creation and
+mutation retain normal repository write permissions. A tag alone grants no
+signing authority: Aaron must review the exact immutable commit and workflow
+before approving each signing request. Moving a tag does not change an already
+approved run's SHA-pinned checkout; a new tag event needs a separate approval.
+The publisher rejects an existing tag that differs from its tested source.
+Ordinary development branches cannot obtain the update-signing key. The
 repository-level key was removed after an encrypted owner-only migration and a
 protected job verified the same public-key identity as the existing packaged app.
 Installed update trust was preserved; no signing key was rotated.
@@ -61,7 +62,9 @@ Main and tag releases retain their previous version rules and platform matrix.
 
 If main advances while a reviewed release waits for approval, GitHub may reject
 its older workflow-changing SHA without `workflows:write`. Do not add a personal
-token to CI to work around this. Aaron can reserve the run's exact planned tag at
-its verified source SHA, then rerun only the failed publisher. The publisher
-verifies that any existing tag points at the tested SHA and refuses mismatches.
-Production publishing additionally requires an existing owner-created tag.
+token to CI to work around this. Reserving the exact planned tag at the
+verified source SHA did not resolve the integration permission error for the
+older runs; their installers built successfully but publishing remains blocked.
+The current publisher verifies that any existing tag points at the tested SHA and refuses mismatches.
+Production publishing additionally requires the planned tag to already exist;
+Aaron must review its source before approving signing.
