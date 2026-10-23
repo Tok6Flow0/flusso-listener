@@ -439,7 +439,7 @@ function renderDecisions() {
     top.append(pill(status.label, status.tone), element('span', revision, 'hint mono'), time); source.append(sourceButton(row));
     item.append(top, source);
     item.append(element('p', row.reason || 'Processing this entry.', 'decision-excerpt'));
-    if (row.status === 'waiting' && !enabled) item.append(element('p', 'Checks resume when you turn the Listener on.', 'hint'));
+    if (row.status === 'waiting' && !enabled && !(historical && row.kind === 'research_check')) item.append(element('p', 'Checks resume when you turn the Listener on.', 'hint'));
     return item;
   });
 }

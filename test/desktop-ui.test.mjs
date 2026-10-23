@@ -306,6 +306,26 @@ test('Activity metadata identifies source revisions and uses only known completi
   assert.equal(activityMetadata({ ...row, completedAtUtc: 'invalid' }).clockLabel, 'Recorded');
 });
 
+test('Latest decisions offers resume only for the current research revision while retaining historical rows and ticket hints', async () => {
+  const { latestDecisions, completedModelPresentation, decisionShownInDesk, activityMetadata, activityStatus } = await import('../public/desktop-ui.mjs');
+  const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
+  const render = source.slice(source.indexOf('function renderDecisions()'), source.indexOf('/* -------------------------------------------------------------- settings */'));
+  const row = { entryId: 'note', origin: 'local', kind: 'research_check', status: 'waiting', reason: 'An actual earlier model failure.', atUtc: '2026-10-23T12:00:00Z' };
+  const activity = [{ ...row, id: 'prior', version: 2 }, { ...row, id: 'current', version: 3 }, { ...row, entryId: 'ticket', id: 'ticket-prior', version: 1, kind: undefined, decision: 'ticket' }];
+  const node = (tag, textContent) => ({ tag, textContent, children: [], append(...children) { this.children.push(...children); } });
+  const panel = { contains: () => false }, list = { closest: () => panel }, cards = [];
+  const context = { snapshot: { settings: { enabled: false }, listener: {}, activity, entries: [{ id: 'note', origin: 'local', version: 3 }, { id: 'ticket', origin: 'local', version: 3 }] },
+    document: {}, $: () => list, latestDecisions, completedModelPresentation, decisionShownInDesk, activityMetadata, activityStatus,
+    decisionItems: (rows, details) => rows.map(row => ({ value: { row, ...details(row) } })), changed: () => true,
+    reconcileRows: (_list, items, draw) => { for (const item of items) cards.push(draw(item.value)); },
+    element: node, pill: (_label, _tone) => node('span'), sourceButton: () => node('button'), when: value => value };
+  runInNewContext(render, context); context.renderDecisions();
+  const offersResume = card => card.children.some(child => child.textContent === 'Checks resume when you turn the Listener on.');
+  assert.equal(cards.length, 3, 'All source history remains present.');
+  assert.equal(offersResume(cards[0]), false); assert.equal(offersResume(cards[1]), true);
+  assert.equal(offersResume(cards[2]), true, 'Ticket behavior remains unchanged.');
+});
+
 test('account identity comes only from a connected account profile', () => {
   assert.equal(accountPresentation({ connected: false, profile: { displayName: 'Old identity', email: 'old@example.test' } }).name, 'Local workspace');
   assert.deepEqual(accountPresentation({ connected: true, profile: { displayName: '  Sam  ', email: 'sam@example.test' } }), { name: 'Sam', detail: 'sam@example.test', initial: 'S', connected: true });
