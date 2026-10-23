@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createListener } from '../src/listener.mjs';
-import { workspace, note, ticket, hedge, signal, fakeCloud, enable, now, notebookId, accountId } from './helpers.mjs';
+import { openStore } from '../src/store.mjs';
+import { modelUnavailable, classifyEntry, resolveResearchFocus } from '../src/model.mjs';
+import { workspace, note, ticket, hedge, signal, fakeCloud, enable, now, notebookId, accountId, memoryVault } from './helpers.mjs';
 
 const candidate = async () => ({ decision: 'candidate', reason: 'Fixture match.' });
 const noModel = async () => { throw new Error('The model must not read order tickets.'); };
@@ -295,6 +300,8 @@ test('settings changes during model classification abort and do not checkpoint t
     const pending = listener.tick(); while (!release) await new Promise(resolve => setImmediate(resolve));
     enable(w.store, { section: 'Different heading' }); listener.refresh(); release(await candidate()); await pending;
     assert.equal(w.store.get('checkpoint', `local:${entry.id}`), null);
+    const stopped = w.store.all('activity').find(row => row.kind === 'research_check');
+    assert.equal(stopped.reviewStatus, 'stopped'); assert.equal(stopped.completedAtUtc, new Date(now).toISOString());
   } finally { listener.stop(); await w.close(); }
 });
 test('first cloud sync baselines imported notes; a changed old note is discovered by the next full scan', async () => {
@@ -323,6 +330,68 @@ test('an interrupted cloud check discards its late snapshot before importing or 
     assert.equal(w.store.get('sync', 'baseline'), null);
     assert.equal(w.store.all('attempt').length, 0);
   } finally { release(); listener.stop(); await w.close(); }
+});
+
+test('a manual check replaces the pending timer and the next period starts only after completion', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now });
+  const w = await workspace(), started = deferred(), finish = deferred(); let classifications = 0;
+  const listener = createListener({ store: w.store, cloud: fakeCloud(), classify: async () => {
+    classifications++; if (classifications === 1) { started.resolve(); await finish.promise; }
+    return { decision: 'review', reason: 'Synthetic research.' };
+  } });
+  try {
+    enable(w.store, { intervalSeconds: 15, executionEnabled: false }); listener.start();
+    w.store.createEntry(note(w.store)); t.mock.timers.tick(10000);
+    const checking = listener.tick({ reviewLatest: true }); await started.promise;
+    assert.equal(listener.tick({ reviewLatest: true }), checking, 'A concurrent manual request joins the actual check.');
+    t.mock.timers.tick(2000); assert.equal(classifications, 1);
+    finish.resolve(); await checking;
+    assert.equal(listener.status().modelReview.completedAtUtc, new Date(now + 12000).toISOString());
+    t.mock.timers.tick(14999); await new Promise(resolve => setImmediate(resolve)); assert.equal(classifications, 1);
+    t.mock.timers.tick(1); await listener.tick(); assert.equal(classifications, 2);
+    t.mock.timers.tick(14999); await new Promise(resolve => setImmediate(resolve)); assert.equal(classifications, 2);
+    t.mock.timers.tick(1); await listener.tick(); assert.equal(classifications, 3, 'The automatic callback creates only one next deadline.');
+    assert.equal(w.store.all('attempt').length, 0);
+  } finally { finish.resolve(); await listener.stop(); await w.close(); }
+});
+
+test('a mid-check settings refresh waits for completion and uses the new interval without another timer', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const w = await workspace(), started = deferred(), finish = deferred(); let classifications = 0;
+  const listener = createListener({ store: w.store, cloud: fakeCloud(), classify: async () => {
+    classifications++; if (classifications === 1) { started.resolve(); await finish.promise; }
+    return { decision: 'review', reason: 'Synthetic research.' };
+  }, clock: () => now });
+  try {
+    enable(w.store, { intervalSeconds: 15, executionEnabled: false }); listener.start(); w.store.createEntry(note(w.store));
+    t.mock.timers.tick(15000); await started.promise;
+    enable(w.store, { intervalSeconds: 30, executionEnabled: false }); listener.refresh();
+    t.mock.timers.tick(60000); assert.equal(classifications, 1);
+    const checking = listener.tick(); finish.resolve(); await checking;
+    assert.equal(listener.status().modelReview.status, 'stopped', 'The old settings review remains aborted.');
+    t.mock.timers.tick(29999); await new Promise(resolve => setImmediate(resolve)); assert.equal(classifications, 1);
+    t.mock.timers.tick(1); await listener.tick(); assert.equal(classifications, 2);
+    t.mock.timers.tick(29999); await new Promise(resolve => setImmediate(resolve)); assert.equal(classifications, 2);
+    t.mock.timers.tick(1); await listener.tick(); assert.equal(classifications, 3);
+    assert.equal(w.store.all('attempt').length, 0);
+  } finally { finish.resolve(); await listener.stop(); await w.close(); }
+});
+
+test('disabled ticks cancel a pending deadline and neither disabled nor stopped checks rearm it', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const w = await workspace(); let classifications = 0;
+  const listener = createListener({ store: w.store, cloud: fakeCloud(), classify: async () => { classifications++; return candidate(); }, clock: () => now });
+  try {
+    enable(w.store, { intervalSeconds: 15, executionEnabled: false }); listener.start(); w.store.createEntry(note(w.store));
+    enable(w.store, { enabled: false, executionEnabled: false }); await listener.tick({ reviewLatest: true });
+    t.mock.timers.tick(60000); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(classifications, 0); assert.equal(listener.status().running, false);
+    enable(w.store, { intervalSeconds: 15, executionEnabled: false }); listener.refresh();
+    await listener.stop(); await listener.tick({ reviewLatest: true });
+    t.mock.timers.tick(60000); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(classifications, 0); assert.equal(listener.status().running, false);
+    assert.equal(w.store.all('attempt').length, 0);
+  } finally { await listener.stop(); await w.close(); }
 });
 
 test('stop drains an active scheduled classification and its old timer cannot restart the listener', async t => {
@@ -392,6 +461,8 @@ test('public progress is visible during model work and retains its published dec
     enable(w.store); listener.start(); const entry = w.store.createEntry(note(w.store));
     const tick = listener.tick(); await started.promise;
     const during = listener.status();
+    assert.equal(during.events[0].stage, 'start');
+    assert.match(during.events.find(row => row.stage === 'queued').message, /^1 selected entry; 1 revision to process/);
     assert.equal(during.busy, true); assert.equal(during.processing.stage, 'model'); assert.equal(during.processing.entryId, entry.id);
     assert.equal(during.processing.running, true); assert.equal(w.store.all('activity')[0].status, 'processing');
     assert.deepEqual(during.events.slice(-3).map(row => row.stage), ['queued', 'read', 'model']);
@@ -401,7 +472,7 @@ test('public progress is visible during model work and retains its published dec
     assert.equal(after.processing.stage, 'idle'); assert.equal(after.processing.running, false);
     assert.equal(after.lastModelOutput.reason, 'An explicit action ticket is missing.');
     assert.ok(after.events.some(row => row.stage === 'decision' && row.message === after.lastModelOutput.reason));
-    assert.ok(after.events.some(row => row.stage === 'result' && row.message.includes('flusso-close')));
+    assert.ok(after.events.some(row => row.stage === 'result' && row.message.includes('No order was requested')));
     assert.equal(after.events.some(row => 'thinking' in row || 'reasoning' in row), false);
     for (let i = 0; i < 30; i++) await listener.tick();
     assert.equal(listener.status().events.length, 100, 'Runtime transcript stays bounded.');
@@ -460,10 +531,12 @@ test('manual Check now re-reviews the newest selected research note, streams it,
     const tick = listener.tick({ reviewLatest: true }); assert.equal((await started.promise).id, research.id);
     assert.equal(listener.status().modelOutput.text, 'fresh model response');
     assert.equal(listener.status().modelOutput.status, 'streaming');
+    assert.equal(listener.status().modelOutput.version, research.version);
     assert.equal(listener.status().lastModelOutput, null, 'Partial text is not a decision.');
     assert.ok(updates.some(state => state.modelOutput?.text === 'fresh model response' && state.busy));
     finish.resolve({ decision: 'review', reason: 'This is the actual model decision.' }); await tick;
     assert.equal(listener.status().modelOutput.status, 'complete'); assert.equal(sends, 1);
+    assert.equal(listener.status().lastModelOutput.version, research.version);
     await listener.tick(); assert.equal(reviews, 1, 'Ordinary revision checks still honor checkpoints.');
     assert.equal(w.store.entry(research.id).status, 'reviewed');
     const count = updates.length; unsubscribe(); await listener.tick(); assert.equal(updates.length, count);
@@ -477,7 +550,213 @@ test('a failed streamed answer retains its partial text as failed and leaves the
     enable(w.store); listener.start(); const entry = w.store.createEntry(note(w.store)); await listener.tick();
     assert.equal(listener.status().modelOutput.status, 'failed'); assert.equal(listener.status().modelOutput.text, 'unfinished response');
     assert.equal(listener.status().lastModelOutput, null); assert.equal(w.store.get('checkpoint', `local:${entry.id}`), null);
+    assert.equal(w.store.all('activity').find(row => row.kind === 'research_check').completedAtUtc, new Date(now).toISOString());
   } finally { await listener.stop(); await w.close(); }
+});
+
+test('a streamed blank explanation fails as model format, retains raw output, and cannot recover merely because the engine is ready', async () => {
+  const w = await workspace(), raw = JSON.stringify({ decision: 'review', reason: '   ' });
+  const listener = createListener({ store: w.store, cloud: fakeCloud(), clock: () => now,
+    classify: args => classifyEntry({ ...args, fetchImpl: async () => new Response(JSON.stringify({ message: { content: raw }, done: true }) + '\n') }) });
+  try {
+    enable(w.store, { executionEnabled: false }); const entry = w.store.createEntry(note(w.store, { status: 'reviewed' })); listener.start();
+    await listener.tick({ reviewLatest: true }); const state = listener.status();
+    assert.equal(state.modelOutput.status, 'failed'); assert.equal(state.modelOutput.text, raw);
+    assert.equal(state.lastError, 'The local model returned no explanation.'); assert.equal(state.lastModelOutput, null);
+    assert.equal(listener.modelReady(), false); assert.equal(w.store.all('attempt').length, 0);
+    assert.notEqual(w.store.get('checkpoint', `local:${entry.id}`)?.state, 'observed');
+    assert.equal(w.store.all('activity')[0].responseReceived, true);
+  } finally { await listener.stop(); await w.close(); }
+});
+
+test('model readiness clears only its matching availability error without a check, settings change, execution or history rewrite', async () => {
+  const w = await workspace(); let calls = 0, unavailable = true;
+  const listener = createListener({ store: w.store, cloud: fakeCloud(), classify: async () => {
+    calls++; throw unavailable ? modelUnavailable('The local model stopped. Retry to restart it.') : new Error('The local model returned invalid classification JSON.');
+  }, clock: () => now });
+  try {
+    enable(w.store, { executionEnabled: false }); w.store.createEntry(note(w.store, { status: 'reviewed' })); listener.start();
+    await listener.tick({ reviewLatest: true });
+    const failed = listener.status().modelOutput, history = w.store.all('activity'), settings = w.store.settings();
+    assert.ok(listener.status().lastError); assert.equal(listener.modelReady(), true);
+    assert.equal(listener.status().lastError, null); assert.ok(listener.status().modelRecovery);
+    assert.match(listener.status().processing.message, /Choose Check now or wait for the next scheduled check/);
+    assert.deepEqual(listener.status().modelOutput, failed); assert.deepEqual(w.store.all('activity'), history);
+    assert.deepEqual(w.store.settings(), settings); assert.equal(calls, 1); assert.equal(w.store.all('attempt').length, 0);
+    assert.equal(listener.modelReady(), false);
+    unavailable = false; await listener.tick({ reviewLatest: true });
+    const unrelated = listener.status().lastError; assert.equal(listener.modelReady(), false); assert.equal(listener.status().lastError, unrelated);
+    assert.equal(listener.status().modelRecovery, null); assert.equal(calls, 2);
+  } finally { await listener.stop(); await w.close(); }
+});
+
+test('model recovery while Listener is off describes the actual next step and retains the failed check', async () => {
+  const w = await workspace(); let calls = 0;
+  const listener = createListener({ store: w.store, cloud: fakeCloud(), classify: async () => { calls++; throw modelUnavailable('The local model stopped.'); }, clock: () => now });
+  try {
+    enable(w.store, { executionEnabled: false }); listener.start(); w.store.createEntry(note(w.store)); await listener.tick();
+    const failed = listener.status(), history = w.store.all('activity');
+    assert.equal(failed.events.filter(row => row.message === failed.lastError).length, 1, 'The idle event does not repeat the error.');
+    assert.equal(failed.processing.message, 'Check finished with an issue to review.');
+    enable(w.store, { enabled: false, executionEnabled: false }); listener.refresh();
+    assert.equal(listener.modelReady(), true); const recovered = listener.status();
+    assert.match(recovered.processing.message, /Listener is off. Turn it on to resume checks/);
+    assert.doesNotMatch(recovered.processing.message, /Choose Check now|wait for the next scheduled/);
+    assert.deepEqual(recovered.modelOutput, failed.modelOutput); assert.deepEqual(w.store.all('activity'), history);
+    assert.equal(w.store.settings().enabled, false); assert.equal(calls, 1); assert.equal(w.store.all('attempt').length, 0);
+  } finally { await listener.stop(); await w.close(); }
+});
+
+test('failed repeat reviews preserve durable accepted research through SQLite reopen without per-period history growth', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'flusso-model-history-test-')), vault = memoryVault();
+  let store, listener, calls = 0, submissions = 0;
+  const cloud = fakeCloud({ submitOrders: async () => { submissions++; throw new Error('No execution expected.'); } });
+  try {
+    store = await openStore({ directory, vault, clock: () => new Date(now).toISOString() });
+    enable(store, { executionEnabled: false });
+    const entry = store.createEntry(note(store, { status: 'reviewed', body: 'x'.repeat(2400) }));
+    const retainedAttempt = { id: 'retained-original-ticket', kind: 'orders', signalIdentity: 'retained-source', status: 'submitted', atUtc: new Date(now).toISOString(), orders: [] };
+    store.claimAttempt(retainedAttempt);
+    listener = createListener({ store, cloud, clock: () => now, classify: async ({ onOutput }) => {
+      calls++; if (calls === 1) return { decision: 'review', reason: 'Durable actual response.' };
+      onOutput('partial retry'); throw new Error('The local model stopped during this repeat.');
+    } });
+    listener.start(); await listener.tick({ reviewLatest: true }); const accepted = listener.status().lastModelOutput;
+    assert.deepEqual(accepted.focus, resolveResearchFocus(''));
+    const saved = store.settings(); store.saveSettings({ ...saved, instructions: 'Check the exact recorded source timestamps.' });
+    for (let i = 0; i < 3; i++) await listener.tick({ reviewLatest: true });
+    assert.equal(calls, 4); assert.equal(store.all('activity').length, 2, 'One accepted and one unfinished research row per revision, not one per timer.');
+    assert.deepEqual(listener.status().lastModelOutput, accepted);
+    assert.deepEqual(listener.status().modelOutput.focus, resolveResearchFocus('Check the exact recorded source timestamps.'));
+    assert.equal(listener.status().modelOutput.status, 'failed');
+    assert.ok(store.all('activity').some(row => row.kind === 'research_check' && row.status === 'waiting' && row.reason.includes('local model stopped')));
+    const lastCheck = listener.status().modelReview; await listener.stop(); listener = null; store.close(); store = null;
+    store = await openStore({ directory, vault, clock: () => new Date(now).toISOString() });
+    listener = createListener({ store, cloud, classify: noModel, clock: () => now });
+    const restored = listener.status();
+    assert.equal(restored.lastCheckedAtUtc, lastCheck.completedAtUtc); assert.equal(restored.modelReview.id, lastCheck.id);
+    assert.equal(restored.modelReview.status, 'failed'); assert.equal(restored.busy, false); assert.equal(restored.running, false);
+    assert.deepEqual(restored.modelReview.sources, [{ entryId: entry.id, origin: 'local', version: entry.version }]);
+    assert.equal(restored.modelReview.accountId, store.settings().accountId);
+    const { completedModelPresentation } = await import('../public/desktop-ui.mjs');
+    assert.equal(completedModelPresentation(restored, [entry]).earlier, true, 'A newer failed check keeps the accepted response labelled Earlier after actual SQLite reopen.');
+    assert.equal(restored.modelOutput, null, 'No raw response is invented after reopening.');
+    assert.deepEqual(restored.lastModelOutput, accepted); assert.equal(restored.lastModelOutput.version, entry.version);
+    assert.notEqual(restored.lastModelOutput.focus.text, store.settings().instructions, 'A current setting never retrofits the saved accepted focus.');
+    assert.deepEqual(restored.lastModelOutput.coverage, { bodyUnits: 2000, totalBodyUnits: 2400, bodyTruncated: true, unit: 'UTF-16' });
+    assert.equal(store.all('activity').length, 2); assert.deepEqual(store.get('attempt', retainedAttempt.id), retainedAttempt);
+    assert.equal(store.claimAttempt({ ...retainedAttempt, id: 'copy' }), false); assert.equal(submissions, 0);
+  } finally { await listener?.stop(); store?.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('last-check receipts restore no-model and interrupted checks without reviving work or inventing completion', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'flusso-last-check-')), vault = memoryVault(); let store, listener, calls = 0;
+  try {
+    store = await openStore({ directory, vault }); enable(store, { executionEnabled: false });
+    listener = createListener({ store, cloud: fakeCloud(), classify: async () => { calls++; return candidate(); }, clock: () => now });
+    listener.start(); await listener.tick({ reviewLatest: true });
+    const checked = listener.status(); assert.equal(checked.modelReview.status, 'not_run');
+    await listener.stop(); listener = null; store.close(); store = await openStore({ directory, vault });
+    listener = createListener({ store, cloud: fakeCloud(), classify: noModel });
+    assert.equal(listener.status().modelReview.id, checked.modelReview.id); assert.equal(listener.status().modelReview.status, 'not_run');
+    assert.equal(listener.status().lastCheckedAtUtc, checked.lastCheckedAtUtc); assert.match(listener.status().modelReview.reason, /No eligible research note/);
+    await listener.stop(); listener = null;
+    const started = { id: 'interrupted-real-check', startedAtUtc: new Date(now + 15000).toISOString(), status: 'running', reason: null,
+      settingsVersion: store.settings().version, accountId: store.settings().accountId, source: 'local', sources: [{ entryId: 'recorded-note', origin: 'local', version: 2 }], lastCheckedAtUtc: checked.lastCheckedAtUtc };
+    store.put('sync', 'last-check', started); store.close(); store = await openStore({ directory, vault });
+    listener = createListener({ store, cloud: fakeCloud(), classify: noModel }); const restored = listener.status();
+    assert.equal(restored.modelReview.status, 'stopped'); assert.match(restored.modelReview.reason, /did not record completion/);
+    assert.equal(restored.modelReview.completedAtUtc, undefined); assert.equal(restored.lastCheckedAtUtc, checked.lastCheckedAtUtc);
+    assert.equal(restored.busy, false); assert.equal(restored.running, false); assert.equal(restored.modelOutput, null);
+    assert.deepEqual(store.get('sync', 'last-check'), started, 'Reading an interrupted receipt does not rewrite another writer.');
+    assert.equal(store.all('attempt').length, 0); assert.equal(calls, 0);
+  } finally { await listener?.stop(); store?.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('legacy review records expose their actual recorded clock and later failure without inventing a completed check', async () => {
+  const w = await workspace(); let listener;
+  try {
+    const entry = w.store.createEntry(note(w.store));
+    const accepted = { id: 'legacy-accepted', kind: 'research', checkId: 'accepted-check', entryId: entry.id, origin: 'local', version: entry.version, status: 'observed', decision: 'review', reason: 'Actual older answer.', atUtc: new Date(now).toISOString(), completedAtUtc: new Date(now + 100).toISOString() };
+    const failed = { ...accepted, id: 'legacy-progress', kind: 'research_check', checkId: 'later-check', status: 'waiting', reviewStatus: 'failed', reason: 'The local model stopped.', atUtc: new Date(now + 1000).toISOString() }; delete failed.completedAtUtc;
+    w.store.put('activity', accepted.id, accepted); w.store.put('activity', failed.id, failed);
+    listener = createListener({ store: w.store, cloud: fakeCloud(), classify: noModel }); const restored = listener.status();
+    assert.equal(restored.lastCheckedAtUtc, null); assert.equal(restored.modelReview.startedAtUtc, failed.atUtc);
+    assert.equal(restored.modelReview.restoredFromActivity, true); assert.equal(restored.modelReview.status, 'failed');
+    const { completedModelPresentation } = await import('../public/desktop-ui.mjs');
+    assert.equal(completedModelPresentation(restored, [entry]).earlier, true);
+    assert.deepEqual(w.store.get('activity', failed.id), failed); assert.equal(w.store.get('sync', 'last-check'), null);
+    assert.equal(restored.busy, false); assert.equal(w.store.all('attempt').length, 0);
+  } finally { await listener?.stop(); await w.close(); }
+});
+
+test('a refused initial check receipt fails closed before any model call or ticket attempt', async () => {
+  const w = await workspace(); let calls = 0; const put = w.store.put;
+  const listener = createListener({ store: w.store, cloud: fakeCloud(), classify: async () => { calls++; return candidate(); }, clock: () => now });
+  try {
+    enable(w.store); listener.start(); w.store.createEntry(note(w.store, { body: ticket({ id: 'receipt-refusal' }) }));
+    w.store.put = (kind, id, value) => { if (kind === 'sync' && id === 'last-check') throw new Error('Synthetic record refusal.'); return put(kind, id, value); };
+    await listener.tick({ reviewLatest: true });
+    assert.equal(listener.status().modelReview.status, 'failed'); assert.match(listener.status().lastError, /could not finish/);
+    assert.equal(listener.status().busy, false); assert.equal(calls, 0); assert.equal(w.store.all('attempt').length, 0);
+  } finally { w.store.put = put; await listener.stop(); await w.close(); }
+});
+
+test('a durable research write failure terminalizes the current stream and retains the previous completed response', async () => {
+  const w = await workspace(); let calls = 0, failNext = false, executions = 0;
+  const originalComplete = w.store.completeResearchResult;
+  w.store.completeResearchResult = (...args) => { if (failNext) { failNext = false; throw new Error('Synthetic SQLite transaction refusal.'); } return originalComplete(...args); };
+  const listener = createListener({ store: w.store, cloud: fakeCloud({ submitOrders: async () => { executions++; } }), clock: () => now,
+    classify: async ({ onOutput }) => { calls++; onOutput(`actual response ${calls}`); return { decision: 'review', reason: `Completed ${calls}` }; } });
+  try {
+    enable(w.store, { executionEnabled: false }); w.store.createEntry(note(w.store, { status: 'reviewed' })); listener.start();
+    await listener.tick({ reviewLatest: true }); const previous = listener.status().lastModelOutput;
+    failNext = true; await listener.tick({ reviewLatest: true });
+    const state = listener.status(); assert.equal(state.busy, false); assert.equal(state.modelOutput.status, 'failed'); assert.equal(state.modelReview.status, 'failed');
+    assert.equal(w.store.all('activity').find(row => row.kind === 'research_check').reviewStatus, 'failed');
+    assert.deepEqual(state.lastModelOutput, previous); assert.match(state.lastError, /could not finish/); assert.equal(executions, 0);
+  } finally { await listener.stop(); await w.close(); }
+});
+
+test('research skipped after an unconfirmed ticket is not reported as unnecessary', async () => {
+  const w = await workspace(); let calls = 0;
+  const listener = createListener({ store: w.store, cloud: fakeCloud({ submitOrders: async () => ({ status: 'unknown', lines: [], message: 'Unconfirmed synthetic receipt.' }) }),
+    classify: async () => { calls++; return candidate(); }, clock: () => now });
+  try {
+    enable(w.store); w.store.createEntry(note(w.store, { status: 'reviewed' })); listener.start();
+    w.store.createEntry(note(w.store, { body: ticket({ id: 'skip-research-on-uncertainty' }) }));
+    await listener.tick({ reviewLatest: true });
+    assert.equal(calls, 0); assert.equal(listener.status().modelReview.status, 'skipped');
+    assert.match(listener.status().modelReview.reason, /skipped.*ticket result/);
+    assert.ok(!listener.status().events.some(row => /No research revision required/.test(row.message)));
+    assert.equal(w.store.all('attempt').length, 1); assert.equal(w.store.all('attempt')[0].status, 'unknown');
+  } finally { await listener.stop(); await w.close(); }
+});
+
+test('a later check without selected research retains the exact earlier response and reports no model run', async () => {
+  const w = await workspace(), started = deferred(), finish = deferred(); let calls = 0;
+  const listener = createListener({ store: w.store, cloud: fakeCloud(), classify: async ({ onOutput }) => {
+    calls++; if (calls === 2) { onOutput('{"decision":"review","reason":"Second'); started.resolve(); await finish.promise; }
+    return { decision: 'review', reason: `Actual response ${calls}` };
+  }, clock: () => now });
+  try {
+    enable(w.store); const research = w.store.createEntry(note(w.store, { body: 'x'.repeat(2400), status: 'reviewed' })); listener.start();
+    await listener.tick({ reviewLatest: true }); const previous = listener.status().lastModelOutput;
+    assert.equal(previous.coverage.bodyUnits, 2000); assert.equal(previous.coverage.totalBodyUnits, 2400); assert.equal(previous.coverage.bodyTruncated, true);
+    assert.equal(previous.checkId, listener.status().modelReview.id);
+    const next = listener.tick({ reviewLatest: true }); await started.promise;
+    assert.deepEqual(listener.status().lastModelOutput, previous, 'The prior completed response remains available throughout streaming.');
+    assert.notEqual(listener.status().modelOutput.checkId, previous.checkId);
+    finish.resolve(); await next;
+    const accepted = listener.status().lastModelOutput;
+    w.store.updateEntry(research.id, { ...note(w.store), body: research.body, status: 'closed', version: research.version });
+    await listener.tick({ reviewLatest: true });
+    assert.equal(calls, 2); assert.deepEqual(listener.status().lastModelOutput, accepted);
+    assert.equal(listener.status().modelReview.status, 'not_run');
+    assert.notEqual(listener.status().modelReview.id, accepted.checkId);
+    assert.match(listener.status().modelReview.reason, /No model was run/);
+    assert.equal(w.store.all('attempt').length, 0);
+  } finally { finish.resolve(); await listener.stop(); await w.close(); }
 });
 
 
@@ -499,4 +778,24 @@ test('every timer period calls the model for unchanged selected research without
       assert.equal(sends, 1, 'Decided tickets remain checkpointed through every period.');
     }
   } finally { await listener.stop(); await w.close(); }
+});
+
+test('untouched UI order and close drafts never create an execution attempt; completed owner orders still submit once', async () => {
+  const { ticketDraft } = await import('../public/desktop-ui.mjs');
+  const w = await workspace(); const calls = [];
+  const listener = createListener({ store: w.store, cloud: fakeCloud({ submitOrders: async attempt => { calls.push(attempt); return sent(attempt.orders); }, closePositions: async () => { throw new Error('An empty close draft must never reach execution.'); } }), classify: noModel, clock: () => now });
+  try {
+    enable(w.store); listener.start();
+    for (const close of [false, true]) for (const fence of ['```', '~~~']) {
+      const body = `${fence}flusso-${close ? 'close' : 'orders'}\r\n${JSON.stringify(ticketDraft(`draft-${close}-${fence.length}-${fence[0]}`, close))}\r\n${fence}`;
+      w.store.createEntry(note(w.store, { body }));
+    }
+    await listener.tick(); assert.equal(calls.length, 0); assert.equal(w.store.all('attempt').length, 0);
+    assert.equal(w.store.all('activity').filter(row => row.status === 'review').length, 4);
+    const completed = ticketDraft('owner-completed-draft'); completed.orders = hedge;
+    w.store.createEntry(note(w.store, { body: `\`\`\`flusso-orders\n${JSON.stringify(completed)}\n\`\`\`` }));
+    await listener.tick(); await listener.tick();
+    assert.equal(calls.length, 1); assert.equal(calls[0].ticketId, 'owner-completed-draft');
+    assert.deepEqual(calls[0].orders.map(({ placeAtUtc: _at, conditions: _conditions, ...order }) => order), hedge.map(({ conditions: _conditions, ...order }) => order));
+  } finally { listener.stop(); await w.close(); }
 });

@@ -16,6 +16,7 @@ export function createUpdates({
   clearTimeoutFn = clearTimeout,
 }) {
   let installing;
+  let installPrepared = false;
   let providerReady;
   let timers = [];
   // Packaged preview and production builds both use signed update manifests.
@@ -64,12 +65,13 @@ export function createUpdates({
   updater.on('update-downloaded', info => publish({
     state: 'downloaded',
     version: info.version,
-    message: 'Update ready. Restart when you are ready.',
+    message: 'Update ready. Restart turns off the Listener and Auto-trade. Turn them back on after reviewing the updated app.',
   }));
-  updater.on('error', () => publish({
-    state: 'error',
-    message: 'The update could not be verified or downloaded. Your installed app and Journal are unchanged.',
-  }));
+  const installationFailure = () => publish({ state: 'error', installationFailed: true, message: 'The update installation could not finish. Quit and reopen Flusso Journal manually. The Listener and Auto-trade remain off.' });
+  updater.on('error', () => {
+    if (installPrepared) installationFailure();
+    else publish({ state: 'error', message: 'The update could not be verified or downloaded. Your installed app and Journal are unchanged.' });
+  });
 
   async function checkQuietly() {
     if (!packaged || ['checking', 'downloading', 'downloaded'].includes(state.state)) return { ...state };
@@ -107,8 +109,10 @@ export function createUpdates({
       if (state.state !== 'downloaded') throw new Error('Download and verify the update first.');
       if (!installing) {
         installing = (async () => {
-          await beforeInstall();
-          updater.quitAndInstall({ isSilent: false, isForceRunAfter: true });
+          if (await beforeInstall() === false) { installing = undefined; return { ...state, cancelled: true }; }
+          installPrepared = true;
+          try { updater.quitAndInstall({ isSilent: false, isForceRunAfter: true }); }
+          catch { installationFailure(); throw new Error('The update installation could not finish. Quit and reopen Flusso Journal manually.'); }
           return { ...state };
         })().catch(error => { installing = undefined; throw error; });
       }

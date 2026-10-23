@@ -4,9 +4,11 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { InputError, ID, object, settingsInput, text, THEMES } from './schema.mjs';
 import { listenCallback, openBrowser } from './browser.mjs';
-import { modelStatus } from './model.mjs';
+import { modelStatus, MODEL_BODY_LIMIT } from './model.mjs';
 import { readTicket } from './orders.mjs';
 import { describeEntryHandoff } from './handoff.mjs';
+
+const STATUS_LIMITS = Object.freeze({ entries: 500, activity: 100, attempts: 100, modelBodyUnits: MODEL_BODY_LIMIT });
 
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']], ['/app.mjs', ['app.mjs', 'text/javascript; charset=utf-8']],
@@ -73,7 +75,12 @@ export async function startServer({ store, cloud, listener, port = 0, open = ope
         send(listener.status());
         return;
       }
-      if (request.method === 'GET' && url.pathname === '/api/status') return reply(200, { settings: store.settings(), listener: listener.status(), cloud: await cloud.status(), model: await checkModel(), display: { theme: theme() }, notebooks: store.notebooks(), entries: annotate(store.entries().slice(0, 500), store.all('activity'), store, clock()), activity: store.all('activity').sort((a, b) => Number(unconfirmed(b)) - Number(unconfirmed(a)) || newest(a, b)).slice(0, 100), attempts: store.all('attempt').filter(row => ['orders', 'close', 'legacy'].includes(row.kind)).sort((a, b) => Number(unconfirmed(b)) - Number(unconfirmed(a)) || newest(a, b)).slice(0, 100).map(row => ({ ...row, orders: row.orders ?? [] })) });
+      if (request.method === 'GET' && url.pathname === '/api/status') {
+        const connection = await cloud.status(), model = await checkModel(), current = listener.status();
+        const activity = store.all('activity').map(row => row.kind === 'research_check' && row.status === 'processing'
+          ? { ...row, activeReview: Boolean(row.checkId != null && current.busy && row.checkId === current.modelReview?.id) } : row);
+        return reply(200, { limits: STATUS_LIMITS, settings: store.settings(), listener: current, cloud: connection, model, display: { theme: theme() }, notebooks: store.notebooks(), entries: annotate(store.entries().slice(0, STATUS_LIMITS.entries), activity, store, clock(), current), activity: activity.sort((a, b) => Number(unconfirmed(b)) - Number(unconfirmed(a)) || newest(a, b)).slice(0, STATUS_LIMITS.activity), attempts: store.all('attempt').filter(row => ['orders', 'close', 'legacy'].includes(row.kind)).sort((a, b) => Number(unconfirmed(b)) - Number(unconfirmed(a)) || newest(a, b)).slice(0, STATUS_LIMITS.attempts).map(row => ({ ...row, orders: row.orders ?? [] })) });
+      }
       const input = request.method === 'POST' ? await readJson(request) : null;
       if (url.pathname === '/api/connect' && request.method === 'POST') {
         object(input, []);
@@ -132,9 +139,9 @@ export async function startServer({ store, cloud, listener, port = 0, open = ope
         store.importCloud(snapshot);
         return reply(200, { complete: snapshot.complete, reason: snapshot.reason ?? null, asOfUtc: snapshot.asOfUtc });
       }
-      if (url.pathname === '/api/notebooks' && request.method === 'POST') { object(input, ['name']); return reply(201, store.createNotebook(input.name)); }
-      if (url.pathname === '/api/entries' && request.method === 'POST') return reply(201, store.createEntry(input, request.headers['idempotency-key'] ?? randomUUID()));
-      if (/^\/api\/entries\/[a-f\d-]+$/i.test(url.pathname) && request.method === 'POST') return reply(200, store.updateEntry(url.pathname.split('/').at(-1), input));
+      if (url.pathname === '/api/notebooks' && request.method === 'POST') { object(input, ['name']); return reply(201, store.createNotebook(input.name, request.headers['idempotency-key'] ?? null)); }
+      if (url.pathname === '/api/entries' && request.method === 'POST') return reply(201, annotate([store.createEntry(input, request.headers['idempotency-key'] ?? randomUUID())], store.all('activity'), store, clock(), listener.status())[0]);
+      if (/^\/api\/entries\/[a-f\d-]+$/i.test(url.pathname) && request.method === 'POST') return reply(200, annotate([store.updateEntry(url.pathname.split('/').at(-1), input, request.headers['idempotency-key'] ?? null)], store.all('activity'), store, clock(), listener.status())[0]);
       return reply(404, { error: 'Route not found.' });
     } catch (error) {
       const status = error instanceof InputError ? error.status : error.name === 'CloudError' ? 400 : 500;
@@ -148,9 +155,9 @@ export async function startServer({ store, cloud, listener, port = 0, open = ope
   return { server, origin, url: `${origin}/#${bootstrap}`, close: () => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }) };
 }
 // Each entry carries its ticket (if any) and the listener's latest decision on it.
-function annotate(entries, activity, store, now) {
+function annotate(entries, activity, store, now, listenerState = {}) {
   const settings = store.settings();
-  const latest = new Map(), attempts = new Map();
+  const latest = new Map(), acceptedResearch = new Map(), researchChecks = new Map(), attempts = new Map();
   for (const row of store.all('attempt')) {
     const key = `${row.origin}:${row.entryId}:${row.version}`;
     if (!attempts.has(key)) attempts.set(key, []);
@@ -159,12 +166,25 @@ function annotate(entries, activity, store, now) {
   for (const row of activity) {
     const key = `${row.origin}:${row.entryId}`, seen = latest.get(key);
     if (!seen || row.atUtc > seen.atUtc) latest.set(key, row);
+    if (row.kind === 'research_check') {
+      const versionKey = `${key}:${row.version}`, seenCheck = researchChecks.get(versionKey);
+      if (!seenCheck || row.atUtc > seenCheck.atUtc) researchChecks.set(versionKey, row);
+    }
+    if (row.status === 'observed' && ['candidate', 'review', 'ignore'].includes(row.decision)) {
+      const accepted = acceptedResearch.get(key);
+      const clock = row.completedAtUtc ?? row.atUtc, priorClock = accepted?.completedAtUtc ?? accepted?.atUtc;
+      if (!accepted || clock > priorClock || clock === priorClock && row.version > accepted.version) acceptedResearch.set(key, row);
+    }
   }
   return entries.map(entry => {
-    const row = latest.get(`${entry.origin}:${entry.id}`);
     const ticket = readTicket(entry.body);
+    const key = `${entry.origin}:${entry.id}`, row = (ticket === null ? acceptedResearch.get(key) : null) ?? latest.get(key);
     const handoff = describeEntryHandoff({ entry, settings, ticket, activity: row, attempts: attempts.get(`${entry.origin}:${entry.id}:${entry.version}`), checkpoint: store.get('checkpoint', `${entry.origin}:${entry.id}`), now });
-    return { ...entry, ticket, handoff, listener: row ? { decision: row.decision ?? null, status: row.status, reason: row.reason ?? null, atUtc: row.atUtc } : null };
+    const annotation = value => value ? { decision: value.decision ?? null, status: value.status, reason: value.reason ?? null, atUtc: value.atUtc, completedAtUtc: value.completedAtUtc ?? null, version: value.version ?? null, focus: value.focus ?? null,
+      ...(value.kind === 'research_check' ? { kind: value.kind, reviewStatus: value.reviewStatus ?? null, responseReceived: value.responseReceived === true, activeReview: Boolean(value.checkId != null && listenerState.busy && value.checkId === listenerState.modelReview?.id) } : {}) } : null;
+    const check = ticket === null ? researchChecks.get(`${key}:${entry.version}`) : null;
+    const separateCheck = check && (row?.kind === 'research_check' || check.id !== row?.id && check.checkId !== row?.checkId && (!row || Date.parse(check.atUtc) >= Date.parse(row.completedAtUtc ?? row.atUtc)));
+    return { ...entry, ticket, handoff, listener: annotation(row), listenerCheck: separateCheck ? annotation(check) : null };
   });
 }
 function same(left, right) { if (typeof left !== 'string') return false; const a = Buffer.from(left), b = Buffer.from(right); return a.length === b.length && timingSafeEqual(a, b); }

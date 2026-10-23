@@ -20,8 +20,8 @@ export function parseMarkdown(markdown) {
       while (cursor < lines.length && lines[cursor].trim() && lines[cursor].includes('|')) { const row = splitRow(lines[cursor++]); while (row.length < head.length) row.push(''); rows.push(row.slice(0, head.length)); }
       blocks.push({ type: 'table', head, rows }); index = cursor - 1; continue;
     }
-    const heading = /^(#{2,3})\s+(.+)$/.exec(trimmed);
-    if (heading) { flush(); blocks.push({ type: `h${heading[1].length}`, text: heading[2] }); continue; }
+    const heading = /^(#{1,3})\s+(.+)$/.exec(trimmed);
+    if (heading) { flush(); blocks.push({ type: heading[1].length <= 2 ? 'h2' : 'h3', text: heading[2] }); continue; }
     const unordered = /^[-*•]\s+(.+)$/.exec(trimmed), ordered = /^(\d+)[.)]\s+(.+)$/.exec(trimmed);
     if (unordered || ordered) {
       if (paragraph.length) { blocks.push({ type: 'p', text: paragraph.join(' ') }); paragraph = []; }
@@ -33,7 +33,7 @@ export function parseMarkdown(markdown) {
   flush(); return blocks;
 }
 function plain(parent, text) {
-  for (const part of text.split(/([+\-−]?\d[\d,.]*(?:%|bps)?)/g)) {
+  for (const part of text.split(/(\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?)?|(?<![\p{L}\p{N}])[+\-−]\d+(?:[,.]\d+)*(?:%|bps)?|\d+(?:[,.]\d+)*(?:%|bps)?)/gu)) {
     if (!part) continue;
     if (/^[+\-−]?\d/.test(part)) { const span = document.createElement('span'); span.className = 'mono'; span.textContent = part; parent.append(span); }
     else parent.append(document.createTextNode(part));
@@ -49,7 +49,7 @@ function inline(parent, text) {
   }
   plain(parent, text.slice(last));
 }
-export function renderMarkdown(parent, markdown) {
+export function renderMarkdown(parent, markdown, { headingLevel = 2 } = {}) {
   parent.replaceChildren();
   for (const block of parseMarkdown(markdown)) {
     if (block.type === 'table') {
@@ -58,7 +58,7 @@ export function renderMarkdown(parent, markdown) {
       const body = document.createElement('tbody'); for (const row of block.rows) { const line = document.createElement('tr'); for (const cell of row) { const td = document.createElement('td'); if (/^[+\-−]?[$€£]?\d[\d,._\s]*(?:[KMBT]|%|bps)?$/i.test(cell.trim())) td.className = 'numeric'; inline(td, cell); line.append(td); } body.append(line); } table.append(body); wrap.append(table); parent.append(wrap); continue;
     }
     if (block.type === 'code') { const wrap = document.createElement('div'); wrap.className = 'code-scroll'; const pre = document.createElement('pre'); pre.textContent = block.text; wrap.append(pre); parent.append(wrap); continue; }
-    const node = document.createElement(block.type);
+    const node = document.createElement(/^h[23]$/.test(block.type) ? `h${Math.min(6, headingLevel + Number(block.type[1]) - 2)}` : block.type);
     if (block.items) for (const item of block.items) { const li = document.createElement('li'); if (item.value != null) li.value = item.value; inline(li, item.text); node.append(li); }
     else inline(node, block.text);
     parent.append(node);

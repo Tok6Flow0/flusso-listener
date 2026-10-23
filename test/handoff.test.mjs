@@ -32,7 +32,12 @@ test('handoff explains reviewed research, startup baseline, malformed/stale tick
     assert.equal(describe().code, 'research_only'); assert.match(describe().reason, /do not authorize submission/);
     const reviewed = describe({ status: 'reviewed', body: '```json\n{"proposedOrders":[]}\n```' });
     assert.equal(reviewed.code, 'reviewed'); assert.equal(reviewed.kind, 'research'); assert.match(reviewed.reason, /No explicit flusso-orders/);
+    assert.match(reviewed.reason, /newest selected note/);
+    assert.doesNotMatch(reviewed.reason, /only watching entries are considered/);
     assert.equal(describe({}, { checkpoint: { version: entry.version, state: 'baseline' } }).code, 'baselined');
+    assert.match(describe({}, { checkpoint: { version: entry.version, state: 'baseline' } }).reason, /reviewed each period/);
+    assert.doesNotMatch(describe({ status: 'closed' }).reason, /can be reviewed again/);
+    assert.doesNotMatch(describe({ status: 'reviewed', body: ticket() }).reason, /can be reviewed again/);
     assert.equal(describe({}, { checkpoint: { version: entry.version - 1, state: 'baseline' } }).code, 'research_only');
     assert.equal(describe({ body: '```flusso-orders\ninvalid\n```' }).code, 'malformed_ticket');
     assert.equal(describe({ body: ticket(), updatedAtUtc: new Date(now - 86400000).toISOString() }).code, 'stale_ticket');
@@ -40,6 +45,24 @@ test('handoff explains reviewed research, startup baseline, malformed/stale tick
     assert.equal(describe({ body: ticket() }, { activity: { version: entry.version, status: 'waiting', reason: 'A complete cloud read is required.' } }).reason, 'A complete cloud read is required.');
     assert.equal(describe({ body: ticket() }, { activity: { version: entry.version - 1, status: 'waiting', reason: 'Old reason.' } }).code, 'awaiting_check');
     assert.equal(JSON.stringify(['settings', 'entry', 'checkpoint', 'attempt', 'activity'].map(kind => w.store.all(kind))), before);
+  } finally { await w.close(); }
+});
+
+test('a startup ticket explanation distinguishes the saved revision from a later corrected revision', async () => {
+  const w = await workspace();
+  try {
+    enable(w.store);
+    const entry = w.store.createEntry(note(w.store, { body: '```flusso-orders\ninvalid\n```' }));
+    const checkpoint = { version: entry.version, state: 'baseline' };
+    const describe = candidate => describeEntryHandoff({ entry: candidate, settings: w.store.settings(), checkpoint, now });
+    const baseline = describe(entry);
+    assert.equal(baseline.code, 'baselined');
+    assert.match(baseline.reason, /skips this saved ticket revision/);
+    assert.match(baseline.reason, /new revision.*checked/);
+    assert.match(baseline.reason, /previously decided tickets are never replayed/);
+    assert.equal(describe({ ...entry, version: entry.version + 1 }).code, 'malformed_ticket');
+    assert.equal(describe({ ...entry, version: entry.version + 1, body: ticket() }).code, 'awaiting_check');
+    assert.deepEqual(checkpoint, { version: entry.version, state: 'baseline' });
   } finally { await w.close(); }
 });
 

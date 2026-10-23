@@ -9,6 +9,7 @@ const settings = { risk: { maxSlippagePct: null, maxOrderUsd: 900, maxTicketUsd:
 test('entries without a ticket are not order requests', () => {
   assert.equal(readTicket('## Notes\n\n```json\n{"orders":[]}\n```'), null);
   assert.equal(buildOrderRequest({ entry: entry('Plain research.'), settings, now }), null);
+  assert.equal(readTicket(JSON.stringify({ id: 'reference-only', together: true, orders: hedge })), null, 'A copied JSON format example alone is not an executable ticket.');
 });
 
 test('a ticket forwards the exact order elements and stamps one shared release time', () => {

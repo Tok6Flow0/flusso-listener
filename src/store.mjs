@@ -68,7 +68,22 @@ export async function openStore({ directory, vault, encryptionKey, clock = () =>
     settings: () => get('settings', 'main'),
     saveSettings(value) { return transaction(() => { const old = get('settings', 'main'); if (value.version !== old.version) throw new InputError('Settings changed. Reload before saving.', 409); const next = { ...old, ...value, version: old.version + 1 }; put('settings', 'main', next); return next; }); },
     notebooks: () => all('notebook'),
-    createNotebook(name) { const id = randomUUID(), row = { id, name: text(name, 120, 'notebook name').trim(), origin: 'local', version: 1, telegramEnabled: false }; put('notebook', `local:${id}`, row); return row; },
+    createNotebook(name, retryKey = null) { return transaction(() => {
+      const validated = text(name, 120, 'notebook name').trim(); let digest;
+      if (retryKey !== null) {
+        text(retryKey, 200, 'retry key');
+        digest = createHash('sha256').update(JSON.stringify({ operation: 'createNotebook', name: validated })).digest('hex');
+        const retry = get('retry', retryKey);
+        if (retry) {
+          if (retry.operation !== 'createNotebook' || retry.digest !== digest) throw new InputError('Retry key was used for different content.', 409);
+          return retry.notebook;
+        }
+      }
+      const id = randomUUID(), row = { id, name: validated, origin: 'local', version: 1, telegramEnabled: false };
+      put('notebook', `local:${id}`, row);
+      if (retryKey !== null) put('retry', retryKey, { operation: 'createNotebook', digest, notebook: row });
+      return row;
+    }); },
     entries: () => all('entry').sort((a, b) => b.updatedAtUtc.localeCompare(a.updatedAtUtc)),
     entry: (id, origin = 'local') => get('entry', `${origin}:${id}`),
     createEntry(input, retryKey = randomUUID()) { return transaction(() => {
@@ -78,12 +93,27 @@ export async function openStore({ directory, vault, encryptionKey, clock = () =>
       const entry = { ...newEntry(validated, clock()), origin: 'local' }, entryKey = `local:${entry.id}`;
       put('entry', entryKey, entry); put('retry', retryKey, { digest, entryKey }); return entry;
     }); },
-    updateEntry(id, input) { return transaction(() => {
-      const old = get('entry', `local:${id}`); if (!old) throw new InputError('Local entry not found.', 404);
-      const validated = journalInput(input, { update: true }); if (old.version !== validated.version) throw new InputError('Entry changed. Read its latest version before editing.', 409);
+    updateEntry(id, input, retryKey = null) { return transaction(() => {
+      const validated = journalInput(input, { update: true }), entryKey = `local:${id}`;
+      let digest;
+      if (retryKey !== null) {
+        text(retryKey, 200, 'retry key');
+        digest = createHash('sha256').update(JSON.stringify({ operation: 'updateEntry', id, input: validated })).digest('hex');
+        const retry = get('retry', retryKey);
+        if (retry) {
+          if (retry.operation !== 'updateEntry' || retry.entryKey !== entryKey || retry.digest !== digest) throw new InputError('Retry key was used for different content.', 409);
+          // Replay the original committed reply; never apply an old edit again or
+          // substitute a later revision whose content this request did not save.
+          return retry.entry;
+        }
+      }
+      const old = get('entry', entryKey); if (!old) throw new InputError('Local entry not found.', 404);
+      if (old.version !== validated.version) throw new InputError('Entry changed. Read its latest version before editing.', 409);
       if (!get('notebook', `local:${validated.notebookId}`)) throw new InputError('Local notebook not found.', 404);
       const entry = { ...old, ...validated, signal: 'signal' in validated ? validated.signal : old.signal, version: old.version + 1, updatedAtUtc: clock() };
-      put('entry', `local:${id}`, entry); return entry;
+      put('entry', entryKey, entry);
+      if (retryKey !== null) put('retry', retryKey, { operation: 'updateEntry', digest, entryKey, entry });
+      return entry;
     }); },
     importCloud({ notebooks, entries }) { return transaction(() => {
       for (const notebook of notebooks) put('notebook', `cloud:${notebook.id}`, { ...notebook, origin: 'cloud' });
@@ -93,6 +123,16 @@ export async function openStore({ directory, vault, encryptionKey, clock = () =>
       if (get('signal-attempt', attempt.signalIdentity)) return false;
       put('signal-attempt', attempt.signalIdentity, { attemptId: attempt.id, atUtc: attempt.atUtc });
       put('attempt', attempt.id, attempt); return true;
+    }); },
+    completeResearchResult(accepted, progressId) { return transaction(() => {
+      const progress = get('activity', progressId);
+      if (!progress || progress.kind !== 'research_check' || accepted.kind !== 'research' || accepted.status !== 'observed'
+        || progressId === accepted.id || !accepted.checkId || ['entryId', 'origin', 'version', 'checkId'].some(field => progress[field] !== accepted[field])) {
+        throw new InputError('Research progress changed before its result could be saved.', 409);
+      }
+      put('activity', accepted.id, accepted);
+      db.prepare('DELETE FROM records WHERE kind=? AND id=?').run('activity', progressId);
+      return accepted;
     }); },
     close() { db.close(); key.fill(0); },
   };

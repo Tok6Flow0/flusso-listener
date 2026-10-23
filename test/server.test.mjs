@@ -34,9 +34,112 @@ test('loopback GUI refuses wrong Host/Origin and unauthorized requests; session 
 test('authorized local Journal save/readback and version conflict flow use the same private store', async () => {
   const w = await appFixture(); try {
     await w.unlock(); const response = await w.post('/api/entries', note(w.store), { 'Idempotency-Key': 'original-api-research-key' }); assert.equal(response.status, 201); const saved = await response.json();
-    const status = await fetch(w.app.origin + '/api/status', { headers: { Cookie: w.cookie() } }).then(row => row.json()); assert.equal(status.entries[0].id, saved.id);
+    const status = await fetch(w.app.origin + '/api/status', { headers: { Cookie: w.cookie() } }).then(row => row.json()); assert.equal(status.entries[0].id, saved.id); assert.deepEqual(status.limits, { entries: 500, activity: 100, attempts: 100, modelBodyUnits: 2000 });
     assert.equal((await w.post('/api/entries/' + saved.id, { ...note(w.store), version: 10 })).status, 409);
     assert.equal((await w.post('/api/entries', { ...note(w.store), execute: true })).status, 400);
+  } finally { await w.close(); }
+});
+
+test('a lost local edit reply replays the exact saved revision without overwriting a newer edit', async () => {
+  const w = await appFixture(); try {
+    await w.unlock();
+    const original = w.store.createEntry(note(w.store)), other = w.store.createEntry(note(w.store, { title: 'Other research' }));
+    const input = { ...note(w.store), body: 'Exact submitted research edit.', version: original.version };
+    const headers = { 'Idempotency-Key': 'lost-edit-reply' };
+    const committed = await w.post('/api/entries/' + original.id, input, headers);
+    assert.equal(committed.status, 200); await committed.arrayBuffer(); // The client lost this committed reply.
+    const saved = w.store.entry(original.id); assert.equal(saved.version, 2);
+    const replay = await w.post('/api/entries/' + original.id, input, headers);
+    assert.equal(replay.status, 200); assert.equal((await replay.json()).body, input.body);
+    const later = w.store.updateEntry(original.id, { ...input, body: 'A later independent edit.', version: saved.version });
+    const repeated = await w.post('/api/entries/' + original.id, input, headers);
+    assert.equal(repeated.status, 200); const reply = await repeated.json();
+    assert.equal(reply.version, saved.version); assert.equal(reply.body, saved.body);
+    assert.deepEqual(w.store.entry(original.id), later, 'Replaying the reply does not reapply the old edit.');
+    assert.equal((await w.post('/api/entries/' + original.id, { ...input, body: 'Different content.' }, headers)).status, 409);
+    assert.equal((await w.post('/api/entries/' + original.id, { ...input, version: later.version }, headers)).status, 409);
+    assert.equal((await w.post('/api/entries/' + other.id, { ...input, version: other.version }, headers)).status, 409);
+    assert.equal((await w.post('/api/entries', note(w.store), headers)).status, 409, 'A create cannot reuse an edit retry key.');
+    const createHeaders = { 'Idempotency-Key': 'create-only-key' };
+    assert.equal((await w.post('/api/entries', note(w.store), createHeaders)).status, 201);
+    assert.equal((await w.post('/api/entries/' + other.id, { ...input, version: other.version }, createHeaders)).status, 409);
+    assert.equal(w.store.entry(other.id).version, 1); assert.equal(w.store.all('attempt').length, 0);
+  } finally { await w.close(); }
+});
+
+test('save replies carry canonical ticket validation and the actual historical result revision', async () => {
+  let submissions = 0;
+  const w = await appFixture({ submitOrders: async () => { submissions++; throw new Error('No execution is authorized.'); } }); try {
+    await w.unlock();
+    const first = await w.post('/api/entries', note(w.store), { 'Idempotency-Key': 'annotated-save-research-key' }).then(response => response.json());
+    assert.equal(first.version, 1); assert.equal(first.ticket, null); assert.equal(first.listener, null);
+    w.store.put('activity', 'original-review', { id: 'original-review', entryId: first.id, origin: 'local', version: 1, status: 'observed', decision: 'review', reason: 'The original revision needs evidence.', atUtc: new Date(now).toISOString(), completedAtUtc: new Date(now + 500).toISOString() });
+    const body = '```flusso-orders\n{"id":"empty-order-draft","orders":[]}\n```';
+    const saved = await w.post('/api/entries/' + first.id, { ...note(w.store), body, version: first.version }).then(response => response.json());
+    assert.equal(saved.version, 2); assert.equal(saved.body, body); assert.ok(saved.ticket.error);
+    assert.equal(saved.listener.version, 1); assert.equal(saved.listener.reason, 'The original revision needs evidence.');
+    assert.equal(saved.listener.completedAtUtc, new Date(now + 500).toISOString());
+    assert.equal(w.store.get('activity', 'original-review').version, 1);
+    const status = await fetch(w.app.origin + '/api/status', { headers: { Cookie: w.cookie() } }).then(response => response.json());
+    assert.deepEqual(status.entries[0], saved, 'POST uses the same canonical annotations as the existing status read.');
+    w.store.put('activity', 'legacy-review', { id: 'legacy-review', entryId: first.id, origin: 'local', status: 'observed', decision: 'ignore', atUtc: new Date(now + 1000).toISOString() });
+    const legacy = await fetch(w.app.origin + '/api/status', { headers: { Cookie: w.cookie() } }).then(response => response.json());
+    assert.equal(legacy.entries[0].listener.version, null, 'A missing historical version is not filled with the current source version.');
+    assert.equal(w.store.get('activity', 'legacy-review').version, undefined); assert.equal(submissions, 0);
+  } finally { await w.close(); }
+});
+
+test('research annotations retain the last completed revision while the latest failed check stays in Activity', async () => {
+  const w = await appFixture(); try {
+    await w.unlock(); const entry = w.store.createEntry(note(w.store));
+    const accepted = { id: 'accepted-research', kind: 'research', entryId: entry.id, origin: 'local', version: entry.version,
+      decision: 'review', reason: 'Accepted actual reason.', status: 'observed', atUtc: new Date(now).toISOString(), completedAtUtc: new Date(now + 1000).toISOString(), checkId: 'accepted-check' };
+    const failed = { ...accepted, id: 'latest-research-check', kind: 'research_check', checkId: 'failed-check', decision: undefined, status: 'waiting', reason: 'The local model failed on repeat.', atUtc: new Date(now + 3000).toISOString(), completedAtUtc: undefined };
+    w.store.put('activity', accepted.id, accepted); w.store.put('activity', failed.id, failed);
+    const status = await fetch(w.app.origin + '/api/status', { headers: { Cookie: w.cookie() } }).then(response => response.json());
+    assert.equal(status.entries[0].listener.status, 'observed'); assert.equal(status.entries[0].listener.reason, accepted.reason);
+    assert.equal(status.entries[0].listener.version, entry.version);
+    assert.ok(status.activity.some(row => row.id === failed.id && row.status === 'waiting' && row.reason === failed.reason));
+    assert.ok(status.activity.some(row => row.id === accepted.id && row.status === 'observed'));
+  } finally { await w.close(); }
+});
+
+test('Journal returns prior accepted prose and the current failed revision with their own saved focuses', async () => {
+  const w = await appFixture(); try {
+    await w.unlock(); const first = w.store.createEntry(note(w.store));
+    const accepted = { id: 'accepted-prior-research', kind: 'research', entryId: first.id, origin: 'local', version: 1, decision: 'review', reason: 'Prior accepted model words.',
+      status: 'observed', atUtc: new Date(now).toISOString(), completedAtUtc: new Date(now + 1000).toISOString(), checkId: 'accepted-check', focus: { kind: 'default', text: 'Actual saved default goal.' } };
+    w.store.put('activity', accepted.id, accepted);
+    const edited = w.store.updateEntry(first.id, { ...note(w.store), body: 'Updated note.', version: first.version });
+    const failed = { id: 'failed-current-research', kind: 'research_check', entryId: first.id, origin: 'local', version: edited.version, status: 'waiting', reviewStatus: 'failed',
+      reason: 'The local model stopped.', atUtc: new Date(now + 3000).toISOString(), checkId: 'failed-check', focus: { kind: 'custom', text: 'Actual failed-check focus.' } };
+    w.store.put('activity', failed.id, failed);
+    const old = w.store.settings(); w.store.saveSettings({ ...old, instructions: 'A different current setting.' });
+    const status = await fetch(w.app.origin + '/api/status', { headers: { Cookie: w.cookie() } }).then(response => response.json());
+    const row = status.entries[0];
+    assert.equal(row.listener.reason, accepted.reason); assert.equal(row.listener.version, 1); assert.deepEqual(row.listener.focus, accepted.focus);
+    assert.equal(row.listenerCheck.reason, failed.reason); assert.equal(row.listenerCheck.version, edited.version); assert.deepEqual(row.listenerCheck.focus, failed.focus);
+    assert.equal(row.listenerCheck.activeReview, false); assert.equal(w.store.all('attempt').length, 0);
+    assert.deepEqual(w.store.get('activity', accepted.id), accepted); assert.deepEqual(w.store.get('activity', failed.id), failed);
+  } finally { await w.close(); }
+});
+
+test('orphaned research progress is inactive after restart; only the exact busy check is active, without rewriting history', async () => {
+  let current = { busy: false, modelReview: null };
+  const w = await appFixture({}, { status: () => current }); try {
+    await w.unlock(); const entry = w.store.createEntry(note(w.store));
+    const progress = { id: 'unfinished-research-check', kind: 'research_check', entryId: entry.id, origin: 'local', version: entry.version,
+      status: 'processing', reason: 'The local model is reading this note.', atUtc: new Date(now).toISOString(), checkId: 'original-check' };
+    w.store.put('activity', progress.id, progress);
+    const read = () => fetch(w.app.origin + '/api/status', { headers: { Cookie: w.cookie() } }).then(response => response.json());
+    for (const state of [{ busy: false, modelReview: null }, { busy: true, modelReview: { id: 'different-check' } }, { busy: false, modelReview: { id: 'original-check' } }]) {
+      current = state; const status = await read();
+      assert.equal(status.activity[0].activeReview, false); assert.equal(status.entries[0].listener.activeReview, false);
+    }
+    current = { busy: true, modelReview: { id: 'original-check' } }; const active = await read();
+    assert.equal(active.activity[0].activeReview, true); assert.equal(active.entries[0].listener.activeReview, true);
+    assert.deepEqual(w.store.get('activity', progress.id), progress, 'Read-only presentation never rewrites another process’s progress.');
+    assert.equal(w.store.all('attempt').length, 0);
   } finally { await w.close(); }
 });
 test('auto-trade needs a write connection and an account this connection owns', async () => {
@@ -190,4 +293,19 @@ test('authenticated status pushes real progress without waiting for a check to f
     assert.equal((await w.post('/api/check', {})).status, 200);
     await reader.cancel(); await closed;
   } finally { await reader?.cancel().catch(() => {}); await w.close(); }
+});
+
+
+test('a notebook create with a lost committed reply replays the same notebook rather than creating another', async () => {
+  const w = await appFixture(); try {
+    await w.unlock(); const before = w.store.notebooks().length, headers = { 'Idempotency-Key': 'lost-notebook-reply' }, input = { name: 'Exact requested notebook' };
+    const committed = await w.post('/api/notebooks', input, headers); assert.equal(committed.status, 201); await committed.arrayBuffer(); // Reply was not available to the client.
+    const saved = w.store.notebooks().find(row => row.name === input.name);
+    const replay = await w.post('/api/notebooks', input, headers); assert.equal(replay.status, 201); assert.deepEqual(await replay.json(), saved);
+    assert.equal(w.store.notebooks().length, before + 1);
+    assert.equal((await w.post('/api/notebooks', { name: 'Changed request' }, headers)).status, 409);
+    assert.equal((await w.post('/api/entries', note(w.store), headers)).status, 409);
+    const intentional = await w.post('/api/notebooks', input, { 'Idempotency-Key': 'distinct-notebook-intent' }); assert.equal(intentional.status, 201); assert.notEqual((await intentional.json()).id, saved.id);
+    assert.equal(w.store.notebooks().length, before + 2); assert.equal(w.store.all('attempt').length, 0);
+  } finally { await w.close(); }
 });

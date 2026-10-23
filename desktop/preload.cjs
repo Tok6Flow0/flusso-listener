@@ -1,6 +1,8 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('flussoDesktop', Object.freeze({
   status: () => ipcRenderer.invoke('flusso:status'),
+  // Only a boolean, synchronously acknowledged before a subsequent native Quit.
+  setDraftDirty: dirty => { if (typeof dirty !== 'boolean') return false; return ipcRenderer.sendSync('flusso:draft-dirty', dirty); },
   checkUpdates: () => ipcRenderer.invoke('flusso:check-updates'),
   downloadUpdate: () => ipcRenderer.invoke('flusso:download-update'),
   installUpdate: () => ipcRenderer.invoke('flusso:install-update'),
