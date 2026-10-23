@@ -210,7 +210,7 @@ async function load({ forms = false } = {}) {
   if (connectionKey(snapshot.cloud) !== accountsKey && !$('view-listener').hidden) loadAccounts();
   renderStatus();
   $('journal-coverage').textContent = snapshot.limits?.entries ? `Showing up to ${formatCount(snapshot.limits.entries)} recent entries.` : 'Showing the loaded entries.';
-  $('activity-coverage').textContent = snapshot.limits?.activity ? `Up to ${formatCount(snapshot.limits.activity)} saved results, plus the latest model response. Unconfirmed results stay on top.` : 'Recent decisions and order receipts. Unconfirmed results stay on top.';
+  $('activity-coverage').textContent = snapshot.limits?.activity ? `Latest completed research and unfinished check per revision, plus receipts. Showing up to ${formatCount(snapshot.limits.activity)} saved rows and the last completed response; unconfirmed results stay first.` : 'Recent decisions and order receipts. Unconfirmed results stay on top.';
   if (!desktop) $('model-state').textContent = snapshot.model.installed ? 'Qwen3 1.7B is ready through Ollama.' : snapshot.model.available ? 'Ollama is running. Download the model:' : 'Start Ollama, then download the model:';
   $('sync').disabled = !snapshot.cloud.connected;
   const notebookOptions = snapshot.notebooks.map(row => [row.origin, row.id, row.name]);
@@ -327,7 +327,7 @@ function renderProcess() {
   $('output-frame').dataset.status = view.status;
   setText('model-output-heading', !settings.enabled && output ? 'Last model response' : 'Model output');
   setText('model-output-status', earlier && output ? 'Earlier response' : !settings.enabled && view.status === 'complete' ? 'Last check complete' : view.label); $('model-output-status').className = `output-status ${!settings.enabled && view.status === 'complete' ? '' : view.tone}`;
-  $('model-output-status').hidden = settings.enabled && view.accepted && !earlier;
+  $('model-output-status').hidden = !output && Boolean(completed) || settings.enabled && view.accepted && !earlier || view.live;
   if (changed('model-output-source', output ? [output.entryId, output.origin, output.title, output.atUtc, snapshot.entries.some(row => row.id === output.entryId && row.origin === output.origin)] : null)) {
     const source = $('model-output-source');
     if (output) { const time = element('time', `Check started ${when(output.atUtc, true)}`); time.dateTime = output.atUtc; source.replaceChildren(element('span', 'Source note', 'hint'), sourceButton(output, output.title || 'Journal entry'), time); }
@@ -358,9 +358,10 @@ function renderProcess() {
     || (!completed && $('model-verdict').contains(document.activeElement))
     || (!output?.text && document.activeElement === $('model-raw-toggle'))) $('process-state').focus();
   $('model-draft').hidden = !draft;
+  $('model-draft-head').className = view.live ? 'sr-only' : 'verdict-head';
   if (draft) {
     setText('model-draft-kicker', view.live ? 'Format check pending' : view.draftLabel);
-    setText('model-draft-label', view.live ? 'Response arriving' : 'Response not accepted');
+    setText('model-draft-label', view.live ? 'Live model response' : 'Response not accepted');
     growText($('model-draft-reason'), view.draft);
   }
   $('model-verdict').hidden = !completed;
@@ -378,7 +379,7 @@ function renderProcess() {
       if (metadata.contains(document.activeElement)) $('model-verdict-label').focus();
       metadata.replaceChildren(element('span', 'Source note', 'hint'), sourceButton(source, source.title || 'Journal entry'), element('time'));
     }
-    const time = metadata.querySelector('time'); time.textContent = `Completed ${when(source.atUtc, true)}`; time.dateTime = source.atUtc;
+    const time = metadata.querySelector('time'); time.textContent = `${source.completionKnown === false ? 'Recorded' : 'Completed'} ${when(source.atUtc, true)}`; time.dateTime = source.atUtc;
   }
   const sourceHidden = !output || view.accepted;
   if (sourceHidden && $('model-output-source').contains(document.activeElement)) $('model-verdict-label').focus();
@@ -388,7 +389,7 @@ function renderProcess() {
   renderOutputText(output);
   $('model-output').hidden = rawHidden;
   setText('model-output-note', view.note ?? ''); $('model-output-note').hidden = !view.note;
-  setText('model-output-empty', view.empty ?? ''); $('model-output-empty').hidden = !view.empty;
+  setText('model-output-empty', view.empty ?? ''); $('model-output-empty').hidden = !view.empty || Boolean(completed) && !listener.busy;
 
   const events = (listener.events ?? []).slice(-30);
   const items = decisionItems(events, () => ({}));
@@ -410,18 +411,24 @@ function renderProcess() {
 function renderDecisions() {
   const output = snapshot.listener.modelOutput, published = snapshot.listener.lastModelOutput;
   const all = latestDecisions(snapshot.activity, published, { limit: null });
-  const latest = all.filter(row => !decisionShownInDesk(row, output, published)).slice(0, 5);
+  const completed = Boolean(completedModelPresentation(snapshot.listener, snapshot.entries));
+  const latest = all.filter(row => !decisionShownInDesk(row, output, published, { completed })).slice(0, 5);
   const panel = $('latest-decisions').closest('section'), hidden = all.length > 0 && !latest.length;
   if (hidden && panel.contains(document.activeElement)) $('model-verdict-label').focus();
   panel.hidden = hidden;
-  const items = decisionItems(latest, row => ({ enabled: snapshot.settings.enabled }));
+  const items = decisionItems(latest, row => {
+    const source = snapshot.entries.find(entry => entry.id === row.entryId && entry.origin === row.origin);
+    const revision = listenerRevisionPresentation({ version: source?.version, listener: row })?.label
+      ?? (Number.isSafeInteger(row.version) && row.version > 0 ? `v${formatCount(row.version)}` : 'revision unknown');
+    return { enabled: snapshot.settings.enabled, revision };
+  });
   if (!changed('decisions', items)) return;
   reconcileRows($('latest-decisions'), items.length ? items : [{ key: 'empty', value: null }], value => {
     if (!value) return element('p', 'No decisions yet. Local model responses and order results appear here after a check.', 'empty');
-    const { row, enabled } = value;
+    const { row, enabled, revision } = value;
     const item = element('article', null, 'decision-row'), top = element('div', null, 'decision-top'), source = element('div', null, 'decision-source'), status = activityStatus(row);
     const time = element('time', when(row.atUtc, true)); time.dateTime = row.atUtc;
-    top.append(pill(status.label, status.tone), time); source.append(sourceButton(row));
+    top.append(pill(status.label, status.tone), element('span', revision, 'hint mono'), time); source.append(sourceButton(row));
     item.append(top, source);
     item.append(element('p', row.reason || 'Processing this entry.', 'decision-excerpt'));
     if (row.status === 'waiting' && !enabled) item.append(element('p', 'Checks resume when you turn the Listener on.', 'hint'));

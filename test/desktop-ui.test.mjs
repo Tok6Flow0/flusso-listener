@@ -96,6 +96,10 @@ test('the existing entry Save and Cancel controls sit in its heading and the out
   assert.match(html, /aria-labelledby="model-output-heading"/); assert.doesNotMatch(html, /Accepted local decision/);
   assert.match(html, /id="process-state" class="process-state" tabindex="-1"/);
   assert.match(html, /Local model response · format checked/);
+  assert.ok(html.indexOf('id="model-raw-toggle"') < html.indexOf('id="model-verdict"'), 'Current raw controls precede the separately attributed earlier response.');
+  assert.ok(html.indexOf('id="model-output-note"') < html.indexOf('id="model-verdict"'));
+  const native = html.slice(html.indexOf('id="native-controls"'), html.indexOf('<button id="account-toggle"'));
+  assert.match(native, /Closing this window keeps the Listener running/); assert.match(native, /Quit Journal and stop Listener/);
   assert.ok(html.indexOf('<details class="ops-log">') < html.indexOf('<section class="decisions-panel"'), 'Operations remains before the changing preview panel.');
 });
 
@@ -145,7 +149,8 @@ test('a hidden verdict returns keyboard focus to visible process state and keyed
   assert.equal(acceptedReason.textContent, 'Public model wording.'); assert.equal(document.activeElement, acceptedReason);
   assert.equal(get('model-verdict-source').children[1], acceptedSource);
   assert.equal(get('model-draft-reason').textContent, 'Next actual words');
-  assert.equal(get('model-draft-label').textContent, 'Response arriving');
+  assert.equal(get('model-draft-label').textContent, 'Live model response');
+  assert.equal(get('model-draft-head').className, 'sr-only'); assert.equal(get('model-output-status').hidden, true);
   assert.equal(metadata.hidden, false, 'A new stream shows its own source separately from the completed card.');
   assert.match(get('model-verdict-kicker').textContent, /^Earlier/);
   acceptedSource.focus(); context.snapshot.listener.busy = false;
@@ -164,6 +169,11 @@ test('a hidden verdict returns keyboard focus to visible process state and keyed
   acceptedSource.focus(); context.snapshot.listener.lastModelOutput = { ...context.snapshot.listener.lastModelOutput, entryId: 'different-source', title: 'Different source' };
   context.renderProcess();
   assert.equal(document.activeElement, get('model-verdict-label'), 'A genuinely different source transfers focus before replacing its metadata.');
+  context.snapshot.listener.modelOutput = null; context.snapshot.listener.busy = false;
+  context.snapshot.listener.lastModelOutput = { ...context.snapshot.listener.lastModelOutput, completionKnown: false };
+  context.renderProcess();
+  assert.equal(get('model-output-empty').hidden, true, 'Restored completed output never says nothing has been reviewed.');
+  assert.match(get('model-verdict-source').querySelector('time').textContent, /^Recorded /, 'Legacy start clocks are not invented completion clocks.');
 
 });
 
@@ -211,6 +221,33 @@ test('completed responses distinguish earlier checks, known revisions and canoni
   const output = { ...published, text: '{}', status: 'complete', atUtc: '2026-10-23T11:59:59Z' };
   assert.equal(modelOutputPresentation(output, { ...published, version: 2 }).accepted, false);
   assert.equal(modelOutputPresentation(output, { ...published, checkId: 8 }).accepted, false);
+});
+
+test('only the exact displayed completed check is redundant during a later stream; other revisions and unfinished checks remain', async () => {
+  const { decisionShownInDesk, listenerRevisionPresentation } = await import('../public/desktop-ui.mjs');
+  const row = { id: 'accepted', entryId: 'source', origin: 'local', version: 1, checkId: 'actual-check', decision: 'review', reason: 'Actual reason.', status: 'observed', atUtc: '2026-10-23T12:00:00Z' };
+  const published = { ...row, activityId: row.id, atUtc: '2026-10-23T12:00:03Z' };
+  const stream = { ...row, checkId: 'next-check', status: 'streaming', atUtc: '2026-10-23T12:01:00Z' };
+  assert.equal(decisionShownInDesk(row, stream, published, { completed: true }), true);
+  for (const changed of [{ checkId: 'different-check' }, { id: 'different-record' }, { version: 2 }, { status: 'waiting' }, { reason: 'Different actual reason.' }]) {
+    assert.equal(decisionShownInDesk({ ...row, ...changed }, stream, published, { completed: true }), false);
+  }
+  assert.equal(decisionShownInDesk(row, stream, published), false, 'A hidden completed response cannot suppress a history row.');
+  assert.equal(listenerRevisionPresentation({ version: 3, listener: row }).label, 'prior v1');
+});
+
+test('inactive durable research progress says unfinished while the actual active review and ticket states retain their labels', async () => {
+  const { activityStatus, listenerResult } = await import('../public/desktop-ui.mjs');
+  const progress = { kind: 'research_check', status: 'processing' };
+  assert.equal(activityStatus({ ...progress, activeReview: false }).label, 'review unfinished');
+  assert.equal(activityStatus(progress).label, 'review unfinished');
+  assert.equal(activityStatus({ status: 'processing' }).label, 'review unfinished', 'Legacy progress without live-check proof cannot claim an active model.');
+  assert.equal(listenerResult({ ticket: null, listener: { status: 'processing' } }).label, 'review unfinished');
+  assert.equal(activityStatus({ ...progress, activeReview: true }).label, 'reviewing');
+  assert.equal(listenerResult({ ticket: null, listener: { ...progress, activeReview: false } }).label, 'review unfinished');
+  assert.equal(listenerResult({ ticket: null, listener: { ...progress, activeReview: true } }).label, 'reviewing');
+  assert.equal(activityStatus({ status: 'processing', decision: 'ticket' }).label, 'reviewing');
+  assert.equal(activityStatus({ status: 'unknown', kind: 'orders' }).label, 'unconfirmed');
 });
 
 test('account identity comes only from a connected account profile', () => {

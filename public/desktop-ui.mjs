@@ -91,6 +91,7 @@ export function entryReadingCore(entry, book = '') {
 const RESULT = { submitted: ['submitted', 'pos'], partial: ['partly submitted', 'warn'], blocked: ['refused', 'neg'], unknown: ['unconfirmed', 'warn'], pending: ['submitting', 'info'], sending: ['submitting', 'info'], processing: ['reviewing', 'info'], review: ['not submitted', 'warn'], waiting: ['waiting', 'warn'], resolved: ['owner resolved', ''] };
 const DECISION = { candidate: ['flagged', 'info'], review: ['review suggested', 'info'], ignore: ['no action', ''], ticket: ['ticket', 'info'] };
 export function activityStatus(row = {}) {
+  if (row.status === 'processing' && row.decision !== 'ticket' && row.activeReview !== true) return { label: 'review unfinished', tone: 'warn' };
   const [label, tone] = RESULT[row.status] ?? (row.status === 'observed' ? DECISION[row.decision] : null) ?? [text(row.status) || 'noted', ''];
   return { label, tone };
 }
@@ -109,6 +110,7 @@ const LISTENER_RESULT = {
 };
 export function listenerResult(entry) {
   if (!entry?.ticket && !entry?.listener) return null;
+  if (!entry.ticket && entry.listener?.status === 'processing' && entry.listener.activeReview !== true) return { ...activityStatus(entry.listener), group: 'open' };
   if (!entry.ticket && entry.listener?.status === 'observed') {
     const result = activityStatus(entry.listener);
     return { ...result, group: 'decided' };
@@ -147,6 +149,7 @@ export function processingPresentation(listener = {}, enabled = false) {
   if (listener.lastError) return { state: 'error', title: 'Needs attention', label: 'Needs attention', message: text(listener.lastError), tone: 'warn', busy: false, position: null };
   if (current?.stage === 'paused') return { state: 'paused', title: 'Paused', label: 'Paused', message: text(current.message) || 'The last check paused before it finished.', tone: 'warn', busy: false, position: null };
   if (listener.modelReview?.status === 'not_run') return { state: 'ready', title: 'No model run', label: 'No model run', message: text(listener.modelReview.reason), tone: '', busy: false, position: null };
+  if (listener.modelReview?.status === 'skipped') return { state: 'paused', title: 'Review skipped', label: 'Review skipped', message: text(listener.modelReview.reason), tone: 'warn', busy: false, position: null };
   const checked = Boolean(listener.lastCheckedAtUtc);
   return { state: checked ? 'complete' : 'ready', title: checked ? 'Checked' : 'Ready', label: checked ? 'Check complete' : 'Ready', message: text(current?.message) || 'Waiting for the next check.', tone: '', busy: false, position: null };
 }
@@ -218,9 +221,9 @@ const OUTPUT_STATUS = { streaming: ['Streaming', 'info'], complete: ['Complete',
 // are lifted out of it, as a draft that is never labelled or styled as a decision.
 export function modelOutputPresentation(output, published = null, { disconnected = false, enabled = false, busy = false } = {}) {
   if (!output) {
-    const empty = !enabled ? 'Turn the Listener on to begin. Each check reviews the newest selected research note, and the model’s real response streams here.'
+    const empty = !enabled ? 'Turn the Listener on to begin. Each period re-checks the newest selected research note and reviews new Watching research revisions. Real responses stream here.'
       : busy ? 'Reading the Journal. The model’s response appears here as soon as it starts.'
-        : 'Nothing reviewed yet. Choose Check now to review the newest selected research note.';
+        : 'Choose Check now to review selected research. Each period re-checks the newest note and also reviews new Watching research revisions.';
     return { status: 'none', label: 'Not run', tone: '', live: false, accepted: false, verdict: null, draft: null, draftLabel: null, note: null, empty };
   }
   const [label, tone] = OUTPUT_STATUS[output.status] ?? ['Unavailable', 'warn'];
@@ -257,7 +260,7 @@ export function completedModelPresentation(listener = {}, entries = []) {
   const output = listener.lastModelOutput;
   if (!output || !['review', 'ignore', 'candidate'].includes(output.decision) || !Number.isFinite(Date.parse(output.atUtc))) return null;
   const source = entries.find(row => row.id === output.entryId && row.origin === output.origin);
-  const earlier = listener.modelReview?.id != null && output.checkId !== listener.modelReview.id
+  const earlier = !listener.modelOutput || listener.modelReview?.id != null && output.checkId !== listener.modelReview.id
     || listener.modelOutput?.status === 'streaming' || source?.version !== output.version || source?.handoff?.context?.inScope === false;
   const revision = Number.isSafeInteger(output.version) && output.version > 0 ? `v${formatCount(output.version)}` : 'revision unknown';
   const scope = source?.handoff?.context?.inScope;
@@ -303,13 +306,15 @@ export function latestDecisions(activity = [], output = null, { limit = 5 } = {}
 
 // Only the same validated research result is redundant with the response desk.
 // Activity records its start clock; a synthetic summary records completion.
-export function decisionShownInDesk(row, output, published) {
-  return Boolean(modelOutputPresentation(output, published).accepted && row.status === 'observed'
+export function decisionShownInDesk(row, output, published, { completed = false } = {}) {
+  const displayedCheck = completed && published?.activityId != null && published?.checkId != null
+    && row.id === published.activityId && row.checkId === published.checkId;
+  return Boolean((displayedCheck || modelOutputPresentation(output, published).accepted) && row.status === 'observed'
     && ['candidate', 'review', 'ignore'].includes(row.decision)
-    && Number.isSafeInteger(output?.version) && output.version > 0 && output.version === published?.version
+    && Number.isSafeInteger(published?.version) && published.version > 0 && (displayedCheck || output?.version === published.version)
     && row.entryId === published.entryId && row.origin === published.origin && row.version === published.version
     && row.decision === published.decision && row.reason === published.reason
-    && (row.atUtc === output.atUtc || row.id == null && row.atUtc === published.atUtc));
+    && (displayedCheck || row.atUtc === output?.atUtc || row.id == null && row.atUtc === published.atUtc));
 }
 
 // Activity IDs survive status/receipt updates. Published summaries have no ID;

@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createListener } from '../src/listener.mjs';
-import { workspace, note, ticket, hedge, signal, fakeCloud, enable, now, notebookId, accountId } from './helpers.mjs';
+import { openStore } from '../src/store.mjs';
+import { workspace, note, ticket, hedge, signal, fakeCloud, enable, now, notebookId, accountId, memoryVault } from './helpers.mjs';
 
 const candidate = async () => ({ decision: 'candidate', reason: 'Fixture match.' });
 const noModel = async () => { throw new Error('The model must not read order tickets.'); };
@@ -479,6 +483,68 @@ test('a failed streamed answer retains its partial text as failed and leaves the
     enable(w.store); listener.start(); const entry = w.store.createEntry(note(w.store)); await listener.tick();
     assert.equal(listener.status().modelOutput.status, 'failed'); assert.equal(listener.status().modelOutput.text, 'unfinished response');
     assert.equal(listener.status().lastModelOutput, null); assert.equal(w.store.get('checkpoint', `local:${entry.id}`), null);
+  } finally { await listener.stop(); await w.close(); }
+});
+
+test('failed repeat reviews preserve durable accepted research through SQLite reopen without per-period history growth', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'flusso-model-history-test-')), vault = memoryVault();
+  let store, listener, calls = 0, submissions = 0;
+  const cloud = fakeCloud({ submitOrders: async () => { submissions++; throw new Error('No execution expected.'); } });
+  try {
+    store = await openStore({ directory, vault, clock: () => new Date(now).toISOString() });
+    enable(store, { executionEnabled: false });
+    const entry = store.createEntry(note(store, { status: 'reviewed', body: 'x'.repeat(2400) }));
+    const retainedAttempt = { id: 'retained-original-ticket', kind: 'orders', signalIdentity: 'retained-source', status: 'submitted', atUtc: new Date(now).toISOString(), orders: [] };
+    store.claimAttempt(retainedAttempt);
+    listener = createListener({ store, cloud, clock: () => now, classify: async ({ onOutput }) => {
+      calls++; if (calls === 1) return { decision: 'review', reason: 'Durable actual response.' };
+      onOutput('partial retry'); throw new Error('The local model stopped during this repeat.');
+    } });
+    listener.start(); await listener.tick({ reviewLatest: true }); const accepted = listener.status().lastModelOutput;
+    for (let i = 0; i < 3; i++) await listener.tick({ reviewLatest: true });
+    assert.equal(calls, 4); assert.equal(store.all('activity').length, 2, 'One accepted and one unfinished research row per revision, not one per timer.');
+    assert.deepEqual(listener.status().lastModelOutput, accepted);
+    assert.equal(listener.status().modelOutput.status, 'failed');
+    assert.ok(store.all('activity').some(row => row.kind === 'research_check' && row.status === 'waiting' && row.reason.includes('local model stopped')));
+    await listener.stop(); listener = null; store.close(); store = null;
+    store = await openStore({ directory, vault, clock: () => new Date(now).toISOString() });
+    listener = createListener({ store, cloud, classify: noModel, clock: () => now });
+    const restored = listener.status();
+    assert.equal(restored.modelOutput, null, 'No raw response is invented after reopening.');
+    assert.deepEqual(restored.lastModelOutput, accepted); assert.equal(restored.lastModelOutput.version, entry.version);
+    assert.deepEqual(restored.lastModelOutput.coverage, { bodyUnits: 2000, totalBodyUnits: 2400, bodyTruncated: true, unit: 'UTF-16' });
+    assert.equal(store.all('activity').length, 2); assert.deepEqual(store.get('attempt', retainedAttempt.id), retainedAttempt);
+    assert.equal(store.claimAttempt({ ...retainedAttempt, id: 'copy' }), false); assert.equal(submissions, 0);
+  } finally { await listener?.stop(); store?.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('a durable research write failure terminalizes the current stream and retains the previous completed response', async () => {
+  const w = await workspace(); let calls = 0, failNext = false, executions = 0;
+  const originalPut = w.store.put;
+  w.store.put = (kind, id, value) => { if (failNext && kind === 'activity' && value.kind === 'research' && value.status === 'observed') { failNext = false; throw new Error('Synthetic SQLite write refusal.'); } return originalPut(kind, id, value); };
+  const listener = createListener({ store: w.store, cloud: fakeCloud({ submitOrders: async () => { executions++; } }), clock: () => now,
+    classify: async ({ onOutput }) => { calls++; onOutput(`actual response ${calls}`); return { decision: 'review', reason: `Completed ${calls}` }; } });
+  try {
+    enable(w.store, { executionEnabled: false }); w.store.createEntry(note(w.store, { status: 'reviewed' })); listener.start();
+    await listener.tick({ reviewLatest: true }); const previous = listener.status().lastModelOutput;
+    failNext = true; await listener.tick({ reviewLatest: true });
+    const state = listener.status(); assert.equal(state.busy, false); assert.equal(state.modelOutput.status, 'failed'); assert.equal(state.modelReview.status, 'failed');
+    assert.deepEqual(state.lastModelOutput, previous); assert.match(state.lastError, /could not finish/); assert.equal(executions, 0);
+  } finally { await listener.stop(); await w.close(); }
+});
+
+test('research skipped after an unconfirmed ticket is not reported as unnecessary', async () => {
+  const w = await workspace(); let calls = 0;
+  const listener = createListener({ store: w.store, cloud: fakeCloud({ submitOrders: async () => ({ status: 'unknown', lines: [], message: 'Unconfirmed synthetic receipt.' }) }),
+    classify: async () => { calls++; return candidate(); }, clock: () => now });
+  try {
+    enable(w.store); w.store.createEntry(note(w.store, { status: 'reviewed' })); listener.start();
+    w.store.createEntry(note(w.store, { body: ticket({ id: 'skip-research-on-uncertainty' }) }));
+    await listener.tick({ reviewLatest: true });
+    assert.equal(calls, 0); assert.equal(listener.status().modelReview.status, 'skipped');
+    assert.match(listener.status().modelReview.reason, /skipped.*ticket result/);
+    assert.ok(!listener.status().events.some(row => /No research revision required/.test(row.message)));
+    assert.equal(w.store.all('attempt').length, 1); assert.equal(w.store.all('attempt')[0].status, 'unknown');
   } finally { await listener.stop(); await w.close(); }
 });
 

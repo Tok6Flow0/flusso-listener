@@ -31,6 +31,7 @@
             <label class="menu-check"><input id="start-on-login" type="checkbox"> Open at login</label>
             <button id="check-updates" type="button">Check for updates</button>
             <p id="app-update-status" class="menu-hint" role="status"></p>
+            <p class="menu-hint">Closing this window keeps the Listener running. Choose Quit Journal and stop Listener to stop it. Reopen Journal to return.</p>
             <p class="menu-version"><span id="app-mode">Desktop app</span> <span id="app-version" class="mono"></span></p>
           </div>
         </section>
@@ -104,9 +105,13 @@
             <div id="model-output-source" class="output-source" hidden></div>
             <p id="model-input-coverage" class="output-note" hidden></p>
             <div id="model-draft" class="verdict" data-state="draft" hidden>
-              <div class="verdict-head"><p id="model-draft-kicker" class="verdict-kicker">Format check pending</p><h3 id="model-draft-label" class="verdict-label">Response arriving</h3></div>
+              <div class="verdict-head" id="model-draft-head"><p id="model-draft-kicker" class="verdict-kicker">Format check pending</p><h3 id="model-draft-label" class="verdict-label">Live model response</h3></div>
               <p id="model-draft-reason" class="verdict-reason"></p>
             </div>
+            <button id="model-raw-toggle" type="button" class="link-button" aria-expanded="false" aria-controls="model-output" hidden>Show raw response</button>
+            <div id="model-output" class="code-scroll mono output-raw" role="region" tabindex="0" aria-labelledby="model-output-heading" hidden></div>
+            <p id="model-output-note" class="output-note" hidden></p>
+            <p id="model-output-empty" class="output-empty">Each period re-checks the newest selected research note. New Watching research revisions are also reviewed. Actual responses appear here as they are generated.</p>
             <div id="model-verdict" class="verdict" hidden>
               <div class="verdict-head"><p id="model-verdict-kicker" class="verdict-kicker">Local model response · format checked</p><h3 id="model-verdict-label" class="verdict-label" tabindex="-1"></h3></div>
               <div id="model-verdict-source" class="output-source"></div>
@@ -114,10 +119,6 @@
               <p id="model-verdict-reason" class="verdict-reason"></p>
               <p id="model-verdict-coverage" class="output-note"></p>
             </div>
-            <button id="model-raw-toggle" type="button" class="link-button" aria-expanded="false" aria-controls="model-output" hidden>Show raw response</button>
-            <div id="model-output" class="code-scroll mono output-raw" role="region" tabindex="0" aria-labelledby="model-output-heading" hidden></div>
-            <p id="model-output-note" class="output-note" hidden></p>
-            <p id="model-output-empty" class="output-empty">Each check reviews the newest selected research note. Its actual response appears here as it is generated.</p>
           </div>
         </section>
         <div class="listener-secondary">

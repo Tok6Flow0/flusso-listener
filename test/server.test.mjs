@@ -60,6 +60,40 @@ test('save replies carry canonical ticket validation and the actual historical r
     assert.equal(w.store.get('activity', 'legacy-review').version, undefined); assert.equal(submissions, 0);
   } finally { await w.close(); }
 });
+
+test('research annotations retain the last completed revision while the latest failed check stays in Activity', async () => {
+  const w = await appFixture(); try {
+    await w.unlock(); const entry = w.store.createEntry(note(w.store));
+    const accepted = { id: 'accepted-research', kind: 'research', entryId: entry.id, origin: 'local', version: entry.version,
+      decision: 'review', reason: 'Accepted actual reason.', status: 'observed', atUtc: new Date(now).toISOString(), completedAtUtc: new Date(now + 1000).toISOString(), checkId: 'accepted-check' };
+    const failed = { ...accepted, id: 'latest-research-check', kind: 'research_check', checkId: 'failed-check', decision: undefined, status: 'waiting', reason: 'The local model failed on repeat.', atUtc: new Date(now + 3000).toISOString(), completedAtUtc: undefined };
+    w.store.put('activity', accepted.id, accepted); w.store.put('activity', failed.id, failed);
+    const status = await fetch(w.app.origin + '/api/status', { headers: { Cookie: w.cookie() } }).then(response => response.json());
+    assert.equal(status.entries[0].listener.status, 'observed'); assert.equal(status.entries[0].listener.reason, accepted.reason);
+    assert.equal(status.entries[0].listener.version, entry.version);
+    assert.ok(status.activity.some(row => row.id === failed.id && row.status === 'waiting' && row.reason === failed.reason));
+    assert.ok(status.activity.some(row => row.id === accepted.id && row.status === 'observed'));
+  } finally { await w.close(); }
+});
+
+test('orphaned research progress is inactive after restart; only the exact busy check is active, without rewriting history', async () => {
+  let current = { busy: false, modelReview: null };
+  const w = await appFixture({}, { status: () => current }); try {
+    await w.unlock(); const entry = w.store.createEntry(note(w.store));
+    const progress = { id: 'unfinished-research-check', kind: 'research_check', entryId: entry.id, origin: 'local', version: entry.version,
+      status: 'processing', reason: 'The local model is reading this note.', atUtc: new Date(now).toISOString(), checkId: 'original-check' };
+    w.store.put('activity', progress.id, progress);
+    const read = () => fetch(w.app.origin + '/api/status', { headers: { Cookie: w.cookie() } }).then(response => response.json());
+    for (const state of [{ busy: false, modelReview: null }, { busy: true, modelReview: { id: 'different-check' } }, { busy: false, modelReview: { id: 'original-check' } }]) {
+      current = state; const status = await read();
+      assert.equal(status.activity[0].activeReview, false); assert.equal(status.entries[0].listener.activeReview, false);
+    }
+    current = { busy: true, modelReview: { id: 'original-check' } }; const active = await read();
+    assert.equal(active.activity[0].activeReview, true); assert.equal(active.entries[0].listener.activeReview, true);
+    assert.deepEqual(w.store.get('activity', progress.id), progress, 'Read-only presentation never rewrites another process’s progress.');
+    assert.equal(w.store.all('attempt').length, 0);
+  } finally { await w.close(); }
+});
 test('auto-trade needs a write connection and an account this connection owns', async () => {
   let scopes = ['mcp:read'];
   const w = await appFixture({ status: async () => ({ connected: true, clientId: 'fixture-client', scopes }) }); try {
