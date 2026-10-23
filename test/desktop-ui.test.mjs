@@ -223,7 +223,7 @@ test('a hidden verdict returns keyboard focus to visible process state and keyed
   const context = {
     document, $: get, snapshot: { settings: { enabled: true }, entries: [], listener: { busy: true, modelOutput: null, events: [] } },
     MODEL_FACTS_NOTE, processingPresentation, modelOutputPresentation, completedModelPresentation, modelCoverageLabel, latestCheckPresentation, reviewFocusPresentation, completionAnnouncement, streamDisconnected: false, rawOpen: false, lastCompletionKey: null, completionFrame: null,
-    setText: (id, value) => { get(id).textContent = value; }, interfaceText: (target, value) => { target.textContent = value; }, growText: (target, value) => { target.textContent = value; },
+    setText: (id, value) => { get(id).textContent = value; }, interfaceText: (target, value) => { target.textContent = value; target.formatted = true; }, growText: (target, value) => { target.textContent = value; },
     changed: (key, value) => { const serialized = JSON.stringify(value); if (keys.get(key) === serialized) return false; keys.set(key, serialized); return true; },
     element: (tag, content) => node(tag, content), sourceButton: (_row, title) => node(`source-${++sourceButtons}`, title), when: value => value,
     renderOutputText() {}, positionResponseTools() {}, decisionItems: () => [], reconcileRows() {}, cancelAnimationFrame() {}, requestAnimationFrame: callback => { callback(); return 1; },
@@ -237,7 +237,7 @@ test('a hidden verdict returns keyboard focus to visible process state and keyed
   assert.equal(get('model-input-coverage').textContent, 'Note excerpt supplied', 'Actual public output proves the request progressed beyond preparation.');
   assert.match(get('model-input-coverage-detail').textContent, /^Excerpt only:/);
   const metadata = get('model-output-source'), button = metadata.children[1]; button.focus();
-  assert.equal(metadata.children[0].textContent, 'Source note'); assert.equal(metadata.children[2].textContent, `Check started ${output.atUtc}`); assert.equal(metadata.children[2].dateTime, output.atUtc);
+  assert.equal(metadata.children[0].textContent, 'Source note'); assert.equal(metadata.children[2].textContent, `Check started ${output.atUtc}`); assert.equal(metadata.children[2].dateTime, output.atUtc); assert.equal(metadata.children[2].formatted, true, 'Start timestamps use the same numeric renderer as completion timestamps.');
   output.text += ' wording.'; context.renderProcess();
   assert.equal(metadata.children[1], button); assert.equal(document.activeElement, button); assert.equal(sourceButtons, 1);
   context.snapshot.listener.busy = false; output.status = 'complete'; output.text = '{"decision":"review","reason":"Public model wording."}';
@@ -768,7 +768,7 @@ test('partial or unmatched model output is never presented as an accepted decisi
   const reconnecting = modelOutputPresentation({ ...output, status: 'streaming' }, null, { disconnected: true });
   assert.deepEqual([reconnecting.label, reconnecting.live], ['Reconnecting', false]);
   assert.equal(modelOutputPresentation({ ...output, status: 'streaming' }).live, true);
-  assert.equal(modelOutputPresentation({ ...output, text: '', status: 'streaming' }).empty, 'Waiting for the model’s first response token.');
+  assert.equal(modelOutputPresentation({ ...output, text: '', status: 'streaming' }).empty, 'Waiting for the model to start responding.');
   assert.equal(modelOutputPresentation({ ...output, text: '', status: 'streaming' }).note, null);
   assert.equal(modelOutputPresentation({ ...output, text: '', status: 'streaming' }, null, { disconnected: true }).note, 'Reconnecting. No model response has arrived yet.');
   assert.equal(modelOutputPresentation({ ...output, status: 'unexpected' }).label, 'Unavailable');

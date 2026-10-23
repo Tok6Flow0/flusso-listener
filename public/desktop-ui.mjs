@@ -266,7 +266,7 @@ export function modelOutputPresentation(output, published = null, { disconnected
     : hasText ? 'Format check pending. This is the model’s partial response, not a completed decision.' : null)
     : ['failed', 'stopped'].includes(output.status) ? (hasText ? 'Partial output shown. It was not accepted as a decision.' : 'No output was received. Nothing was accepted.')
       : output.status === 'complete' && !accepted ? 'The response completed, but no accepted local decision matches it.' : null;
-  const empty = hasText ? null : output.status === 'streaming' ? 'Waiting for the model’s first response token.' : 'No model response was received.';
+  const empty = hasText ? null : output.status === 'streaming' ? 'Waiting for the model to start responding.' : 'No model response was received.';
   return { status: output.status, label: disconnected && output.status === 'streaming' ? 'Reconnecting' : label, tone, live, accepted, verdict, draft, draftLabel, note, empty };
 }
 
