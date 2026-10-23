@@ -39,7 +39,8 @@
     </div>
   </aside>
   <main>
-    <div id="notice" class="notice" role="status" hidden><span id="notice-text"></span><button id="dismiss-notice" type="button" class="notice-close" aria-label="Dismiss message">×</button></div>
+    <span id="notice-status" class="sr-only" role="status" aria-atomic="true"></span><span id="notice-alert" class="sr-only" role="alert" aria-atomic="true"></span>
+    <div id="notice" class="notice" hidden><span id="notice-text"></span><button id="dismiss-notice" type="button" class="notice-close" aria-label="Dismiss message">×</button></div>
     <section class="model-setup" id="model-setup" aria-labelledby="model-setup-title" hidden>
       <img class="setup-mark" src="/flusso-mark.png" alt="" width="36" height="36">
       <div class="setup-copy"><h2 id="model-setup-title">Set up the local model</h2><p id="model-setup-status" role="status">Reads your notes on this computer. Order tickets work without it.</p><div class="setup-progress" id="model-progress-wrap" hidden><progress id="model-progress" max="100" aria-label="Local model setup"></progress><span id="model-progress-label" class="mono"></span></div></div>
@@ -112,7 +113,7 @@
         </section>
         <div class="listener-secondary">
           <section class="decisions-panel" aria-labelledby="decisions-heading">
-            <div class="panel-head"><h2 id="decisions-heading">Latest decisions</h2><button id="all-activity" type="button" class="link-button">All activity</button></div>
+            <div class="panel-head"><h2 id="decisions-heading">Latest decisions</h2><button id="all-activity" type="button" class="link-button">Recent activity</button></div>
             <div id="latest-decisions" class="latest-decisions"></div>
           </section>
           <details class="ops-log">

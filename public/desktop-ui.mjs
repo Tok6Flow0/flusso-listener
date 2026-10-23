@@ -57,6 +57,25 @@ export function entryStatus(entry) {
   return entry.ticket.error ? { label: 'ticket error', tone: 'warn' } : { label: entry.ticket.kind === 'close' ? 'close ticket' : 'order ticket', tone: 'info' };
 }
 
+// Reconciliation keys contain only what the card or source-owned reader shows.
+// Periodic review annotations update their own status regions, not the note.
+export function entryCardPresentation(entry, { book = '', time = '', selected = false } = {}) {
+  const ticket = entryStatus(entry), result = listenerResult(entry);
+  return {
+    id: entry.id, origin: entry.origin, title: entry.title, status: entry.status,
+    book, time, selected,
+    outcome: entry.ticket?.error ? ticket : result && { label: result.label, tone: result.tone },
+  };
+}
+
+export function entryReadingCore(entry, book = '') {
+  return {
+    id: entry.id, origin: entry.origin, title: entry.title, body: entry.body,
+    status: entry.status, version: entry.version, updatedAtUtc: entry.updatedAtUtc,
+    signal: entry.signal ?? null, book,
+  };
+}
+
 const RESULT = { submitted: ['submitted', 'pos'], partial: ['partly submitted', 'warn'], blocked: ['refused', 'neg'], unknown: ['unconfirmed', 'warn'], pending: ['submitting', 'info'], sending: ['submitting', 'info'], processing: ['reviewing', 'info'], review: ['not submitted', 'warn'], waiting: ['waiting', 'warn'], resolved: ['owner resolved', ''] };
 const DECISION = { candidate: ['flagged', 'info'], review: ['review suggested', 'info'], ignore: ['no action', ''], ticket: ['ticket', 'info'] };
 export function activityStatus(row = {}) {

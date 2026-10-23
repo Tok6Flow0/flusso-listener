@@ -1,6 +1,58 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { runInNewContext } from 'node:vm';
 import { accountPresentation, updatePresentation, modelPresentation } from '../public/desktop-ui.mjs';
+
+test('entry saves lock the actual form handler until acceptance and an older refresh cannot unlock a newer save', async () => {
+  const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
+  const handler = source.slice(source.indexOf("$('entry-form').addEventListener('submit'"), source.indexOf("$('notebook-form').addEventListener('submit'"));
+  const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
+  const first = deferred(), refresh = deferred(), second = deferred(), requests = [], actions = [], errors = [];
+  const controls = ['entry-notebook', 'entry-title', 'entry-body', 'entry-status', 'entry-signal'].map(id => ({ id, value: ({ 'entry-notebook': 'book', 'entry-title': 'Draft', 'entry-body': 'Exact submitted notes', 'entry-status': 'watching' })[id] ?? '', disabled: false }));
+  const disabled = { disabled: true }, attributes = new Map(), nodes = Object.fromEntries(controls.map(control => [control.id, control]));
+  const focus = { dataset: { rowKey: 'local:saved-note' }, focus() {} };
+  let submit, closes = 0;
+  nodes['entry-form'] = { elements: [...controls, disabled], setAttribute: (key, value) => attributes.set(key, value), removeAttribute: key => attributes.delete(key), addEventListener: (_event, callback) => { submit = callback; } };
+  nodes['entry-list'] = { contains: () => false }; nodes['new-entry'] = focus;
+  const context = {
+    $: id => nodes[id], entrySaving: false, editing: null, entryRetryKey: 'original-retry-key', selected: null,
+    document: { activeElement: focus, querySelector: () => focus },
+    action: (_button, work) => { const promise = work().catch(error => errors.push(error.message)); actions.push(promise); },
+    api: (path, body, headers) => { requests.push({ path, body, headers }); return requests.length === 1 ? first.promise : second.promise; },
+    updateDraftProtection() {}, showSelectedEntry() {}, renderEntries() {}, notify() {},
+    closeEditor: () => { assert.equal(context.entrySaving, false); closes++; }, load: () => refresh.promise,
+  };
+  runInNewContext(handler, context);
+  const event = { preventDefault() {} };
+  submit(event);
+  assert.equal(context.entrySaving, true); assert.equal(attributes.get('aria-busy'), 'true');
+  assert.ok(nodes['entry-form'].elements.every(control => control.disabled));
+  submit(event); assert.equal(requests.length, 1, 'A second submit cannot create another request.');
+  assert.equal(requests[0].body.body, 'Exact submitted notes');
+  first.resolve({ id: 'saved-note', version: 1 }); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(context.entrySaving, false); assert.equal(attributes.has('aria-busy'), false); assert.equal(closes, 1);
+  assert.ok(controls.every(control => !control.disabled)); assert.equal(disabled.disabled, true);
+  submit(event); assert.equal(context.entrySaving, true);
+  refresh.resolve(); await actions[0];
+  assert.equal(context.entrySaving, true, 'Finishing the older refresh must not release the newer form lock.');
+  assert.ok(controls.every(control => control.disabled));
+  second.reject(new Error('Save could not be confirmed.')); await actions[1];
+  assert.equal(context.entrySaving, false); assert.equal(attributes.has('aria-busy'), false);
+  assert.ok(controls.every(control => !control.disabled)); assert.equal(disabled.disabled, true);
+  assert.equal(nodes['entry-body'].value, 'Exact submitted notes'); assert.equal(context.entryRetryKey, 'original-retry-key');
+  assert.deepEqual(errors, ['Save could not be confirmed.']);
+});
+
+test('a saving clean entry cannot be replaced, closed or navigated away from', async () => {
+  const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
+  const boundaries = [['function showEditor(', '// Picking another entry'], ['function leaveEditor()', 'function closeEditor('], ['function closeEditor(', 'function insertTicket('], ['function switchView(', "\ndocument.querySelectorAll('[data-view]')"]];
+  const guards = boundaries.map(([start, end]) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)))).join('\n');
+  const notices = [], context = { entrySaving: true, editorDirty: () => false, notify: message => notices.push(message), $() { throw new Error('A saving editor must not be replaced or hidden.'); } };
+  runInNewContext(guards, context);
+  context.showEditor(); assert.equal(context.leaveEditor(), false); context.closeEditor(); context.switchView('activity');
+  assert.equal(notices.length, 4); assert.ok(notices.every(message => message.includes('still saving')));
+});
 
 test('account identity comes only from a connected account profile', () => {
   assert.equal(accountPresentation({ connected: false, profile: { displayName: 'Old identity', email: 'old@example.test' } }).name, 'Local workspace');
@@ -52,6 +104,28 @@ test('activity labels say what happened to a ticket in plain words', async () =>
   assert.equal(entryStatus({ ticket: null }), null);
   assert.equal(entryStatus({ ticket: { error: 'Bad JSON' } }).tone, 'warn');
   assert.equal(entryStatus({ ticket: { kind: 'close' } }).label, 'close ticket');
+});
+
+test('Journal card reconciliation follows visible outcomes without replacing cards for new review clocks or reasons', async () => {
+  const { entryCardPresentation } = await import('../public/desktop-ui.mjs');
+  const entry = { id: 'note-a', origin: 'local', title: 'Research', body: 'Read the sources.', status: 'reviewed', version: 1, listener: { status: 'observed', decision: 'review', reason: 'First explanation.', atUtc: '2026-10-23T00:00:00Z' } };
+  const options = { book: 'Research notebook', time: 'Oct 23, 12:00 AM', selected: true };
+  const original = entryCardPresentation(entry, options);
+  assert.deepEqual(entryCardPresentation({ ...entry, listener: { ...entry.listener, reason: 'A newer explanation.', atUtc: '2026-10-23T00:01:00Z' }, handoff: { reason: 'A changing source-owned status.' } }, options), original);
+  assert.notDeepEqual(entryCardPresentation({ ...entry, listener: { ...entry.listener, decision: 'ignore' } }, options), original, 'A different visible decision updates its badge.');
+  for (const change of [{ selected: false }, { book: 'Renamed notebook' }, { time: 'Oct 23, 12:01 AM' }]) assert.notDeepEqual(entryCardPresentation(entry, { ...options, ...change }), original);
+  assert.notDeepEqual(entryCardPresentation({ ...entry, origin: 'cloud' }, options), original, 'Local and cloud entries with the same ID stay distinct.');
+  const invalid = { ...entry, ticket: { error: 'Empty orders.' } };
+  assert.deepEqual(entryCardPresentation({ ...invalid, ticket: { error: 'A corrected but still invalid draft.' } }, options), entryCardPresentation(invalid, options), 'The card shows the same error badge; the reader owns the exact current error.');
+});
+
+test('Journal reader core changes only with source content, not derived ticket or Listener annotations', async () => {
+  const { entryReadingCore } = await import('../public/desktop-ui.mjs');
+  const entry = { id: 'note-a', origin: 'local', title: 'Research', body: 'Keep this selected prose.', status: 'watching', version: 1, updatedAtUtc: '2026-10-23T00:00:00Z', signal: { quality: 'degraded', sourceOperationId: 'recorded-source' } };
+  const original = entryReadingCore(entry, 'Research notebook');
+  assert.deepEqual(entryReadingCore({ ...entry, ticket: { error: 'A derived ticket warning.' }, listener: { status: 'observed', reason: 'A fresh explanation.', atUtc: '2026-10-23T00:01:00Z' }, handoff: { reason: 'A fresh handoff.' } }, 'Research notebook'), original);
+  for (const change of [{ id: 'note-b' }, { origin: 'cloud' }, { title: 'Renamed note' }, { body: 'New source prose.' }, { status: 'reviewed' }, { version: 2 }, { updatedAtUtc: '2026-10-23T00:02:00Z' }, { signal: { ...entry.signal, quality: 'fresh' } }]) assert.notDeepEqual(entryReadingCore({ ...entry, ...change }, 'Research notebook'), original);
+  assert.notDeepEqual(entryReadingCore(entry, 'Renamed notebook'), original);
 });
 
 test('displayed submission and uncertain results never imply an order was filled', async () => {

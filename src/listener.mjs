@@ -238,8 +238,8 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
         }
         let decision;
         store.put('activity', activity.id, { ...activity, status: 'processing', reason: 'The local model is reading this note.' });
-        publish('model', 'The local model is reading the note and preparing its published decision.', entry, { index, total });
-        state.modelOutput = { entryId: entry.id, title: entry.title, origin: entry.origin, atUtc, text: '', status: 'streaming' };
+        publish('model', 'The local model is reading the note and preparing its response.', entry, { index, total });
+        state.modelOutput = { entryId: entry.id, title: entry.title, origin: entry.origin, version: entry.version, atUtc, text: '', status: 'streaming' };
         changed();
         try {
           decision = await classify({ entry, instructions: settings.instructions, signal: activeAbort.signal, onOutput: delta => {
@@ -266,9 +266,9 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
         }
         store.put('activity', activity.id, { ...activity, decision: decision.decision, reason: decision.reason, status: 'observed' });
         state.modelOutput.status = 'complete';
-        state.lastModelOutput = { entryId: entry.id, title: entry.title, origin: entry.origin, decision: decision.decision, reason: decision.reason, atUtc: new Date(clock()).toISOString() };
+        state.lastModelOutput = { entryId: entry.id, title: entry.title, origin: entry.origin, version: entry.version, decision: decision.decision, reason: decision.reason, atUtc: new Date(clock()).toISOString() };
         publish('decision', decision.reason || `Model decision: ${decision.decision}.`, entry, { decision: decision.decision, index, total });
-        publish('result', 'This note has no explicit action ticket. Add a flusso-orders ticket with exact order fields, or flusso-close with owned position IDs, and set it to watching to submit an instruction.', entry, { status: 'observed', index, total });
+        publish('result', 'Research review complete. No order was requested for this note.', entry, { status: 'observed', index, total });
         store.put('checkpoint', key, { version: entry.version, state: 'observed', atUtc });
       }
       if (reviewLatest && !researchEntry) publish('waiting', 'No reviewed or watching research note matches the selected notebooks and section. No model was run.');

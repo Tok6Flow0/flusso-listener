@@ -401,7 +401,7 @@ test('public progress is visible during model work and retains its published dec
     assert.equal(after.processing.stage, 'idle'); assert.equal(after.processing.running, false);
     assert.equal(after.lastModelOutput.reason, 'An explicit action ticket is missing.');
     assert.ok(after.events.some(row => row.stage === 'decision' && row.message === after.lastModelOutput.reason));
-    assert.ok(after.events.some(row => row.stage === 'result' && row.message.includes('flusso-close')));
+    assert.ok(after.events.some(row => row.stage === 'result' && row.message.includes('No order was requested')));
     assert.equal(after.events.some(row => 'thinking' in row || 'reasoning' in row), false);
     for (let i = 0; i < 30; i++) await listener.tick();
     assert.equal(listener.status().events.length, 100, 'Runtime transcript stays bounded.');
@@ -460,10 +460,12 @@ test('manual Check now re-reviews the newest selected research note, streams it,
     const tick = listener.tick({ reviewLatest: true }); assert.equal((await started.promise).id, research.id);
     assert.equal(listener.status().modelOutput.text, 'fresh model response');
     assert.equal(listener.status().modelOutput.status, 'streaming');
+    assert.equal(listener.status().modelOutput.version, research.version);
     assert.equal(listener.status().lastModelOutput, null, 'Partial text is not a decision.');
     assert.ok(updates.some(state => state.modelOutput?.text === 'fresh model response' && state.busy));
     finish.resolve({ decision: 'review', reason: 'This is the actual model decision.' }); await tick;
     assert.equal(listener.status().modelOutput.status, 'complete'); assert.equal(sends, 1);
+    assert.equal(listener.status().lastModelOutput.version, research.version);
     await listener.tick(); assert.equal(reviews, 1, 'Ordinary revision checks still honor checkpoints.');
     assert.equal(w.store.entry(research.id).status, 'reviewed');
     const count = updates.length; unsubscribe(); await listener.tick(); assert.equal(updates.length, count);

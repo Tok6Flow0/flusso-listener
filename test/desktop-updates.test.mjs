@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { createUpdates } from '../desktop/updates.mjs';
+import { createDraftExitGuard } from '../desktop/policy.mjs';
 
 function deferred() { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
 class FakeUpdater extends EventEmitter {
@@ -40,6 +41,7 @@ test('finding and downloading an update never installs it without a separate exp
   assert.equal(updates.status().percent, 42.5);
   updater.emit('update-downloaded', { version: '0.2.0' });
   assert.equal(updates.status().state, 'downloaded'); assert.deepEqual(updater.calls, [['check'], ['download']]);
+  assert.match(updates.status().message, /Restart turns off the Listener and Auto-trade/);
 });
 
 test('parallel checks use one network request and downloads are gated to the offered update', async () => {
@@ -83,6 +85,31 @@ test('a failed shutdown never starts the installer', async () => {
   const { updater, updates } = fixture({ beforeInstall: async () => { throw new Error('Journal flush failed'); } });
   await downloaded(updater, updates); await assert.rejects(updates.install(), /Journal flush failed/);
   assert.equal(updater.calls.some(([call]) => call === 'install'), false);
+});
+
+test('cancelling native draft confirmation preserves the live runtime and downloaded update for retry', async () => {
+  let allow = false;
+  const calls = [], runtime = { enabled: true, executionEnabled: true, listener: true, database: true };
+  const guard = createDraftExitGuard({ confirmDiscard: async () => { calls.push('confirm'); return allow; } });
+  guard.reportDirty(true);
+  const { updater, updates } = fixture({ beforeInstall: () => guard.run('restart', async () => {
+    calls.push('stop-auto-check'); updates.stopAutoCheck();
+    calls.push('save-settings'); runtime.enabled = runtime.executionEnabled = false;
+    calls.push('shutdown'); runtime.listener = runtime.database = false;
+  }) });
+  await downloaded(updater, updates);
+  const cancelled = await updates.install();
+  assert.equal(cancelled.cancelled, true);
+  assert.equal(updates.status().state, 'downloaded');
+  assert.equal(guard.isApproved(), false);
+  assert.deepEqual(calls, ['confirm']);
+  assert.ok(Object.values(runtime).every(Boolean));
+  assert.equal(updater.calls.some(([call]) => call === 'install'), false);
+  allow = true;
+  const installed = await updates.install();
+  assert.equal(installed.cancelled, undefined);
+  assert.deepEqual(calls, ['confirm', 'confirm', 'stop-auto-check', 'save-settings', 'shutdown']);
+  assert.deepEqual(updater.calls.at(-1), ['install', { isSilent: false, isForceRunAfter: true }]);
 });
 
 test('a failed shutdown can be retried explicitly without a permanently cached rejection', async () => {

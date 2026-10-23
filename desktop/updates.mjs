@@ -64,7 +64,7 @@ export function createUpdates({
   updater.on('update-downloaded', info => publish({
     state: 'downloaded',
     version: info.version,
-    message: 'Update ready. Restart when you are ready.',
+    message: 'Update ready. Restart turns off the Listener and Auto-trade. Turn them back on after reviewing the updated app.',
   }));
   updater.on('error', () => publish({
     state: 'error',
@@ -107,7 +107,7 @@ export function createUpdates({
       if (state.state !== 'downloaded') throw new Error('Download and verify the update first.');
       if (!installing) {
         installing = (async () => {
-          await beforeInstall();
+          if (await beforeInstall() === false) { installing = undefined; return { ...state, cancelled: true }; }
           updater.quitAndInstall({ isSilent: false, isForceRunAfter: true });
           return { ...state };
         })().catch(error => { installing = undefined; throw error; });

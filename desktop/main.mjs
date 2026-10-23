@@ -13,10 +13,25 @@ import { defaultDirectory } from '../src/cli.mjs';
 import { claimInstance } from '../src/instance.mjs';
 import { createDesktopModel } from './model.mjs';
 import { createUpdates } from './updates.mjs';
-import { trustedFrame, externalUrl } from './policy.mjs';
+import { trustedFrame, externalUrl, createDraftExitGuard, reportDraftState } from './policy.mjs';
 
 app.setName('Flusso Journal');
 let window, tray, server, store, listener, model, updates, releaseInstance, quitting = false, closing, closed = false;
+const draftExit = createDraftExitGuard({ confirmDiscard: async (reason, unknown) => {
+  window?.show();
+  const options = { type: 'warning', title: 'Unsaved local draft', message: unknown ? 'A local draft may still be unsaved.' : 'Discard your unsaved local draft?', detail: 'Keep writing to save your changes first. Discarding loses only the unsaved writing.', buttons: ['Keep writing', reason === 'restart' ? 'Discard draft and restart' : 'Discard draft and quit'], defaultId: 0, cancelId: 0, noLink: true };
+  const answer = window && !window.isDestroyed() ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
+  return answer.response === 1;
+} });
+async function prepareExit(reason, work) {
+  try {
+    return await draftExit.run(reason, async () => { quitting = true; window?.hide(); await work(); });
+  } catch (error) {
+    quitting = false;
+    if (!closed) window?.show();
+    throw error;
+  }
+}
 if (!process.argv.includes('--smoke-test') && !app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', () => { window?.show(); window?.focus(); });
@@ -47,8 +62,10 @@ async function start() {
   const cloud = createCloudClient({ vault }); listener = createListener({ store, cloud, classify: model.classify });
   server = await startServer({ store, cloud, listener, checkModel: model.modelStatus, open: value => shell.openExternal(externalUrl(value)) });
   updates = createUpdates({ updater: createRequire(import.meta.url)('electron-updater').autoUpdater, version: app.getVersion(), packaged: app.isPackaged, preview: app.getVersion().includes('-'), onChange: changed, beforeInstall: async () => {
-    updates?.stopAutoCheck?.();
-    const settings = store.settings(); store.saveSettings({ ...settings, enabled: false, executionEnabled: false }); quitting = true; await shutdown();
+    return prepareExit('restart', async () => {
+      updates?.stopAutoCheck?.();
+      const settings = store.settings(); store.saveSettings({ ...settings, enabled: false, executionEnabled: false }); await shutdown();
+    });
   } });
   updates.startAutoCheck();
   const iconPath = fileURLToPath(new URL('../public/flusso-mark.png', import.meta.url));
@@ -56,21 +73,32 @@ async function start() {
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event, value) => { try { if (new URL(value).origin !== server.origin) event.preventDefault(); } catch { event.preventDefault(); } });
   window.webContents.on('will-attach-webview', event => event.preventDefault());
+  window.webContents.on('did-start-loading', () => draftExit.invalidate());
+  window.webContents.on('render-process-gone', () => draftExit.invalidate());
+  window.webContents.on('will-prevent-unload', event => { if (draftExit.isApproved()) event.preventDefault(); });
   window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   window.webContents.session.setPermissionCheckHandler(() => false);
   for (const [channel, handler] of Object.entries({
-    status, 'check-updates': () => updates.check(), 'download-update': () => updates.download(), 'install-update': () => updates.install(),
+    status, 'check-updates': () => updates.check(), 'download-update': () => updates.download(), 'install-update': async () => { try { return await updates.install(); } catch (error) { draftExit.invalidate(); if (!closed) { quitting = false; window.show(); } throw error; } },
     'setup-model': async () => { await model.setup(); return status(); },
     'account-settings': () => shell.openExternal('https://flusso.stream/app/settings#ai-connections'),
     'start-on-login': enabled => { if (typeof enabled !== 'boolean') throw new Error('Choose whether to open at login.'); if (process.platform === 'linux') throw new Error('Use your Linux desktop’s startup application settings.'); app.setLoginItemSettings({ openAtLogin: enabled, openAsHidden: false }); return status(); },
   })) ipcMain.handle(`flusso:${channel}`, (event, ...args) => { if (!trustedFrame(event, window, server.origin) || args.length > (channel === 'start-on-login' ? 1 : 0)) throw new Error('Desktop command refused.'); return handler(...args); });
+  ipcMain.on('flusso:draft-dirty', (event, ...args) => {
+    event.returnValue = reportDraftState(event, window, server.origin, args, draftExit);
+  });
   tray = new Tray(nativeImage.createFromPath(iconPath).resize({ width: 20, height: 20 }));
   tray.setToolTip('Flusso Journal');
-  tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Open Journal', click: () => window.show() }, { label: 'Quit Journal and stop Listener', click: () => { quitting = true; app.quit(); } }]));
+  tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Open Journal', click: () => window.show() }, { label: 'Quit Journal and stop Listener', click: () => app.quit() }]));
   tray.on('click', () => window.show());
   window.on('close', event => { if (!quitting) { event.preventDefault(); window.hide(); } });
-  Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'Flusso Journal', submenu: [{ label: 'Show Journal', click: () => window.show() }, { label: 'Check for updates', click: () => updates.check().catch(() => changed()) }, { type: 'separator' }, { label: 'Quit Journal and stop Listener', accelerator: 'CmdOrCtrl+Q', click: () => { quitting = true; app.quit(); } }] }, { role: 'editMenu' }]));
+  Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'Flusso Journal', submenu: [{ label: 'Show Journal', click: () => window.show() }, { label: 'Check for updates', click: () => updates.check().catch(() => changed()) }, { type: 'separator' }, { label: 'Quit Journal and stop Listener', accelerator: 'CmdOrCtrl+Q', click: () => app.quit() }] }, { role: 'editMenu' }]));
   await window.loadURL(server.url); window.show(); listener.start(); model.initialize().catch(() => {});
 }
 app.on('activate', () => { window?.show(); });
-app.on('before-quit', event => { quitting = true; if (!closed && store) { event.preventDefault(); shutdown().finally(() => app.quit()); } });
+app.on('before-quit', event => {
+  if (closed || !store) { quitting = true; return; }
+  event.preventDefault();
+  if (!window) draftExit.reportDirty(false);
+  prepareExit('quit', async () => { await shutdown(); app.quit(); }).catch(() => { dialog.showErrorBox('Could not finish quitting', 'The Journal could not finish closing. Check the app before trying again.'); });
+});

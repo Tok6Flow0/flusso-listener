@@ -1,6 +1,6 @@
 import { formatCount, formatPrice, formatQuantity, formatPercentLabel, formatMoney, formatPercent } from './format.mjs';
 import { renderMarkdown } from './markdown.mjs';
-import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, activityStatus, listenerResult, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions, decisionRowKeys, receiptDetails, modelOutputPresentation, completionAnnouncement, localDraftDirty, intervalLabel, settingsSwitchBody, ticketDraft } from './desktop-ui.mjs';
+import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, entryCardPresentation, entryReadingCore, activityStatus, listenerResult, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions, decisionRowKeys, receiptDetails, modelOutputPresentation, completionAnnouncement, localDraftDirty, intervalLabel, settingsSwitchBody, ticketDraft } from './desktop-ui.mjs';
 
 const $ = id => document.getElementById(id);
 let csrf, snapshot, selected = null, editing = null, entryRetryKey = crypto.randomUUID();
@@ -18,7 +18,12 @@ const TICKET_FENCE = /^(```|~~~)[ \t]*flusso-(?:orders|close)[ \t]*\n[\s\S]*?^\1
 
 function element(tag, content, className) { const node = document.createElement(tag); if (content != null) node.textContent = content; if (className) node.className = className; return node; }
 function pill(text, tone) { return element('span', text, `pill${tone ? ' ' + tone : ''}`); }
-function notify(message, success = false, error = false) { $('notice').setAttribute('role', error ? 'alert' : 'status'); $('notice-text').textContent = message; $('notice').hidden = false; $('notice').className = `notice${error ? ' error' : success ? ' success' : ''}`; clearTimeout(notify.timer); if (success) notify.timer = setTimeout(() => { $('notice').hidden = true; }, 5000); }
+function notify(message, success = false, error = false) {
+  $('notice-text').textContent = message; $('notice').hidden = false; $('notice').className = `notice${error ? ' error' : success ? ' success' : ''}`;
+  cancelAnimationFrame(notify.frame); $('notice-status').textContent = ''; $('notice-alert').textContent = '';
+  notify.frame = requestAnimationFrame(() => { $(error ? 'notice-alert' : 'notice-status').textContent = message; });
+  clearTimeout(notify.timer); if (success) notify.timer = setTimeout(() => { $('notice').hidden = true; }, 5000);
+}
 async function api(path, body, headers = {}) {
   const response = await fetch(path, { method: body === undefined ? 'GET' : 'POST', headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json', 'x-flusso-csrf': csrf }), ...headers }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const value = await response.json(); if (!response.ok) throw new Error(value.error || 'That did not work. Try again.'); return value;
@@ -37,7 +42,8 @@ function reconcileRows(list, items, render) {
   for (const item of items) {
     const revision = JSON.stringify(item.value), old = previous.get(item.key);
     const node = old?.revision === revision ? old.node : render(item.value);
-    node.dataset.rowKey = item.key; node.tabIndex = -1;
+    node.dataset.rowKey = item.key;
+    if (!node.matches('button, a[href], input, select, textarea, summary, [tabindex]')) node.tabIndex = -1;
     next.set(item.key, { node, revision });
     if (old && old.node !== node) { if (cursor === old.node) cursor = old.node.nextSibling; old.node.remove(); }
     if (node !== cursor) list.insertBefore(node, cursor);
@@ -168,6 +174,7 @@ async function nativeAction(method, argument) {
 }
 async function initializeDesktop() {
   if (!desktop) return;
+  updateDraftProtection();
   const unsubscribe = desktop.onStatus(status => { desktopStatus = status; renderDesktop(); });
   window.addEventListener('pagehide', () => unsubscribe(), { once: true });
   desktopStatus = await desktop.status(); renderDesktop();
@@ -184,6 +191,7 @@ for (const id of ['setup-model', 'setup-model-panel']) $(id).addEventListener('c
 
 /* ----------------------------------------------------------------- views */
 function switchView(view) {
+  if (entrySaving && view !== 'journal') { notify('This entry is still saving. Wait for the result before leaving it.'); return; }
   // A new page opens at its top; returning to the same page keeps the reader's place.
   if ($(`view-${view}`).hidden) window.scrollTo({ top: 0 });
   document.querySelectorAll('.view').forEach(node => { node.hidden = node.id !== `view-${view}`; });
@@ -209,7 +217,7 @@ async function load({ forms = false } = {}) {
     $('journal-filter').replaceChildren(new Option('All notebooks', ''), ...notebookOptions.map(([origin, id, name]) => new Option(origin === 'cloud' ? `${name} · cloud` : name, `${origin}:${id}`)));
     $('journal-filter').value = selectedFilter;
   }
-  if (changed('entries', snapshot.entries)) renderEntries();
+  if (changed('entries', [snapshot.entries, notebookOptions])) renderEntries();
   renderActivity();
   renderProcess(); renderDecisions();
   if (forms || !formDirty) fillSettings();
@@ -231,6 +239,7 @@ function renderStatus() {
   $('last-check').classList.toggle('warn', Boolean(settings.enabled && listener.cloudComplete === false));
   const pending = snapshot.attempts.filter(row => ['pending', 'unknown'].includes(row.status)).length;
   $('activity-count').hidden = !pending; $('activity-count').textContent = formatCount(pending);
+  $('activity-count').closest('button').setAttribute('aria-label', pending ? `Activity, ${formatCount(pending)} unconfirmed` : 'Activity');
   $('check-now').disabled = !settings.enabled || Boolean(listener.busy);
   $('check-now').classList.toggle('primary', settings.enabled && !listener.busy);
   $('check-now').title = !settings.enabled ? 'Turn Listener on to check notes' : listener.busy ? 'A check is already running' : 'Review the newest selected note';
@@ -273,7 +282,7 @@ function sourceButton(row, label = row.title || 'Open Journal entry') {
 }
 function openEntry(entry) {
   switchView('journal'); if (!leaveEditor()) return;
-  selected = entry; renderEntries();
+  selected = entry; showSelectedEntry(); renderEntries();
   reveal($('entry-detail'), 'start'); $('entry-detail').focus({ preventScroll: true });
 }
 
@@ -365,7 +374,7 @@ function renderProcess() {
     item.append(head, body); return item;
   }));
   list.hidden = !events.length; $('process-events-empty').hidden = Boolean(events.length);
-  setText('process-count', events.length ? `${formatCount(events.length)} update${events.length === 1 ? '' : 's'}` : '');
+  setText('process-count', events.length ? `Latest ${formatCount(events.length)} update${events.length === 1 ? '' : 's'}` : '');
   if (atBottom) list.scrollTop = list.scrollHeight;
 }
 
@@ -395,7 +404,7 @@ function fillSettings() {
   $('enabled').setAttribute('aria-label', settings.enabled ? 'Listener on' : 'Turn on Listener');
   $('execution').checked = settings.executionEnabled;
   for (const radio of document.querySelectorAll('input[name=source]')) radio.checked = radio.value === settings.source;
-  ensureOption($('interval'), settings.intervalSeconds, `${formatCount(settings.intervalSeconds)} seconds`); $('interval').value = String(settings.intervalSeconds);
+  ensureOption($('interval'), settings.intervalSeconds, intervalLabel(settings.intervalSeconds) ?? 'Unavailable interval'); $('interval').value = String(settings.intervalSeconds);
   ensureOption($('max-age'), settings.maxSignalAgeSeconds, `${formatCount(Math.round(settings.maxSignalAgeSeconds / 60))} minutes`); $('max-age').value = String(settings.maxSignalAgeSeconds);
   $('section').value = settings.section; $('instructions').value = settings.instructions;
   $('max-slippage').value = risk.maxSlippagePct ?? ''; $('max-order').value = risk.maxOrderUsd ?? ''; $('min-volume').value = risk.minVolume24hUsd ?? '';
@@ -509,37 +518,38 @@ $('check-now').addEventListener('click', async event => {
 for (const id of ['ticket-example', 'editor-ticket-example']) $(id).textContent = JSON.stringify(TICKET_EXAMPLE, null, 2);
 
 /* --------------------------------------------------------------- journal */
+// Opening a source or saving a note must reveal it even under an excluding filter.
+function showSelectedEntry() {
+  if (!selected) return;
+  if ($('journal-filter').value && $('journal-filter').value !== `${selected.origin}:${selected.notebookId}`) $('journal-filter').value = '';
+  if (!matchesResultFilter(selected, $('result-filter').value)) $('result-filter').value = '';
+}
 function renderEntries() {
   const filter = $('journal-filter').value, result = $('result-filter').value;
   const rows = snapshot.entries.filter(row => (!filter || `${row.origin}:${row.notebookId}` === filter) && matchesResultFilter(row, result));
   if (selected) selected = rows.find(row => row.id === selected.id && row.origin === selected.origin) ?? null;
-  $('entry-list').replaceChildren(...rows.map(row => {
-    const button = element('button', null, 'entry-card'), isSelected = selected?.id === row.id && selected.origin === row.origin; button.type = 'button';
-    button.classList.toggle('selected', isSelected); if (isSelected) button.setAttribute('aria-current', 'true');
-    const meta = element('span', null, 'meta'), status = entryStatus(row), outcome = listenerResult(row), book = notebookName(row);
-    meta.append(element('time', when(row.updatedAtUtc)));
-    if (book) meta.append(element('span', book, 'meta-book'));
+  const items = rows.map(row => ({ key: `${row.origin}:${row.id}`, value: entryCardPresentation(row, { book: notebookName(row), time: when(row.updatedAtUtc), selected: selected?.id === row.id && selected.origin === row.origin }) }));
+  if (!items.length) items.push({ key: 'empty', value: { empty: true, hasEntries: Boolean(snapshot.entries.length) } });
+  reconcileRows($('entry-list'), items, row => {
+    if (row.empty) {
+      const empty = element('div', null, 'empty list-empty');
+      const button = element('button', row.hasEntries ? 'Show all entries' : 'Write the first entry', 'link-button'); button.type = 'button';
+      button.addEventListener('click', () => { if (row.hasEntries) { $('journal-filter').value = ''; $('result-filter').value = ''; renderEntries(); } else showEditor(); });
+      empty.append(element('p', row.hasEntries ? 'No entries match these filters.' : 'Your Journal is empty.'), button);
+      return empty;
+    }
+    const button = element('button', null, 'entry-card'); button.type = 'button';
+    button.classList.toggle('selected', row.selected); if (row.selected) button.setAttribute('aria-current', 'true');
+    const meta = element('span', null, 'meta');
+    meta.append(element('time', row.time));
+    if (row.book) meta.append(element('span', row.book, 'meta-book'));
     const tags = element('span', null, 'tags');
     tags.append(element('span', row.status, `entry-state ${row.status}`));
-    if (row.ticket?.error && status) tags.append(pill(status.label, status.tone));
-    else if (outcome) tags.append(pill(outcome.label, outcome.tone));
+    if (row.outcome) tags.append(pill(row.outcome.label, row.outcome.tone));
     if (row.origin === 'cloud') tags.append(pill('cloud'));
     button.append(element('strong', row.title), meta, tags);
-    button.addEventListener('click', () => openEntry(row)); return button;
-  }));
-  if (!rows.length) {
-    const empty = element('div', null, 'empty list-empty');
-    if (snapshot.entries.length) {
-      const clear = element('button', 'Show all entries', 'link-button'); clear.type = 'button';
-      clear.addEventListener('click', () => { $('journal-filter').value = ''; $('result-filter').value = ''; renderEntries(); });
-      empty.append(element('p', 'No entries match these filters.'), clear);
-    } else {
-      const write = element('button', 'Write the first entry', 'link-button'); write.type = 'button';
-      write.addEventListener('click', () => showEditor());
-      empty.append(element('p', 'Your Journal is empty.'), write);
-    }
-    $('entry-list').append(empty);
-  }
+    button.addEventListener('click', () => { const current = snapshot.entries.find(item => item.id === row.id && item.origin === row.origin); if (current) openEntry(current); }); return button;
+  });
   if (selected) { const current = snapshot.entries.find(row => row.id === selected.id && row.origin === selected.origin); if (current) { selected = current; renderDetail(); } }
   else renderDetail();
 }
@@ -576,70 +586,72 @@ function positionsTable(positions, withResults = false) {
   table.append(tbody); wrap.append(table); return wrap;
 }
 function renderDetail() {
-  const detail = $('entry-detail');
+  const detail = $('entry-detail'), editFocused = detail.querySelector('[data-entry-action]') === document.activeElement;
   if (!selected) {
+    if (!changed('entry-detail:core', { empty: true, hasEntries: Boolean(snapshot?.entries.length) })) return;
     detail.setAttribute('aria-label', 'Selected entry');
     const empty = element('div', null, 'empty-art'), mark = element('img'); mark.src = '/flusso-mark.png'; mark.alt = ''; mark.width = mark.height = 40;
     const write = element('button', snapshot?.entries.length ? 'New entry' : 'Write the first entry'); write.type = 'button';
     write.addEventListener('click', () => showEditor());
     empty.append(mark, element('p', snapshot?.entries.length ? 'Pick an entry to read it, or write a new one.' : 'Write research, questions or an explicit order ticket. Notes stay on this computer unless you copy them.'), write);
-    detail.replaceChildren(empty); return;
+    detail.replaceChildren(empty); if (editFocused) write.focus({ preventScroll: true }); return;
   }
-  const row = selected; detail.setAttribute('aria-label', row.title); detail.replaceChildren();
-  const head = element('header', null, 'detail-head'), heading = element('div', null, 'detail-title');
-  const meta = element('div', null, 'detail-meta'), status = entryStatus(row), book = notebookName(row);
-  meta.append(pill(row.status, row.status === 'watching' ? 'info' : ''));
-  if (status) meta.append(pill(status.label, status.tone));
-  const facts = element('span', null, 'detail-facts mono'), time = element('time', when(row.updatedAtUtc)); time.dateTime = row.updatedAtUtc ?? '';
-  facts.append(document.createTextNode(`${book ? `${book} · ` : ''}${row.origin} · v${formatCount(row.version)} · `), time);
-  meta.append(facts);
-  heading.append(element('h2', row.title), meta);
-  const actions = element('div', null, 'detail-actions'), button = element('button', row.origin === 'local' ? 'Edit' : 'Copy to local'); button.type = 'button';
-  button.addEventListener('click', () => showEditor(row.origin === 'local' ? row : { ...row, id: null, version: null })); actions.append(button);
-  head.append(heading, actions);
-  const prose = element('div', null, 'note-body'); renderMarkdown(prose, (row.body || '').replace(TICKET_FENCE, '').trim() || ' ');
-  detail.append(head, prose);
+  const row = selected, book = notebookName(row);
+  if (changed('entry-detail:core', entryReadingCore(row, book))) {
+    detail.setAttribute('aria-label', row.title);
+    const head = element('header', null, 'detail-head'), heading = element('div', null, 'detail-title');
+    const meta = element('div', null, 'detail-meta'), ticketKind = element('span'); ticketKind.dataset.entryPart = 'ticket-kind';
+    meta.append(pill(row.status, row.status === 'watching' ? 'info' : ''), ticketKind);
+    const facts = element('span', null, 'detail-facts mono'), time = element('time', when(row.updatedAtUtc)); time.dateTime = row.updatedAtUtc ?? '';
+    facts.append(document.createTextNode(`${book ? `${book} · ` : ''}${row.origin} · v${formatCount(row.version)} · `), time); meta.append(facts);
+    heading.append(element('h2', row.title), meta);
+    const actions = element('div', null, 'detail-actions'), button = element('button', row.origin === 'local' ? 'Edit' : 'Copy to local'); button.type = 'button'; button.dataset.entryAction = 'edit';
+    button.addEventListener('click', () => { const current = snapshot.entries.find(item => item.id === row.id && item.origin === row.origin); if (current) showEditor(current.origin === 'local' ? current : { ...current, id: null, version: null }); }); actions.append(button); head.append(heading, actions);
+    const prose = element('div', null, 'note-body'); renderMarkdown(prose, (row.body || '').replace(TICKET_FENCE, '').trim() || ' ');
+    const live = element('div'); live.dataset.entryPart = 'live'; detail.replaceChildren(head, prose, live);
+    if (row.signal) {
+      const section = element('section', null, 'detail-section'), quality = row.signal.quality;
+      section.append(element('h3', 'Structured signal'), element('p', `${quality ? quality[0].toUpperCase() + quality.slice(1) : 'Unavailable'} · ${row.signal.sourceOperationId} · ${row.signal.sourceAsOfUtc ? when(row.signal.sourceAsOfUtc) : 'no source time'}`, 'hint mono'), element('p', 'Recorded source quality; not a current venue reading.', 'hint'));
+      const wrap = element('div', null, 'table-scroll'), table = element('table'), thead = element('thead'), head = element('tr'), tbody = element('tbody');
+      ['Instrument', 'Side', 'Direction', 'Qty', 'Unit', 'Ref price'].forEach((label, index) => head.append(element('th', label, index === 3 || index === 5 ? 'num' : '')));
+      thead.append(head); table.append(thead);
+      for (const leg of row.signal.legs) { const tr = element('tr'); [leg.asset.instrumentId, leg.side ?? '—', leg.direction ?? '—', formatQuantity(leg.quantity), leg.quantityUnit ? `${leg.quantityUnit} ${leg.quantityAsset ?? ''}` : '—', formatPrice(leg.referencePrice)].forEach((value, index) => tr.append(element('td', value, index === 3 || index === 5 ? 'num' : index === 0 ? 'mono' : ''))); tbody.append(tr); }
+      table.append(tbody); wrap.append(table); section.append(wrap); detail.append(section);
+    }
+    renderKeys.delete('entry-detail:kind'); renderKeys.delete('entry-detail:live');
+    if (editFocused) button.focus({ preventScroll: true });
+  }
+  const status = entryStatus(row);
+  if (changed('entry-detail:kind', status)) { const slot = detail.querySelector('[data-entry-part="ticket-kind"]'); slot.hidden = !status; slot.replaceChildren(...(status ? [pill(status.label, status.tone)] : [])); }
+  if (!changed('entry-detail:live', [row.handoff, row.listener, row.ticket])) return;
+  const live = detail.querySelector('[data-entry-part="live"]'); live.replaceChildren();
   if (row.handoff || (!row.ticket && row.listener?.status === 'observed')) {
     const section = element('aside', null, 'detail-section handoff-section'), title = element('div', null, 'handoff-head'), mark = element('img');
-    mark.src = '/flusso-mark.png'; mark.alt = ''; mark.width = mark.height = 18;
-    title.append(mark, element('h3', 'Listener status'));
-    section.append(title);
+    mark.src = '/flusso-mark.png'; mark.alt = ''; mark.width = mark.height = 18; title.append(mark, element('h3', 'Listener status')); section.append(title);
     const review = listenerResult(row);
     if (!row.ticket && row.listener?.status === 'observed' && review) {
       const line = element('p', null, 'handoff-review'), at = element('time', when(row.listener.atUtc)); at.dateTime = row.listener.atUtc ?? '';
-      line.append(pill(review.label, review.tone), element('span', row.listener.reason || 'No reason given.'), at);
-      section.append(line);
+      line.append(pill(review.label, review.tone), element('span', row.listener.reason || 'No reason given.'), at); section.append(line);
     }
     if (row.handoff) section.append(element('p', row.handoff.reason, 'hint'));
-    detail.append(section);
+    live.append(section);
   }
   if (row.ticket) {
     const section = element('section', null, 'detail-section'), head = element('div', null, 'card-head');
-    head.append(element('h3', row.ticket.kind === 'close' ? 'Close ticket' : 'Order ticket'), row.ticket.ticket?.id ? element('code', row.ticket.ticket.id) : element('span'));
-    section.append(head);
+    head.append(element('h3', row.ticket.kind === 'close' ? 'Close ticket' : 'Order ticket'), row.ticket.ticket?.id ? element('code', row.ticket.ticket.id) : element('span')); section.append(head);
     const outcome = listenerResult(row);
     if (outcome && (!row.ticket.error || row.listener)) {
       const line = element('p', null, 'hint ticket-result');
-      line.append(pill(outcome.label, outcome.tone), document.createTextNode(row.listener ? ` ${when(row.listener.atUtc)}${row.listener.reason ? ` · ${row.listener.reason}` : ''}` : ' The listener has not acted on this ticket yet.'));
-      section.append(line);
+      line.append(pill(outcome.label, outcome.tone), document.createTextNode(row.listener ? ` ${when(row.listener.atUtc)}${row.listener.reason ? ` · ${row.listener.reason}` : ''}` : ' The listener has not acted on this ticket yet.')); section.append(line);
     }
     if (row.ticket.error) section.append(element('p', row.ticket.error, 'hint'), element('p', 'Correct the ticket and save a new revision before it can be checked.', 'hint'));
     else section.append(row.ticket.kind === 'close' ? positionsTable(row.ticket.ticket.positionIds) : ordersTable(row.ticket.ticket.orders));
-    detail.append(section);
-  }
-  if (row.signal) {
-    const section = element('section', null, 'detail-section');
-    const quality = row.signal.quality;
-    section.append(element('h3', 'Structured signal'), element('p', `${quality ? quality[0].toUpperCase() + quality.slice(1) : 'Unavailable'} · ${row.signal.sourceOperationId} · ${row.signal.sourceAsOfUtc ? when(row.signal.sourceAsOfUtc) : 'no source time'}`, 'hint mono'), element('p', 'Recorded source quality; not a current venue reading.', 'hint'));
-    const wrap = element('div', null, 'table-scroll'), table = element('table'), thead = element('thead'), head = element('tr'), tbody = element('tbody');
-    ['Instrument', 'Side', 'Direction', 'Qty', 'Unit', 'Ref price'].forEach((label, index) => head.append(element('th', label, index === 3 || index === 5 ? 'num' : '')));
-    thead.append(head); table.append(thead);
-    for (const leg of row.signal.legs) { const tr = element('tr'); [leg.asset.instrumentId, leg.side ?? '—', leg.direction ?? '—', formatQuantity(leg.quantity), leg.quantityUnit ? `${leg.quantityUnit} ${leg.quantityAsset ?? ''}` : '—', formatPrice(leg.referencePrice)].forEach((value, index) => tr.append(element('td', value, index === 3 || index === 5 ? 'num' : index === 0 ? 'mono' : ''))); tbody.append(tr); }
-    table.append(tbody); wrap.append(table); section.append(wrap); detail.append(section);
+    live.append(section);
   }
 }
 // The editor takes the reading pane's place, so the list stays in view while writing.
 function showEditor(row = null) {
+  if (entrySaving) { notify('This entry is still saving. Wait for the result before opening another entry.'); return; }
   if (editorDirty()) { keepDraftVisible(); return; }
   editing = row?.id ? row : null; entryRetryKey = crypto.randomUUID();
   $('editor').hidden = false; $('entry-detail').hidden = true; $('editor-title').textContent = editing ? 'Edit entry' : row ? 'Copy to local' : 'New entry';
@@ -650,12 +662,16 @@ function showEditor(row = null) {
   editorBase = editorValues(); updateDraftProtection(); reveal($('editor'), window.matchMedia('(max-width:760px)').matches ? 'start' : 'nearest'); $('entry-title').focus({ preventScroll: true });
 }
 // Picking another entry keeps the draft; Cancel requires an explicit discard choice.
-let editorBase = null;
+let editorBase = null, reportedDraftDirty, entrySaving = false;
 function editorValues() { return { notebookId: $('entry-notebook').value, title: $('entry-title').value, body: $('entry-body').value, status: $('entry-status').value, signal: $('entry-signal').value }; }
 function editorDirty() { return !$('editor').hidden && localDraftDirty(editorBase, editorValues()); }
-function protectDraftOnLeave(event) { if (editorDirty()) { event.preventDefault(); event.returnValue = ''; } }
+function protectDraftOnLeave(event) { if (entrySaving || editorDirty()) { event.preventDefault(); event.returnValue = ''; } }
 function updateDraftProtection() {
-  if (editorDirty()) window.addEventListener('beforeunload', protectDraftOnLeave);
+  const dirty = entrySaving || editorDirty();
+  if (desktop?.setDraftDirty && dirty !== reportedDraftDirty) {
+    try { if (desktop.setDraftDirty(dirty) === true) reportedDraftDirty = dirty; } catch { /* Keep the renderer unload fallback; native unknown state requires confirmation. */ }
+  }
+  if (dirty) window.addEventListener('beforeunload', protectDraftOnLeave);
   else window.removeEventListener('beforeunload', protectDraftOnLeave);
 }
 function keepDraftVisible() {
@@ -666,11 +682,13 @@ function keepDraftVisible() {
 $('entry-form').addEventListener('input', updateDraftProtection);
 $('entry-form').addEventListener('change', updateDraftProtection);
 function leaveEditor() {
+  if (entrySaving) { notify('This entry is still saving. Wait for the result before opening another entry.'); return false; }
   if ($('editor').hidden) return true;
   if (editorDirty()) { keepDraftVisible(); return false; }
   closeEditor(); return true;
 }
 function closeEditor({ focus = false } = {}) {
+  if (entrySaving) { notify('This entry is still saving. Wait for the result before closing it.'); return; }
   if ($('editor').hidden) return;
   $('editor').hidden = true; $('entry-detail').hidden = false; editorBase = null; updateDraftProtection();
   if (focus) (document.querySelector('.entry-card.selected') ?? $('new-entry')).focus();
@@ -678,7 +696,7 @@ function closeEditor({ focus = false } = {}) {
 function insertTicket(close = false) {
   const id = `ticket-${new Date().toISOString().slice(0, 16).replace(/[-:]/g, '')}`;
   const body = $('entry-body'), block = '```' + (close ? 'flusso-close' : 'flusso-orders') + '\n' + JSON.stringify(ticketDraft(id, close), null, 2) + '\n```\n';
-  if (TICKET_FENCE.test(body.value)) { TICKET_FENCE.lastIndex = 0; notify('This entry already has an order ticket.'); return; }
+  if (TICKET_FENCE.test(body.value)) { TICKET_FENCE.lastIndex = 0; notify('This entry already has an action ticket.'); return; }
   TICKET_FENCE.lastIndex = 0; body.value = `${body.value.trimEnd()}${body.value.trim() ? '\n\n' : ''}${block}`; $('entry-status').value = 'watching'; updateDraftProtection(); body.focus();
   notify(close ? 'Close ticket draft added. Add exact owned position IDs; an empty draft cannot run.' : 'Order ticket draft added. Add your exact orders; an empty draft cannot run.');
 }
@@ -691,14 +709,28 @@ $('new-entry').addEventListener('click', () => showEditor());
 $('cancel-edit').addEventListener('click', () => { if (editorDirty()) $('discard-entry').showModal(); else closeEditor({ focus: true }); });
 $('keep-writing').addEventListener('click', () => $('discard-entry').close());
 $('discard-writing').addEventListener('click', () => { $('discard-entry').close(); closeEditor({ focus: true }); });
-$('entry-form').addEventListener('submit', event => { event.preventDefault(); action(event.submitter, async () => {
+$('entry-form').addEventListener('submit', event => {
+  event.preventDefault(); if (entrySaving) return;
+  const form = $('entry-form'), controls = [...form.elements].filter(control => 'disabled' in control).map(control => [control, control.disabled]);
+  entrySaving = true; form.setAttribute('aria-busy', 'true'); controls.forEach(([control]) => { control.disabled = true; }); updateDraftProtection();
+  let released = false;
+  const releaseSave = () => {
+    if (released) return; released = true;
+    controls.forEach(([control, disabled]) => { control.disabled = disabled; });
+    form.removeAttribute('aria-busy'); entrySaving = false; updateDraftProtection();
+  };
+  action(null, async () => { try {
   let signal = null; if ($('entry-signal').value.trim()) { try { signal = JSON.parse($('entry-signal').value); } catch { throw new Error('The structured signal is not valid JSON.'); } }
   const body = { notebookId: $('entry-notebook').value, title: $('entry-title').value, body: $('entry-body').value, status: $('entry-status').value, source: editing?.source ?? 'manual', observedAtUtc: editing?.observedAtUtc ?? null, instrument: editing?.instrument ?? null, venue: editing?.venue ?? null, signal, ...(editing ? { version: editing.version } : {}) };
   const saved = await api(editing ? `/api/entries/${editing.id}` : '/api/entries', body, { 'Idempotency-Key': entryRetryKey });
-  selected = { ...saved, origin: 'local' }; closeEditor();
+  selected = { ...saved, origin: 'local' }; releaseSave(); showSelectedEntry(); closeEditor({ focus: true });
+  const returnFocus = document.activeElement;
   try { await load(); } catch { notify('Entry saved, but the list could not refresh. Refresh to check the latest entries.', false, true); return; }
-  renderEntries(); notify('Saved.', true);
-}); });
+  renderEntries();
+  if (document.activeElement === returnFocus || $('entry-list').contains(document.activeElement) && document.activeElement.dataset.rowKey === returnFocus?.dataset.rowKey) (document.querySelector('.entry-card.selected') ?? $('new-entry')).focus({ preventScroll: true });
+  notify('Saved.', true);
+  } finally { releaseSave(); } });
+});
 $('notebook-form').addEventListener('submit', event => { event.preventDefault(); action(event.submitter, async () => { await api('/api/notebooks', { name: $('notebook-name').value }); $('notebook-name').value = ''; await load({ forms: !formDirty }); notify('Notebook added.', true); }); });
 $('sync').addEventListener('click', event => action(event.currentTarget, async () => { const result = await api('/api/sync', {}); await load(); notify(result.complete ? 'Cloud Journal synced.' : result.reason, result.complete); }));
 
