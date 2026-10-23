@@ -500,3 +500,23 @@ test('every timer period calls the model for unchanged selected research without
     }
   } finally { await listener.stop(); await w.close(); }
 });
+
+test('untouched UI order and close drafts never create an execution attempt; completed owner orders still submit once', async () => {
+  const { ticketDraft } = await import('../public/desktop-ui.mjs');
+  const w = await workspace(); const calls = [];
+  const listener = createListener({ store: w.store, cloud: fakeCloud({ submitOrders: async attempt => { calls.push(attempt); return sent(attempt.orders); }, closePositions: async () => { throw new Error('An empty close draft must never reach execution.'); } }), classify: noModel, clock: () => now });
+  try {
+    enable(w.store); listener.start();
+    for (const close of [false, true]) for (const fence of ['```', '~~~']) {
+      const body = `${fence}flusso-${close ? 'close' : 'orders'}\r\n${JSON.stringify(ticketDraft(`draft-${close}-${fence.length}-${fence[0]}`, close))}\r\n${fence}`;
+      w.store.createEntry(note(w.store, { body }));
+    }
+    await listener.tick(); assert.equal(calls.length, 0); assert.equal(w.store.all('attempt').length, 0);
+    assert.equal(w.store.all('activity').filter(row => row.status === 'review').length, 4);
+    const completed = ticketDraft('owner-completed-draft'); completed.orders = hedge;
+    w.store.createEntry(note(w.store, { body: `\`\`\`flusso-orders\n${JSON.stringify(completed)}\n\`\`\`` }));
+    await listener.tick(); await listener.tick();
+    assert.equal(calls.length, 1); assert.equal(calls[0].ticketId, 'owner-completed-draft');
+    assert.deepEqual(calls[0].orders.map(({ placeAtUtc: _at, conditions: _conditions, ...order }) => order), hedge.map(({ conditions: _conditions, ...order }) => order));
+  } finally { listener.stop(); await w.close(); }
+});

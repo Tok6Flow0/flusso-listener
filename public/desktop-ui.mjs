@@ -173,3 +173,9 @@ export function settingsSwitchBody(settings, field, value) {
   const keys = ['version', 'enabled', 'executionEnabled', 'source', 'notebookIds', 'section', 'instructions', 'intervalSeconds', 'maxSignalAgeSeconds', 'maxTicketsPerDay', 'writeBack', 'accountId', 'risk'];
   return { ...Object.fromEntries(keys.map(key => [key, settings[key]])), [field]: value };
 }
+
+// Start with an empty action, as close-ticket drafts already do. Only the owner
+// supplies executable order terms or exact owned position IDs.
+export function ticketDraft(id, close = false) {
+  return close ? { id, positionIds: [] } : { id, together: true, orders: [] };
+}

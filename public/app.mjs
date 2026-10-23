@@ -1,6 +1,6 @@
 import { formatCount, formatPrice, formatQuantity, formatPercentLabel, formatMoney, formatPercent } from './format.mjs';
 import { renderMarkdown } from './markdown.mjs';
-import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, activityStatus, listenerResult, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions, receiptDetails, modelOutputPresentation, intervalLabel, settingsSwitchBody } from './desktop-ui.mjs';
+import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, activityStatus, listenerResult, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions, receiptDetails, modelOutputPresentation, intervalLabel, settingsSwitchBody, ticketDraft } from './desktop-ui.mjs';
 
 const $ = id => document.getElementById(id);
 let csrf, snapshot, selected = null, editing = null, entryRetryKey = crypto.randomUUID();
@@ -368,7 +368,7 @@ async function saveSettings(message, body = settingsBody(), { forms = true } = {
   catch { renderStatus(); renderProcess(); notify(`${message} Settings saved, but the view could not refresh. Refresh to check the latest activity.`); return; }
   notify(message, true);
 }
-$('settings-form').addEventListener('input', () => { formDirty = true; settingsEdit += 1; setText('configure-label', 'Configure · Unsaved'); $('settings-draft-hint').hidden = false; $('save-settings').disabled = false; $('save-settings').textContent = 'Save'; });
+$('settings-form').addEventListener('input', () => { formDirty = true; settingsEdit += 1; setText('configure-label', 'Configure · Unsaved'); $('settings-draft-hint').hidden = !$('execution-draft-warning').hidden; $('save-settings').disabled = false; $('save-settings').textContent = 'Save'; });
 $('settings-form').addEventListener('submit', async event => {
   event.preventDefault(); await action(event.submitter, () => saveSettings('Saved.'));
   $('save-settings').disabled = !formDirty;
@@ -380,7 +380,7 @@ async function saveSwitch(id, field, message) {
   const savedMessage = formDirty ? `${message} Using saved settings; your edits are still unsaved.` : message;
   if (field === 'executionEnabled' && value && formDirty) {
     $(id).checked = snapshot.settings.executionEnabled;
-    $('execution-draft-warning').hidden = false; $('notice').hidden = true; return;
+    $('execution-draft-warning').hidden = false; $('settings-draft-hint').hidden = true; $('notice').hidden = true; return;
   }
   $('enabled').disabled = $('execution').disabled = true;
   try { await saveSettings(savedMessage, settingsSwitchBody(snapshot.settings, field, value), { forms: false }); }
@@ -560,9 +560,10 @@ function closeEditor({ focus = false } = {}) {
 }
 function insertTicket(close = false) {
   const id = `ticket-${new Date().toISOString().slice(0, 16).replace(/[-:]/g, '')}`;
-  const body = $('entry-body'), block = '```' + (close ? 'flusso-close' : 'flusso-orders') + '\n' + JSON.stringify(close ? { id, positionIds: [] } : { ...TICKET_EXAMPLE, id }, null, 2) + '\n```\n';
+  const body = $('entry-body'), block = '```' + (close ? 'flusso-close' : 'flusso-orders') + '\n' + JSON.stringify(ticketDraft(id, close), null, 2) + '\n```\n';
   if (TICKET_FENCE.test(body.value)) { TICKET_FENCE.lastIndex = 0; notify('This entry already has an order ticket.'); return; }
   TICKET_FENCE.lastIndex = 0; body.value = `${body.value.trimEnd()}${body.value.trim() ? '\n\n' : ''}${block}`; $('entry-status').value = 'watching'; editorDirty = true; body.focus();
+  notify(close ? 'Close ticket draft added. Add exact owned position IDs; an empty draft cannot run.' : 'Order ticket draft added. Add your exact orders; an empty draft cannot run.');
 }
 $('insert-ticket').addEventListener('click', () => insertTicket());
 $('insert-close-ticket').addEventListener('click', () => insertTicket(true));
