@@ -29,6 +29,7 @@ a{color:var(--c-teal-deep)}
 @keyframes fade{from{opacity:0}to{opacity:1}}
 @keyframes breathe{0%,100%{opacity:.25;transform:scale(.96)}50%{opacity:.85;transform:scale(1.04)}}
 @keyframes flow-up{from{transform:translateY(32%)}to{transform:translateY(-32%)}}
+@keyframes caret{0%,100%{opacity:1}50%{opacity:.25}}
 @keyframes ping{from{box-shadow:0 0 0 0 rgba(var(--c-teal-rgb),.45)}to{box-shadow:0 0 0 6px rgba(var(--c-teal-rgb),0)}}
 
 /* ------------------------------------------------------------- controls */
@@ -224,13 +225,15 @@ tr:last-child td{border-bottom:0}
 .output-source time,.decision-top time,.activity-head time{font-size:var(--fs-caption);color:var(--c-ink-5)}
 .verdict{display:grid;gap:10px;padding:16px 18px;border-radius:12px;background:var(--c-paper-raise);border:1px solid var(--c-line);animation:rise .32s cubic-bezier(.2,.7,.2,1)}
 .verdict-kicker{font:var(--fw-regular) var(--fs-label)/1 var(--font-mono);text-transform:uppercase;letter-spacing:var(--ls-label);color:var(--c-ink-5)}
-.verdict-body{display:flex;align-items:flex-start;gap:8px 14px;flex-wrap:wrap}
-.verdict-body .pill{margin-top:3px}
-.verdict-reason{flex:1 1 30ch;min-width:0;max-width:80ch;font-size:var(--fs-title-sm);line-height:var(--lh-relaxed);color:var(--c-ink);overflow-wrap:anywhere}
+.verdict-head{display:flex;align-items:center;gap:6px 10px;flex-wrap:wrap}
+/* The model's published words read as prose, in the same serif as the notes it reviews. */
+.verdict-reason{min-width:0;max-width:68ch;font:var(--fw-medium) var(--fs-title-sm)/var(--lh-relaxed) var(--font-serif);color:var(--c-ink);overflow-wrap:anywhere}
 .verdict .link-button{justify-self:start}
 .output-raw{margin:0;min-height:96px;max-height:clamp(160px,42vh,520px);overflow-y:auto;overscroll-behavior:contain;white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--fs-body-sm);line-height:var(--lh-relaxed);color:var(--c-ink-2);transition:border-color .3s,box-shadow .3s}
 .output-frame[data-status=streaming] .output-raw{min-height:160px}
 .review-desk[data-live=true] .output-raw{border-color:var(--c-teal-soft);box-shadow:inset 0 0 0 1px rgba(var(--c-teal-rgb),.08)}
+/* The write head sits where the next streamed token lands, and only while the stream is live. */
+.review-desk[data-live=true] .output-raw::after{content:"";display:inline-block;width:.6ch;height:1.15em;margin-left:2px;vertical-align:text-bottom;border-radius:1px;background:var(--c-teal);animation:caret 1.1s ease-in-out infinite}
 .output-frame[data-status=failed] .output-raw,.output-frame[data-status=stopped] .output-raw{border-style:dashed;color:var(--c-ink-4)}
 .output-note{font-size:var(--fs-body-sm);color:var(--c-ink-4);max-width:95ch}
 .output-frame[data-status=failed] .output-note,.output-frame[data-status=stopped] .output-note{color:var(--c-warn-deep)}

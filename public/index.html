@@ -100,8 +100,8 @@
             </div>
             <div id="model-output-source" class="output-source" hidden></div>
             <div id="model-verdict" class="verdict" hidden>
-              <p class="verdict-kicker">Published decision</p>
-              <div class="verdict-body"><span id="model-verdict-label" class="pill"></span><p id="model-verdict-reason" class="verdict-reason"></p></div>
+              <div class="verdict-head"><p class="verdict-kicker">Published decision</p><span id="model-verdict-label" class="pill"></span></div>
+              <p id="model-verdict-reason" class="verdict-reason"></p>
               <button id="model-raw-toggle" type="button" class="link-button" aria-expanded="false" aria-controls="model-output">Show raw response</button>
             </div>
             <div id="model-output" class="code-scroll mono output-raw" role="region" tabindex="0" aria-labelledby="model-output-heading" hidden></div>
@@ -169,7 +169,7 @@
     </section>
 
     <section id="view-activity" class="view" hidden>
-      <header class="view-head"><div class="title-block"><h1>Activity</h1><p class="status-line">Every Listener decision and order receipt, newest first. Unconfirmed results stay on top.</p></div></header>
+      <header class="view-head"><div class="title-block"><h1>Activity</h1><p class="status-line">Listener decisions and order receipts, newest first. Unconfirmed results stay on top.</p></div></header>
       <div id="activity-list" class="activity-list"></div>
     </section>
   </main>

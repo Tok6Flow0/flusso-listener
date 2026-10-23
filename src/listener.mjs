@@ -251,7 +251,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
         }
         catch (error) {
           state.modelOutput.status = activeAbort.signal.aborted ? 'stopped' : 'failed'; changed();
-          if (activeAbort.signal.aborted) { store.put('activity', activity.id, { ...activity, status: 'waiting', reason: 'Model review paused before a decision. This note will be checked again.' }); break; }
+          if (activeAbort.signal.aborted) { store.put('activity', activity.id, { ...activity, status: 'waiting', reason: 'Model review paused before a decision. This note will be checked again when selected and the Listener is on.' }); break; }
           // Left unchecked so it is read again once the model is available.
           state.lastError = error?.message?.includes('local model') || error?.message?.includes('classification') ? error.message : 'The local model could not read a note.';
           store.put('activity', activity.id, { ...activity, status: 'waiting', reason: state.lastError });
@@ -261,7 +261,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
         const latestSettings = store.settings();
         if (activeAbort.signal.aborted || latestSettings.version !== settingsVersion || !latestSettings.enabled || !inScope(entry, latestSettings)) {
           state.modelOutput.status = 'stopped'; changed();
-          store.put('activity', activity.id, { ...activity, status: 'waiting', reason: 'Listener settings changed before the model decision was accepted. This note will be checked again if selected.' });
+          store.put('activity', activity.id, { ...activity, status: 'waiting', reason: 'Listener settings changed before the model decision was accepted. This note will be checked again when selected and the Listener is on.' });
           break;
         }
         store.put('activity', activity.id, { ...activity, decision: decision.decision, reason: decision.reason, status: 'observed' });

@@ -314,6 +314,7 @@ function renderDecisions() {
     item.append(top, source);
     const shownInDesk = current && row.entryId === current.entryId && row.origin === current.origin && row.decision === current.decision && row.reason === current.reason;
     if (!shownInDesk) item.append(element('p', row.reason || 'Processing this entry.', 'decision-excerpt'));
+    if (row.status === 'waiting' && !snapshot.settings.enabled) item.append(element('p', 'Checks resume when you turn the Listener on.', 'hint'));
     return item;
   }));
   if (!latest.length) $('latest-decisions').append(element('p', snapshot.settings.enabled ? 'No decisions yet. Each published model decision and order result is listed here after a check.' : 'No decisions yet. Turn the Listener on; published model decisions and order results are listed here.', 'empty'));
@@ -324,6 +325,7 @@ function fillSettings() {
   const settings = snapshot.settings, risk = settings.risk ?? {};
   $('enabled').checked = settings.enabled; $('enabled-label').textContent = settings.enabled ? 'On' : 'Off';
   $('execution').checked = settings.executionEnabled;
+  for (const id of ['max-ticket', 'max-leverage']) $(id).placeholder = settings.executionEnabled ? 'Required' : 'Not set';
   for (const radio of document.querySelectorAll('input[name=source]')) radio.checked = radio.value === settings.source;
   ensureOption($('interval'), settings.intervalSeconds, `${formatCount(settings.intervalSeconds)} seconds`); $('interval').value = String(settings.intervalSeconds);
   ensureOption($('max-age'), settings.maxSignalAgeSeconds, `${formatCount(Math.round(settings.maxSignalAgeSeconds / 60))} minutes`); $('max-age').value = String(settings.maxSignalAgeSeconds);
@@ -570,7 +572,8 @@ function renderActivity() {
   const attempts = new Map(snapshot.attempts.map(row => [row.id, row]));
   $('activity-list').replaceChildren(...snapshot.activity.map(row => {
     const card = element('article', null, 'activity-card'), head = element('div', null, 'activity-head'), status = activityStatus(row), attempt = row.attemptId ? attempts.get(row.attemptId) : null;
-    const time = element('time', when(row.atUtc)); time.dateTime = row.atUtc;
+    // Seconds, as in Latest decisions: checks can run several times a minute.
+    const time = element('time', when(row.atUtc, true)); time.dateTime = row.atUtc;
     card.dataset.tone = status.tone;
     head.append(pill(status.label, status.tone), time);
     const title = element('h2'); title.append(sourceButton(row));
