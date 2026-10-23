@@ -6,7 +6,7 @@ const $ = id => document.getElementById(id);
 let csrf, snapshot, selected = null, editing = null, entryRetryKey = crypto.randomUUID();
 const desktop = window.flussoDesktop;
 let desktopStatus = null, connectionBusy = false, connectionOperation = null, connectionGeneration = 0, profileConnectionKey = null, profileGeneration = 0, dismissedUpdate = null;
-let accounts = [], accountsKey = null, formDirty = false, themeMode = document.documentElement.dataset.themeMode || 'system';
+let accounts = [], accountsKey = null, formDirty = false, settingsEdit = 0, themeMode = document.documentElement.dataset.themeMode || 'system';
 const nativeTasks = new Set();
 const renderKeys = new Map();
 let pollBusy = false, lastPolledAt = 0;
@@ -357,12 +357,21 @@ function settingsBody(overrides = {}) {
     ...overrides,
   };
 }
-async function saveSettings(message) {
-  try { await api('/api/settings', settingsBody()); await load({ forms: true }); notify(message, true); }
+async function saveSettings(message, body = settingsBody(), { forms = true } = {}) {
+  const edit = settingsEdit;
+  try { snapshot.settings = await api('/api/settings', body); }
   catch (error) { await load().catch(() => {}); throw error; }
+  // A successful write stays successful even if the follow-up read is offline.
+  // Edits typed during that request remain a draft rather than being replaced.
+  try { await load({ forms: forms && edit === settingsEdit }); }
+  catch { renderStatus(); renderProcess(); notify(`${message} Settings saved, but the view could not refresh. Refresh to check the latest activity.`); return; }
+  notify(message, true);
 }
-$('settings-form').addEventListener('input', () => { formDirty = true; setText('configure-label', 'Configure · Unsaved'); $('settings-draft-hint').hidden = false; $('save-settings').disabled = false; $('save-settings').textContent = 'Save'; });
-$('settings-form').addEventListener('submit', event => { event.preventDefault(); action(event.submitter, () => saveSettings('Saved.')); });
+$('settings-form').addEventListener('input', () => { formDirty = true; settingsEdit += 1; setText('configure-label', 'Configure · Unsaved'); $('settings-draft-hint').hidden = false; $('save-settings').disabled = false; $('save-settings').textContent = 'Save'; });
+$('settings-form').addEventListener('submit', async event => {
+  event.preventDefault(); await action(event.submitter, () => saveSettings('Saved.'));
+  $('save-settings').disabled = !formDirty;
+});
 // Immediate switches use saved settings only; an unsaved risk draft is never
 // silently applied or discarded. Off remains available even with a dirty form.
 async function saveSwitch(id, field, message) {
@@ -373,12 +382,7 @@ async function saveSwitch(id, field, message) {
     notify('Save your changes before turning Auto-trade on. Switches use saved settings.'); return;
   }
   $('enabled').disabled = $('execution').disabled = true;
-  try {
-    snapshot.settings = await api('/api/settings', settingsSwitchBody(snapshot.settings, field, value));
-    try { await load(); }
-    catch { notify(`${savedMessage} Settings saved, but the view could not refresh. Refresh to check the latest activity.`); return; }
-    notify(savedMessage, true);
-  } catch (error) { await load().catch(() => {}); throw error; }
+  try { await saveSettings(savedMessage, settingsSwitchBody(snapshot.settings, field, value), { forms: false }); }
   finally {
     $('enabled').checked = snapshot.settings.enabled;
     $('enabled-label').textContent = snapshot.settings.enabled ? 'On' : 'Off';
@@ -569,7 +573,9 @@ $('entry-form').addEventListener('submit', event => { event.preventDefault(); ac
   let signal = null; if ($('entry-signal').value.trim()) { try { signal = JSON.parse($('entry-signal').value); } catch { throw new Error('The structured signal is not valid JSON.'); } }
   const body = { notebookId: $('entry-notebook').value, title: $('entry-title').value, body: $('entry-body').value, status: $('entry-status').value, source: editing?.source ?? 'manual', observedAtUtc: editing?.observedAtUtc ?? null, instrument: editing?.instrument ?? null, venue: editing?.venue ?? null, signal, ...(editing ? { version: editing.version } : {}) };
   const saved = await api(editing ? `/api/entries/${editing.id}` : '/api/entries', body, { 'Idempotency-Key': entryRetryKey });
-  selected = { ...saved, origin: 'local' }; closeEditor(); await load(); renderEntries(); notify('Saved.', true);
+  selected = { ...saved, origin: 'local' }; closeEditor();
+  try { await load(); } catch { notify('Entry saved, but the list could not refresh. Refresh to check the latest entries.'); return; }
+  renderEntries(); notify('Saved.', true);
 }); });
 $('notebook-form').addEventListener('submit', event => { event.preventDefault(); action(event.submitter, async () => { await api('/api/notebooks', { name: $('notebook-name').value }); $('notebook-name').value = ''; await load({ forms: !formDirty }); notify('Notebook added.', true); }); });
 $('sync').addEventListener('click', event => action(event.currentTarget, async () => { const result = await api('/api/sync', {}); await load(); notify(result.complete ? 'Cloud Journal synced.' : result.reason, result.complete); }));

@@ -480,6 +480,11 @@ tr:last-child td{border-bottom:0}
   .empty-art{margin:48px auto}
 }
 @media(max-width:380px){
+  .sidebar{gap:4px;padding:10px 8px}
+  .brand{padding:0}
+  .sidebar nav{gap:0}
+  .nav-button{padding:0 7px;gap:5px}
+  .account-toggle{padding:2px}
   main{padding:16px 12px 36px}
   .segmented>label span{padding:0 12px}
   .form-actions>button{flex:1 1 auto}
