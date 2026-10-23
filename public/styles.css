@@ -315,6 +315,8 @@ tr:last-child td{border-bottom:0}
 .entry-state{font:var(--fw-regular) var(--fs-caption)/1 var(--font-mono);text-transform:uppercase;letter-spacing:var(--ls-label);color:var(--c-ink-5)}
 .entry-state.watching{color:var(--c-info)}
 .list-empty{display:grid;justify-items:center;gap:6px}
+.pending-save{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:14px 16px;margin-bottom:20px;border:1px solid var(--c-warn);border-radius:10px;background:var(--c-warn-wash)}
+.pending-save p{flex:1 1 240px;margin:0;color:var(--c-warn-deep);font-size:var(--fs-body-sm)}
 .notebook-dialog form{margin-top:16px}
 .notebook-dialog [role=alert]{color:var(--c-warn-deep)}
 

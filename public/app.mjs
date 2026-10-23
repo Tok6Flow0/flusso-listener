@@ -922,7 +922,15 @@ $('entry-form').addEventListener('submit', event => {
   } finally { releaseSave({ restoreFocus: true }); } });
 });
 let notebookSaving = false, notebookIntent = null;
-$('new-notebook').addEventListener('click', () => { if (!notebookIntent) $('notebook-error').hidden = true; $('notebook-dialog').showModal(); });
+function renderNotebookSaveState() {
+  const pending = Boolean(notebookIntent && (notebookSaving || notebookIntent.uncertain));
+  $('notebook-save-state').hidden = !pending;
+  $('notebook-save-message').textContent = pending && notebookSaving ? 'Your notebook is saving. Closing the dialog does not cancel the request.' : pending ? 'Notebook save unconfirmed. Review and retry the original request before leaving Journal.' : '';
+  $('cancel-notebook').textContent = pending && notebookSaving ? 'Close while saving' : pending ? 'Close with save unconfirmed' : 'Cancel';
+}
+function openNotebookDialog() { if (!notebookIntent) $('notebook-error').hidden = true; $('notebook-dialog').showModal(); }
+$('new-notebook').addEventListener('click', openNotebookDialog);
+$('resume-notebook-save').addEventListener('click', openNotebookDialog);
 $('cancel-notebook').addEventListener('click', () => $('notebook-dialog').close());
 $('notebook-form').addEventListener('submit', event => {
   event.preventDefault(); if (notebookSaving) return;
@@ -932,7 +940,7 @@ $('notebook-form').addEventListener('submit', event => {
   notebookIntent ??= { name: input.value, key: crypto.randomUUID(), uncertain: false };
   const intent = notebookIntent;
   input.disabled = submit.disabled = true; $('notebook-form').setAttribute('aria-busy', 'true');
-  $('notebook-error').textContent = ''; $('notebook-error').hidden = true; updateDraftProtection();
+  $('notebook-error').textContent = ''; $('notebook-error').hidden = true; renderNotebookSaveState(); updateDraftProtection();
   action(null, async () => {
     try {
       try { await api('/api/notebooks', { name: intent.name }, { 'Idempotency-Key': intent.key }); } catch (error) {
@@ -945,11 +953,11 @@ $('notebook-form').addEventListener('submit', event => {
         if (!$('notebook-dialog').open) notify(message, false, true);
         return;
       }
-      confirmed = true; notebookIntent = null; input.value = ''; $('notebook-dialog').close(); updateDraftProtection();
+      confirmed = true; notebookIntent = null; input.value = ''; $('notebook-dialog').close(); renderNotebookSaveState(); updateDraftProtection();
       try { await load({ forms: !formDirty }); } catch { notify('Notebook added, but the list could not refresh. Refresh to see it.', false, true); return; }
       notify('Notebook added.', true);
     } finally {
-      notebookSaving = false; input.disabled = submit.disabled = false; input.readOnly = Boolean(notebookIntent); submit.textContent = notebookIntent ? 'Retry notebook' : 'Create notebook'; $('notebook-form').removeAttribute('aria-busy'); updateDraftProtection();
+      notebookSaving = false; input.disabled = submit.disabled = false; input.readOnly = Boolean(notebookIntent); submit.textContent = notebookIntent ? 'Retry notebook' : 'Create notebook'; $('notebook-form').removeAttribute('aria-busy'); renderNotebookSaveState(); updateDraftProtection();
       if (!confirmed && $('notebook-dialog').open && document.activeElement === document.body && focusBeforeSave?.isConnected && (focusBeforeSave === input || focusBeforeSave === submit)) focusBeforeSave.focus();
     }
   });

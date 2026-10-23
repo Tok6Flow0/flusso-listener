@@ -1040,10 +1040,10 @@ test('dismissed pending notebook creation cannot submit twice and its later refu
       action: (_button, work) => jobs.push(work()), notify: (message, success, error) => notices.push({ message, success, error }) };
     runInNewContext(source.slice(source.indexOf('function initialLocalSaveRefusal('), source.indexOf('async function action(')), context);
     runInNewContext(handlers, context); callbacks.get('new-notebook:click')(); const submit = () => callbacks.get('notebook-form:submit')({ preventDefault() {}, submitter: get('create-notebook') });
-    submit(); if (dismiss === 'cancel') callbacks.get('cancel-notebook:click')(); else get('notebook-dialog').close();
+    submit(); assert.equal(get('notebook-save-state').hidden, false); assert.match(get('notebook-save-message').textContent, /does not cancel/); assert.equal(get('cancel-notebook').textContent, 'Close while saving'); if (dismiss === 'cancel') callbacks.get('cancel-notebook:click')(); else get('notebook-dialog').close();
     callbacks.get('new-notebook:click')(); submit(); assert.equal(requests, 1); assert.equal(get('notebook-name').disabled, true);
     get('notebook-dialog').close(); reject(Object.assign(new Error('The actual create request was refused.'), { status: 400 })); await jobs[0];
-    assert.equal(get('notebook-dialog').open, false); assert.equal(get('notebook-name').value, 'Retained name'); assert.equal(get('notebook-name').disabled, false); assert.equal(get('create-notebook').disabled, false);
+    assert.equal(get('notebook-save-state').hidden, true); assert.equal(get('cancel-notebook').textContent, 'Cancel'); assert.equal(get('notebook-dialog').open, false); assert.equal(get('notebook-name').value, 'Retained name'); assert.equal(get('notebook-name').disabled, false); assert.equal(get('create-notebook').disabled, false);
     assert.deepEqual(notices, [{ message: 'The actual create request was refused.', success: false, error: true }]);
     assert.equal(requests, 1); assert.equal(get('notebook-name').readOnly, false, 'A definitive refusal releases the request for correction.'); callbacks.get('new-notebook:click')(); assert.equal(get('notebook-name').value, 'Retained name');
   }
@@ -1064,10 +1064,10 @@ test('an uncertain notebook create retains its original request through dismissa
     runInNewContext(source.slice(source.indexOf('function initialLocalSaveRefusal('), source.indexOf('async function action(')), context);
     runInNewContext(handlers, context); const submit = () => callbacks.get('notebook-form:submit')({ preventDefault() {}, submitter: get('create-notebook') });
     callbacks.get('new-notebook:click')(); submit(); callbacks.get('cancel-notebook:click')(); reject(failure); await jobs[0];
-    assert.equal(get('notebook-name').readOnly, true); assert.equal(get('notebook-name').value, 'Original requested name'); assert.match(notices[0].message, /unconfirmed/);
+    assert.equal(get('notebook-name').readOnly, true); assert.equal(get('notebook-name').value, 'Original requested name'); assert.match(notices[0].message, /unconfirmed/); assert.equal(get('notebook-save-state').hidden, false); assert.match(get('notebook-save-message').textContent, /unconfirmed/); assert.equal(get('cancel-notebook').textContent, 'Close with save unconfirmed'); callbacks.get('resume-notebook-save:click')(); assert.equal(get('notebook-dialog').open, true);
     callbacks.get('new-notebook:click')(); get('notebook-name').value = 'Changed DOM must not change retry'; submit(); await jobs[1];
     assert.equal(requests.length, 2); assert.deepEqual(requests[1], requests[0]); assert.equal(requests[0].headers['Idempotency-Key'], 'intent-1');
-    assert.equal(get('notebook-name').readOnly, false); assert.equal(get('notebook-name').value, ''); assert.match(notices.at(-1).message, /Notebook added, but the list could not refresh/);
+    assert.equal(get('notebook-save-state').hidden, true); assert.equal(get('notebook-save-message').textContent, ''); assert.equal(get('notebook-name').readOnly, false); assert.equal(get('notebook-name').value, ''); assert.match(notices.at(-1).message, /Notebook added, but the list could not refresh/);
     callbacks.get('new-notebook:click')(); get('notebook-name').value = 'Original requested name'; submit(); await jobs[2];
     assert.equal(requests[2].headers['Idempotency-Key'], 'intent-2', 'An intentional same-named notebook is a new operation after confirmed success.');
   }
