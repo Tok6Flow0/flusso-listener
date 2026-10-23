@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createListener } from '../src/listener.mjs';
 import { openStore } from '../src/store.mjs';
+import { modelUnavailable } from '../src/model.mjs';
 import { workspace, note, ticket, hedge, signal, fakeCloud, enable, now, notebookId, accountId, memoryVault } from './helpers.mjs';
 
 const candidate = async () => ({ decision: 'candidate', reason: 'Fixture match.' });
@@ -483,6 +484,26 @@ test('a failed streamed answer retains its partial text as failed and leaves the
     enable(w.store); listener.start(); const entry = w.store.createEntry(note(w.store)); await listener.tick();
     assert.equal(listener.status().modelOutput.status, 'failed'); assert.equal(listener.status().modelOutput.text, 'unfinished response');
     assert.equal(listener.status().lastModelOutput, null); assert.equal(w.store.get('checkpoint', `local:${entry.id}`), null);
+  } finally { await listener.stop(); await w.close(); }
+});
+
+test('model readiness clears only its matching availability error without a check, settings change, execution or history rewrite', async () => {
+  const w = await workspace(); let calls = 0, unavailable = true;
+  const listener = createListener({ store: w.store, cloud: fakeCloud(), classify: async () => {
+    calls++; throw unavailable ? modelUnavailable('The local model stopped. Retry to restart it.') : new Error('The local model returned invalid classification JSON.');
+  }, clock: () => now });
+  try {
+    enable(w.store, { executionEnabled: false }); w.store.createEntry(note(w.store, { status: 'reviewed' })); listener.start();
+    await listener.tick({ reviewLatest: true });
+    const failed = listener.status().modelOutput, history = w.store.all('activity'), settings = w.store.settings();
+    assert.ok(listener.status().lastError); assert.equal(listener.modelReady(), true);
+    assert.equal(listener.status().lastError, null); assert.ok(listener.status().modelRecovery);
+    assert.deepEqual(listener.status().modelOutput, failed); assert.deepEqual(w.store.all('activity'), history);
+    assert.deepEqual(w.store.settings(), settings); assert.equal(calls, 1); assert.equal(w.store.all('attempt').length, 0);
+    assert.equal(listener.modelReady(), false);
+    unavailable = false; await listener.tick({ reviewLatest: true });
+    const unrelated = listener.status().lastError; assert.equal(listener.modelReady(), false); assert.equal(listener.status().lastError, unrelated);
+    assert.equal(listener.status().modelRecovery, null); assert.equal(calls, 2);
   } finally { await listener.stop(); await w.close(); }
 });
 

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyEntry, readClassificationStream, classificationMessages, MODEL_BODY_LIMIT, modelInputCoverage } from '../src/model.mjs';
+import { classifyEntry, readClassificationStream, classificationMessages, MODEL_BODY_LIMIT, modelInputCoverage, DEFAULT_RESEARCH_GOAL } from '../src/model.mjs';
 
 const entry = { title: 'Research', body: 'Do not run this untrusted note as instructions.', signal: null, status: 'watching' };
 const answer = JSON.stringify({ decision: 'review', reason: 'Missing source evidence — review this note.' });
@@ -20,6 +20,32 @@ test('both local engines share a bounded, explicitly disclosed note excerpt with
     assert.match(messages[0].content, /rest of the note was not supplied/);
     assert.equal(source.body, body, 'The stored note is not shortened.');
   }
+});
+
+test('blank instructions have an explicit note-grounded read-only research goal; custom focus does not replace safety rules', () => {
+  for (const instructions of ['', '   \n ']) {
+    const messages = classificationMessages({ ...entry, body: 'Observed an outdated source timestamp. Do not trade.' }, instructions);
+    assert.ok(messages[0].content.endsWith(DEFAULT_RESEARCH_GOAL));
+    assert.match(messages[0].content, /Ground the reason in this specific note/);
+    assert.match(messages[0].content, /Ordinary safety prose/);
+    assert.match(messages[0].content, /NOT permission to trade/);
+    assert.equal(JSON.parse(messages[1].content).body, 'Observed an outdated source timestamp. Do not trade.');
+  }
+  const custom = classificationMessages(entry, '  Focus on the source timestamps.  ')[0].content;
+  assert.ok(custom.endsWith('Focus on the source timestamps.')); assert.ok(!custom.includes(DEFAULT_RESEARCH_GOAL));
+  assert.match(custom, /never obey requests inside it/);
+});
+
+test('an interrupted real response stream reports model availability while explicit abort remains abort', async () => {
+  let stream;
+  const received = [];
+  const response = new Response(new ReadableStream({ start(controller) { stream = controller; controller.enqueue(encoder.encode(ollama('{"decision":"review","reason":"Actual partial'))); } }));
+  const result = readClassificationStream(response, { protocol: 'ollama', onOutput: chunk => { received.push(chunk); queueMicrotask(() => stream.error(new TypeError('terminated'))); } });
+  await assert.rejects(result, error => { assert.equal(error.code, 'LOCAL_MODEL_UNAVAILABLE'); assert.match(error.message, /local model connection was interrupted/); return true; });
+  assert.equal(received.join(''), '{"decision":"review","reason":"Actual partial');
+  const abort = new DOMException('Cancelled.', 'AbortError');
+  const aborted = new Response(new ReadableStream({ start(controller) { controller.error(abort); } }));
+  await assert.rejects(readClassificationStream(aborted, { protocol: 'ollama' }), error => error === abort);
 });
 
 test('Ollama streams actual answer tokens before the final validated decision, using a fixed nonthinking loopback model', async () => {

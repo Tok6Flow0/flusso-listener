@@ -7,11 +7,12 @@
   <script src="/app.mjs" type="module"></script>
 </head>
 <body>
-<div class="app-shell">
+<section id="startup" class="notice" role="status"><span id="startup-message">Loading Journal…</span><button id="retry-initialize" type="button" hidden>Retry</button></section>
+<div class="app-shell" id="workspace" inert aria-busy="true">
   <aside class="sidebar">
     <a class="brand" href="/"><img src="/flusso-mark.png" alt="" width="28" height="28"><span>flusso</span></a>
     <nav aria-label="Sections">
-      <button type="button" class="nav-button active" data-view="listener" aria-current="page"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 10h2.5l2-5 3 10 2-5H17"/></svg><span>Listener</span><span class="nav-dot" id="listener-dot"></span><span class="sr-only" id="listener-dot-label">Off</span></button>
+      <button type="button" class="nav-button active" data-view="listener" aria-current="page"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 10h2.5l2-5 3 10 2-5H17"/></svg><span>Listener</span><span class="nav-dot" id="listener-dot"></span><span class="sr-only" id="listener-dot-label">Loading</span></button>
       <button type="button" class="nav-button" data-view="journal"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 3h9a2 2 0 0 1 2 2v12H6a2 2 0 0 1-2-2V4a1 1 0 0 1 1-1Z"/><path d="M4 15a2 2 0 0 1 2-2h10"/><path d="M8 7h5"/></svg><span>Journal</span></button>
       <button type="button" class="nav-button" data-view="activity"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 5h12M4 10h12M4 15h7"/></svg><span>Activity</span><span class="nav-count" id="activity-count" hidden></span></button>
     </nav>
@@ -80,26 +81,26 @@
 
     <section id="view-listener" class="view">
       <header class="view-head listener-head">
-        <div class="title-block"><h1>Listener</h1><p class="status-line mono" id="last-check">Not checked yet</p></div>
-        <label class="switch switch-lg"><input id="enabled" type="checkbox" aria-label="Turn on Listener"><span class="switch-track" aria-hidden="true"></span><span id="enabled-label">Turn on</span></label>
+        <div class="title-block"><h1>Listener</h1><p class="status-line mono" id="last-check">Loading Journal…</p></div>
+        <label class="switch switch-lg"><input id="enabled" type="checkbox" aria-label="Listener loading"><span class="switch-track" aria-hidden="true"></span><span id="enabled-label">Loading</span></label>
       </header>
       <div class="listener-toolbar">
         <dl class="watch-summary" id="watch-summary" aria-label="Listener configuration summary"></dl>
         <div class="listener-actions"><button id="check-now" type="button" aria-describedby="last-check">Check now</button><button id="configure-listener" type="button" aria-expanded="false" aria-controls="listener-configuration"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h7M15 6h1M4 14h1M9 14h7"/><circle cx="13" cy="6" r="2"/><circle cx="7" cy="14" r="2"/></svg><span id="configure-label">Configure</span></button></div>
       </div>
       <div class="listener-body">
-        <section class="review-desk" id="review-desk" data-state="off" aria-labelledby="model-output-heading">
+        <section class="review-desk" id="review-desk" data-state="loading" aria-labelledby="model-output-heading">
           <header class="desk-head">
             <span class="agent" aria-hidden="true"><span class="agent-mark"><img src="/flusso-mark.png" alt="" width="44" height="44"></span><span class="agent-dot"></span></span>
             <div class="desk-state">
-              <p class="desk-state-line"><strong id="process-state" class="process-state" tabindex="-1">Off</strong><span id="process-stage" class="stage-chip" hidden></span></p>
+              <p class="desk-state-line"><strong id="process-state" class="process-state" tabindex="-1">Loading</strong><span id="process-stage" class="stage-chip" hidden></span></p>
               <p id="process-message" class="process-message"></p>
             </div>
           </header>
           <div class="output-frame" id="output-frame" data-status="none">
             <div class="output-head">
               <h2 id="model-output-heading" class="sr-only" tabindex="-1">Model output</h2>
-              <span id="model-output-status" class="output-status">Not run</span>
+              <span id="model-output-status" class="output-status">Loading</span>
               <p id="model-completion" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
             </div>
             <div id="model-output-source" class="output-source" hidden></div>
@@ -108,9 +109,11 @@
               <div class="verdict-head" id="model-draft-head"><p id="model-draft-kicker" class="verdict-kicker">Format check pending</p><h3 id="model-draft-label" class="verdict-label">Live model response</h3></div>
               <p id="model-draft-reason" class="verdict-reason"></p>
             </div>
+            <div id="model-response-tools" class="response-tools">
             <button id="model-raw-toggle" type="button" class="link-button" aria-expanded="false" aria-controls="model-output" hidden>Show raw response</button>
             <div id="model-output" class="code-scroll mono output-raw" role="region" tabindex="0" aria-labelledby="model-output-heading" hidden></div>
             <p id="model-output-note" class="output-note" hidden></p>
+            </div>
             <p id="model-output-empty" class="output-empty">Each period re-checks the newest selected research note. New Watching research revisions are also reviewed. Actual responses appear here as they are generated.</p>
             <div id="model-verdict" class="verdict" hidden>
               <div class="verdict-head"><p id="model-verdict-kicker" class="verdict-kicker">Local model response · format checked</p><h3 id="model-verdict-label" class="verdict-label" tabindex="-1"></h3></div>
@@ -143,12 +146,13 @@
                 <label><input type="radio" name="source" value="cloud"><span>Cloud</span></label>
                 <label><input type="radio" name="source" value="both"><span>Both</span></label>
               </fieldset>
-              <label>Check every<select id="interval"><option value="15">15 seconds</option><option value="30">30 seconds</option><option value="60">1 minute</option><option value="120">2 minutes</option><option value="300">5 minutes</option><option value="900">15 minutes</option><option value="1800">30 minutes</option><option value="3600">1 hour</option></select></label>
+              <label>Wait between checks<select id="interval"><option value="15">15 seconds</option><option value="30">30 seconds</option><option value="60">1 minute</option><option value="120">2 minutes</option><option value="300">5 minutes</option><option value="900">15 minutes</option><option value="1800">30 minutes</option><option value="3600">1 hour</option></select></label>
             </div>
+            <p class="hint">The interval starts after the previous check finishes.</p>
             <fieldset class="picks"><legend>Notebooks <span class="hint">· none selected means all for research</span></legend><p class="hint">Auto-trade requires explicitly picked notebooks. Only Watching entries can supply <code>flusso-orders</code> or <code>flusso-close</code> tickets.</p><div id="watch-notebooks" class="chips"></div></fieldset>
             <details><summary>Model instructions</summary>
               <label>Only notes under this heading<input id="section" maxlength="200" placeholder="Optional"></label>
-              <label>What the model should do<textarea id="instructions" rows="3" maxlength="1000" placeholder="Optional"></textarea></label>
+              <label>What the model should do<textarea id="instructions" rows="3" maxlength="1000" placeholder="Optional custom research focus" aria-describedby="instructions-default"></textarea></label><p id="instructions-default" class="hint">By default, review the note’s research, give a specific finding and identify missing evidence or uncertainty. Custom instructions change that focus; they never authorize an order.</p>
             </details>
           </section>
           <section class="card trade-card">

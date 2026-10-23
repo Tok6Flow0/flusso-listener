@@ -34,7 +34,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
     .sort((a, b) => (b.completedAtUtc ?? b.atUtc).localeCompare(a.completedAtUtc ?? a.atUtc))[0];
   const restored = completed ? { ...completed, activityId: completed.id, startedAtUtc: completed.atUtc, atUtc: completed.completedAtUtc ?? completed.atUtc, completionKnown: Boolean(completed.completedAtUtc) } : null;
   const state = { running: false, busy: false, lastCheckedAtUtc: null, lastError: null, cloudComplete: null, cloudReason: null,
-    processing: null, events: [], lastModelOutput: restored, modelOutput: null, modelReview: null, sequence: 0 };
+    processing: null, events: [], lastModelOutput: restored, modelOutput: null, modelReview: null, modelFailure: null, modelRecovery: null, sequence: 0 };
   const subscribers = new Set();
   function changed() {
     state.sequence += 1;
@@ -196,7 +196,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
     const review = state.modelReview = { id: randomUUID(), startedAtUtc: new Date(clock()).toISOString(), status: 'checking', reason: null };
     publish('read', 'Starting a Listener check.');
     try {
-      const settings = store.settings(); state.lastError = null;
+      const settings = store.settings(); state.lastError = null; state.modelFailure = null; state.modelRecovery = null;
       if (settings.source !== 'local') {
         publish('sync', 'Reading the selected cloud Journal notebooks.');
         const snapshot = await cloud.readJournal({ notebookIds: settings.notebookIds });
@@ -267,7 +267,8 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
           state.modelOutput.status = review.status = activeAbort.signal.aborted ? 'stopped' : 'failed'; changed();
           if (activeAbort.signal.aborted) { store.put('activity', activity.id, { ...activity, status: 'waiting', reviewStatus: 'stopped', reason: 'Model review paused before a decision. This note will be checked again when selected and the Listener is on.' }); break; }
           // Left unchecked so it is read again once the model is available.
-          state.lastError = error?.message?.includes('local model') || error?.message?.includes('classification') ? error.message : 'The local model could not read a note.';
+          state.lastError = error?.code === 'LOCAL_MODEL_UNAVAILABLE' || error?.message?.includes('local model') || error?.message?.includes('classification') ? error.message : 'The local model could not read a note.';
+          state.modelFailure = error?.code === 'LOCAL_MODEL_UNAVAILABLE' ? { checkId: review.id, message: state.lastError } : null;
           store.put('activity', activity.id, { ...activity, status: 'waiting', reviewStatus: 'failed', reason: state.lastError });
           publish('error', state.lastError, entry, { index, total });
           continue;
@@ -297,6 +298,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
       }
       state.lastCheckedAtUtc = new Date(clock()).toISOString();
     } catch {
+      state.modelFailure = null;
       const unfinished = state.modelOutput?.checkId === review.id && state.modelOutput.status === 'streaming';
       if (unfinished) state.modelOutput.status = activeAbort.signal.aborted ? 'stopped' : 'failed';
       review.status = activeAbort.signal.aborted ? 'stopped' : 'failed';
@@ -336,6 +338,14 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
   }
   return {
     status: () => structuredClone(state), tick,
+    modelReady() {
+      const failure = state.modelFailure;
+      if (state.busy || !failure || state.lastError !== failure.message || state.modelReview?.id !== failure.checkId) return false;
+      state.lastError = null; state.modelFailure = null;
+      state.modelRecovery = { checkId: failure.checkId, atUtc: new Date(clock()).toISOString() };
+      publish('model_ready', 'The local model is ready again. Choose Check now or wait for the next scheduled check. Earlier failed reviews remain in Activity.');
+      return true;
+    },
     subscribe(callback) { subscribers.add(callback); return () => subscribers.delete(callback); },
     start() { stopped = false; checkpointExisting(); schedule(); },
     refresh({ baseline = false } = {}) { if (stopped) return; activeAbort?.abort(); if (baseline) checkpointExisting(); schedule(); },

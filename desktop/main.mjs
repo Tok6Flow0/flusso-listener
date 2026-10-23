@@ -64,7 +64,7 @@ async function start() {
   const directory = index >= 0 && process.argv[index + 1] ? resolve(process.argv[index + 1]) : defaultDirectory();
   const vault = await createVault(directory); store = await openStore({ directory, vault });
   releaseInstance = await claimInstance(directory);
-  model = createDesktopModel({ directory, runtimeDirectory, onChange: changed });
+  model = createDesktopModel({ directory, runtimeDirectory, onChange: value => { if (value.state === 'ready') listener?.modelReady(); changed(); } });
   const cloud = createCloudClient({ vault }); listener = createListener({ store, cloud, classify: model.classify });
   server = await startServer({ store, cloud, listener, checkModel: model.modelStatus, open: value => shell.openExternal(externalUrl(value)) });
   updates = createUpdates({ updater: createRequire(import.meta.url)('electron-updater').autoUpdater, version: app.getVersion(), packaged: app.isPackaged, preview: app.getVersion().includes('-'), onChange: value => { if (value.installationFailed) stoppedUpdateFailure.handle(); changed(); }, beforeInstall: async () => {
@@ -86,7 +86,7 @@ async function start() {
   window.webContents.session.setPermissionCheckHandler(() => false);
   for (const [channel, handler] of Object.entries({
     status, 'check-updates': () => updates.check(), 'download-update': () => updates.download(), 'install-update': async () => { try { return await updates.install(); } catch (error) { if (closed) stoppedUpdateFailure.handle(); else { draftExit.invalidate(); quitting = false; showJournal(); } throw error; } },
-    'setup-model': async () => { await model.setup(); return status(); },
+    'setup-model': async () => { const ready = await model.setup(); if (ready.state === 'ready') listener.modelReady(); return status(); },
     'account-settings': () => shell.openExternal('https://flusso.stream/app/settings#ai-connections'),
     'start-on-login': enabled => { if (typeof enabled !== 'boolean') throw new Error('Choose whether to open at login.'); if (process.platform === 'linux') throw new Error('Use your Linux desktop’s startup application settings.'); app.setLoginItemSettings({ openAtLogin: enabled, openAsHidden: false }); return status(); },
   })) ipcMain.handle(`flusso:${channel}`, (event, ...args) => { if (!trustedFrame(event, window, server.origin) || args.length > (channel === 'start-on-login' ? 1 : 0)) throw new Error('Desktop command refused.'); return handler(...args); });

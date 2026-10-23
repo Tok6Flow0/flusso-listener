@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer } from 'node:net';
 import { spawn } from 'node:child_process';
-import { MODEL, classificationMessages, decisionSchema, readClassificationStream } from '../src/model.mjs';
+import { MODEL, classificationMessages, decisionSchema, readClassificationStream, modelUnavailable } from '../src/model.mjs';
 import { verifiedDownload, verifiedFile } from './download.mjs';
 
 const resources = JSON.parse(await readFile(new URL('./resources.json', import.meta.url)));
@@ -82,13 +82,21 @@ export function createDesktopModel({ directory, runtimeDirectory, existingModelP
     status: () => ({ ...state }), initialize: () => ensure(false), setup: () => ensure(true), stop,
     modelStatus: async () => ({ available: Boolean(endpoint), installed: state.state === 'ready', model: MODEL }),
     async classify({ entry, instructions = '', signal, onOutput }) {
-      if (!endpoint || state.state !== 'ready') throw new Error(lifetime.signal.aborted ? 'The local model has stopped. Reopen Journal to start it again.'
+      if (!endpoint || state.state !== 'ready') throw modelUnavailable(lifetime.signal.aborted ? 'The local model has stopped. Reopen Journal to start it again.'
         : state.state === 'error' ? state.message
           : state.state === 'installing' ? 'The local model is still starting. The research review could not start yet.'
             : 'Set up the desktop local model first. The research review could not start.');
-      const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }, redirect: 'error', signal: AbortSignal.any([lifetime.signal, ...(signal ? [signal] : []), AbortSignal.timeout(90000)]), body: JSON.stringify({ model: 'qwen3-1.7b', stream: true, temperature: 0, max_tokens: 256, chat_template_kwargs: { enable_thinking: false }, response_format: { type: 'json_schema', json_schema: { name: 'classification', strict: true, schema: decisionSchema } }, messages: classificationMessages(entry, instructions) }) });
-      if (!response.ok) throw new Error('The desktop local model is unavailable.');
-      return readClassificationStream(response, { protocol: 'openai', onOutput });
+      try {
+        const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }, redirect: 'error', signal: AbortSignal.any([lifetime.signal, ...(signal ? [signal] : []), AbortSignal.timeout(90000)]), body: JSON.stringify({ model: 'qwen3-1.7b', stream: true, temperature: 0, max_tokens: 256, chat_template_kwargs: { enable_thinking: false }, response_format: { type: 'json_schema', json_schema: { name: 'classification', strict: true, schema: decisionSchema } }, messages: classificationMessages(entry, instructions) }) });
+        if (!response.ok) throw modelUnavailable('The desktop local model is unavailable. Retry to restart it.');
+        return await readClassificationStream(response, { protocol: 'openai', onOutput });
+      } catch (error) {
+        if (signal?.aborted || lifetime.signal.aborted) throw error;
+        if (state.state === 'error') throw modelUnavailable(state.message);
+        if (error.code === 'LOCAL_MODEL_UNAVAILABLE' || /local model|classification/i.test(error.message)) throw error;
+        if (error instanceof SyntaxError) throw new Error('The local model returned unreadable classification data.');
+        throw modelUnavailable('The local model connection was interrupted during its response. Retry to restart it.');
+      }
     },
   };
 }

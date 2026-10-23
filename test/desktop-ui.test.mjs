@@ -121,7 +121,7 @@ test('a hidden verdict returns keyboard focus to visible process state and keyed
     setText: (id, value) => { get(id).textContent = value; }, growText: (target, value) => { target.textContent = value; },
     changed: (key, value) => { const serialized = JSON.stringify(value); if (keys.get(key) === serialized) return false; keys.set(key, serialized); return true; },
     element: (tag, content) => node(tag, content), sourceButton: (_row, title) => node(`source-${++sourceButtons}`, title), when: value => value,
-    renderOutputText() {}, decisionItems: () => [], reconcileRows() {}, cancelAnimationFrame() {}, requestAnimationFrame: callback => { callback(); return 1; },
+    renderOutputText() {}, positionResponseTools() {}, decisionItems: () => [], reconcileRows() {}, cancelAnimationFrame() {}, requestAnimationFrame: callback => { callback(); return 1; },
   };
   runInNewContext(render, context); context.renderProcess();
   assert.equal(document.activeElement, get('process-state')); assert.equal(get('process-state').textContent, 'Reading');
@@ -190,6 +190,41 @@ test('a saving clean entry cannot be replaced, closed or navigated away from', a
   assert.equal(notices.length, 4); assert.ok(notices.every(message => message.includes('still saving')));
 });
 
+test('raw tools follow their accepted decision, precede an earlier decision during streaming, and retain keyboard focus and identity', async () => {
+  const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
+  const helper = source.slice(source.indexOf('function positionResponseTools('), source.indexOf('function renderProcess()'));
+  const raw = { id: 'raw', focus() { document.activeElement = raw; } }, document = { activeElement: raw };
+  const tools = { contains: node => node === raw }, verdict = {};
+  let order = [tools, verdict];
+  Object.defineProperty(tools, 'nextElementSibling', { get: () => order[order.indexOf(tools) + 1] });
+  Object.defineProperty(verdict, 'nextElementSibling', { get: () => order[order.indexOf(verdict) + 1] });
+  const move = after => { order = order.filter(node => node !== tools); order.splice(order.indexOf(verdict) + Number(after), 0, tools); document.activeElement = null; };
+  verdict.after = node => { assert.equal(node, tools); move(true); }; verdict.before = node => { assert.equal(node, tools); move(false); };
+  const context = { document, $: id => id === 'model-response-tools' ? tools : verdict };
+  runInNewContext(helper, context); context.positionResponseTools(true);
+  assert.deepEqual(order, [verdict, tools]); assert.equal(document.activeElement, raw);
+  context.positionResponseTools(false); assert.deepEqual(order, [tools, verdict]); assert.equal(document.activeElement, raw);
+  context.positionResponseTools(false); assert.equal(document.activeElement, raw, 'An already correct layout does not move focused content.');
+});
+
+test('initialization stays inert through delayed/failing status, retries once, and starts only one successful existing poller', async () => {
+  const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
+  const boot = source.slice(source.indexOf('let initializing ='), source.indexOf("$('retry-initialize').addEventListener"));
+  const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  assert.match(html, /id="workspace" inert aria-busy="true"/); assert.match(html, /id="process-state"[^>]*>Loading/);
+  const nodes = new Map(), get = id => { if (!nodes.has(id)) nodes.set(id, { inert: id === 'workspace', setAttribute(key, value) { this[key] = value; } }); return nodes.get(id); };
+  let reject, streams = 0, polls = 0, loads = 0;
+  const firstRead = new Promise((_yes, no) => { reject = no; });
+  const context = { location: { hash: '#synthetic-bootstrap' }, history: { replaceState() {} }, $: get, api: async () => ({ csrf: 'synthetic-csrf' }),
+    load: () => ++loads === 1 ? firstRead : Promise.resolve(), streamListener: () => { streams++; }, setInterval: () => { polls++; }, setText: (id, text) => { get(id).textContent = text; } };
+  runInNewContext(boot, context); const loading = context.startWorkspace(); await Promise.resolve(); await context.startWorkspace();
+  assert.equal(get('workspace').inert, true); assert.equal(loads, 1); assert.equal(polls, 0);
+  reject(new Error('Synthetic status read failure.')); await loading;
+  assert.equal(get('workspace').inert, true); assert.equal(get('retry-initialize').hidden, false); assert.equal(get('startup').role, 'alert');
+  await context.startWorkspace(); assert.equal(get('workspace').inert, false); assert.equal(get('startup').hidden, true); assert.equal(polls, 1); assert.equal(streams, 1);
+  await context.startWorkspace(); assert.equal(polls, 1); assert.equal(loads, 2);
+});
+
 test('separate empty ticket insertions have distinct durable IDs even in the same minute; existing tickets are not rewritten', async () => {
   const { ticketDraft } = await import('../public/desktop-ui.mjs');
   const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
@@ -218,8 +253,8 @@ test('completed responses distinguish earlier checks, known revisions and canoni
   assert.match(completedModelPresentation(listener, []).context, /Source not loaded/);
   assert.match(completedModelPresentation({ lastModelOutput: { ...published, version: null } }, [source]).context, /revision unknown/);
   assert.equal(processingPresentation(listener, true).title, 'No model run');
-  assert.match(modelCoverageLabel({ bodyUnits: 2000, totalBodyUnits: 2100, bodyTruncated: true, unit: 'UTF-16' }, { received: true }), /first 2,000 of 2,100 characters\. The rest was not sent to the model\./);
-  assert.match(modelCoverageLabel({ bodyUnits: 40, totalBodyUnits: 40, bodyTruncated: false, unit: 'UTF-16' }, { received: true }), /Full note body supplied · 40 characters/);
+  assert.match(modelCoverageLabel({ bodyUnits: 2000, totalBodyUnits: 2100, bodyTruncated: true, unit: 'UTF-16' }, { received: true }), /first 2,000 of 2,100 UTF-16 text units\. The rest was not sent to the model\./);
+  assert.match(modelCoverageLabel({ bodyUnits: 40, totalBodyUnits: 40, bodyTruncated: false, unit: 'UTF-16' }, { received: true }), /Full note body supplied · 40 UTF-16 text units/);
   assert.equal(completedModelPresentation({ lastModelOutput: published }, [source]).earlier, false, 'Restoring the latest accepted result alone is not a newer attempt.');
   assert.equal(modelCoverageLabel(null), 'Review coverage unavailable');
   const output = { ...published, text: '{}', status: 'complete', atUtc: '2026-10-23T11:59:59Z' };
@@ -254,6 +289,8 @@ test('inactive durable research progress says unfinished while the actual active
   assert.equal(activityStatus({ status: 'unknown', kind: 'orders' }).label, 'unconfirmed');
   assert.equal(activityStatus({ kind: 'research_check', status: 'waiting', reviewStatus: 'failed' }).label, 'needs attention');
   assert.equal(activityStatus({ kind: 'research_check', status: 'waiting', reviewStatus: 'stopped' }).label, 'review unfinished');
+  assert.deepEqual(activityStatus({ kind: 'research_check', status: 'waiting', reviewStatus: 'failed' }, { historical: true }), { label: 'earlier review failed', tone: '' });
+  assert.equal(activityStatus({ kind: 'orders', decision: 'ticket', status: 'waiting' }, { historical: true }).label, 'waiting');
   assert.equal(activityStatus({ kind: 'orders', decision: 'ticket', status: 'waiting' }).label, 'waiting');
   assert.equal(modelOutputPresentation({ status: 'failed' }).label.toLowerCase(), 'needs attention');
   assert.equal(modelOutputPresentation({ status: 'stopped' }).label.toLowerCase(), 'review unfinished');
@@ -262,9 +299,9 @@ test('inactive durable research progress says unfinished while the actual active
 test('Activity metadata identifies source revisions and uses only known completion clocks', async () => {
   const { activityMetadata } = await import('../public/desktop-ui.mjs');
   const row = { version: 1, status: 'observed', atUtc: '2026-10-23T12:00:00Z', completedAtUtc: '2026-10-23T12:01:00Z' };
-  assert.deepEqual(activityMetadata(row, { version: 3 }), { revision: 'prior v1', clock: row.completedAtUtc, clockLabel: 'Completed' });
-  assert.deepEqual(activityMetadata({ ...row, completedAtUtc: undefined }, { version: 1 }), { revision: 'v1', clock: row.atUtc, clockLabel: 'Recorded' });
-  assert.deepEqual(activityMetadata({ ...row, status: 'waiting' }, { version: 3 }), { revision: 'prior v1', clock: row.atUtc, clockLabel: 'Recorded' });
+  assert.deepEqual(activityMetadata(row, { version: 3 }), { revision: 'prior v1', clock: row.completedAtUtc, clockLabel: 'Completed', historical: true });
+  assert.deepEqual(activityMetadata({ ...row, completedAtUtc: undefined }, { version: 1 }), { revision: 'v1', clock: row.atUtc, clockLabel: 'Recorded', historical: false });
+  assert.deepEqual(activityMetadata({ ...row, status: 'waiting' }, { version: 3 }), { revision: 'prior v1', clock: row.atUtc, clockLabel: 'Recorded', historical: true });
   assert.equal(activityMetadata({ ...row, version: undefined }).revision, 'revision unknown');
   assert.equal(activityMetadata({ ...row, completedAtUtc: 'invalid' }).clockLabel, 'Recorded');
 });
@@ -297,7 +334,10 @@ test('model setup is optional, reports native progress, and never claims unknown
   assert.equal(modelPresentation({ state: 'missing' }).label, 'Set up local model');
   assert.equal(modelPresentation({ state: 'installing' }).busy, true);
   assert.equal(modelPresentation({ state: 'ready' }).visible, false);
-  assert.equal(modelPresentation({ state: 'error' }).label, 'Retry model setup');
+  assert.equal(modelPresentation({ state: 'error' }).label, 'Retry local model');
+  assert.equal(modelPresentation({ state: 'error' }).title, 'Restart the local model');
+  assert.equal(modelPresentation({ state: 'error' }).state, 'error', 'The actual native state reaches the Retry control.');
+  assert.equal(modelPresentation({ state: 'missing' }).title, 'Set up the local model');
   assert.equal(modelPresentation().visible, false);
   assert.equal(modelPresentation().busy, true);
 });

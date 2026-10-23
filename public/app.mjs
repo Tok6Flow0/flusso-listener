@@ -158,7 +158,7 @@ function renderDesktop() {
   $('update-detail').append(document.createTextNode(update.message || (update.state === 'downloaded' ? 'Restart to finish.' : update.state === 'available' ? 'Downloads in the background.' : update.label)));
   $('update-action').textContent = update.label; $('update-action').disabled = !update.action || nativeTasks.has(update.action);
   renderProgress('update', update.state === 'downloading', update.percent);
-  $('model-setup').hidden = !model.visible;
+  $('model-setup').hidden = !model.visible; setText('model-setup-title', model.title);
   if (model.message || model.busy) $('model-setup-status').textContent = model.message || 'Downloading the model. You can keep writing.';
   $('model-state').textContent = model.message || (desktopStatus.model?.state === 'ready' ? 'Qwen3 1.7B is ready. It runs on this computer.' : model.label);
   for (const id of ['setup-model', 'setup-model-panel']) { $(id).textContent = model.busy ? 'Setting up…' : model.state === 'error' ? 'Retry' : 'Set up'; $(id).disabled = model.busy || nativeTasks.has('setupModel'); }
@@ -233,7 +233,7 @@ function renderStatus() {
   const interval = intervalLabel(settings.intervalSeconds), parts = [];
   if (!settings.enabled) parts.push(listener.lastCheckedAtUtc ? `Last checked ${when(listener.lastCheckedAtUtc)}` : 'Not checked yet');
   else {
-    if (interval) parts.push(`Checks every ${interval}`);
+    if (interval) parts.push(`Checks ${interval} after the previous check finishes`);
     parts.push(listener.lastCheckedAtUtc ? `Last checked ${when(listener.lastCheckedAtUtc)}` : 'Not checked yet');
     if (listener.cloudComplete === false) parts.push('Cloud read incomplete');
   }
@@ -311,6 +311,14 @@ function growText(node, value) {
 }
 
 let lastCompletionKey = null, completionFrame = null;
+function positionResponseTools(accepted) {
+  const tools = $('model-response-tools'), verdict = $('model-verdict');
+  const positioned = accepted ? verdict.nextElementSibling === tools : tools.nextElementSibling === verdict;
+  if (positioned) return;
+  const focused = document.activeElement, restore = tools.contains(focused);
+  if (accepted) verdict.after(tools); else verdict.before(tools);
+  if (restore && document.activeElement !== focused) focused.focus();
+}
 function renderProcess() {
   const { listener, settings } = snapshot, output = listener.modelOutput;
   const state = processingPresentation(listener, settings.enabled);
@@ -326,7 +334,7 @@ function renderProcess() {
 
   $('output-frame').dataset.status = view.status;
   setText('model-output-heading', !settings.enabled && output ? 'Last model response' : 'Model output');
-  setText('model-output-status', earlier && output ? 'Earlier response' : !settings.enabled && view.status === 'complete' ? 'Last check complete' : view.label); $('model-output-status').className = `output-status ${!settings.enabled && view.status === 'complete' ? '' : view.tone}`;
+  setText('model-output-status', listener.modelRecovery?.checkId === output?.checkId && ['failed', 'stopped'].includes(view.status) ? 'Previous review unfinished' : earlier && output ? 'Earlier response' : !settings.enabled && view.status === 'complete' ? 'Last check complete' : view.label); $('model-output-status').className = `output-status ${!settings.enabled && view.status === 'complete' ? '' : view.tone}`;
   $('model-output-status').hidden = !output && Boolean(completed) || settings.enabled && view.accepted && !earlier || view.live;
   if (changed('model-output-source', output ? [output.entryId, output.origin, output.title, output.atUtc, snapshot.entries.some(row => row.id === output.entryId && row.origin === output.origin)] : null)) {
     const source = $('model-output-source');
@@ -390,6 +398,8 @@ function renderProcess() {
   $('model-output').hidden = rawHidden;
   setText('model-output-note', view.note ?? ''); $('model-output-note').hidden = !view.note;
   setText('model-output-empty', view.empty ?? ''); $('model-output-empty').hidden = !view.empty || Boolean(completed) && !listener.busy;
+  $('model-response-tools').hidden = $('model-raw-toggle').hidden && rawHidden && !view.note;
+  positionResponseTools(view.accepted);
 
   const events = (listener.events ?? []).slice(-30);
   const items = decisionItems(events, () => ({}));
@@ -423,8 +433,8 @@ function renderDecisions() {
   if (!changed('decisions', items)) return;
   reconcileRows($('latest-decisions'), items.length ? items : [{ key: 'empty', value: null }], value => {
     if (!value) return element('p', 'No decisions yet. Local model responses and order results appear here after a check.', 'empty');
-    const { row, enabled, revision, clock, clockLabel } = value;
-    const item = element('article', null, 'decision-row'), top = element('div', null, 'decision-top'), source = element('div', null, 'decision-source'), status = activityStatus(row);
+    const { row, enabled, revision, clock, clockLabel, historical } = value;
+    const item = element('article', null, 'decision-row'), top = element('div', null, 'decision-top'), source = element('div', null, 'decision-source'), status = activityStatus(row, { historical });
     const time = element('time', `${clockLabel} ${when(clock, true)}`); time.dateTime = clock;
     top.append(pill(status.label, status.tone), element('span', revision, 'hint mono'), time); source.append(sourceButton(row));
     item.append(top, source);
@@ -800,7 +810,7 @@ function renderActivity() {
   const items = decisionItems(rows, row => ({ attempt: row.attemptId ? attempts.get(row.attemptId) : null, ...activityMetadata(row, snapshot.entries.find(entry => entry.id === row.entryId && entry.origin === row.origin)) }));
   if (!rows.length) items.push({ key: 'empty', value: { enabled: snapshot.settings.enabled } });
   if (!changed('activity', items)) return;
-  reconcileRows($('activity-list'), items, ({ row, attempt, enabled, revision, clock, clockLabel }) => {
+  reconcileRows($('activity-list'), items, ({ row, attempt, enabled, revision, clock, clockLabel, historical }) => {
     if (!row) {
       const empty = element('div', null, 'empty-art'), mark = element('img'), open = element('button', 'Open Listener'); open.type = 'button';
       mark.src = '/flusso-mark.png'; mark.alt = ''; mark.width = mark.height = 40;
@@ -808,11 +818,12 @@ function renderActivity() {
       empty.append(mark, element('p', enabled ? 'Nothing yet. Decisions and order receipts are listed here after the Listener reviews a selected note.' : 'Nothing yet. Turn the Listener on to review selected notes; its decisions and order receipts are listed here.'), open);
       return empty;
     }
-    const card = element('article', null, 'activity-card'), head = element('div', null, 'activity-head'), status = activityStatus(row);
+    const card = element('article', null, 'activity-card'), head = element('div', null, 'activity-head'), status = activityStatus(row, { historical });
     // Seconds, as in Latest decisions: checks can run several times a minute.
     const time = element('time', `${clockLabel} ${when(clock, true)}`); time.dateTime = clock;
     card.dataset.tone = status.tone;
-    head.append(pill(status.label, status.tone), element('span', revision, 'hint mono'), time);
+    const summary = element('div', null, 'activity-status'); summary.append(pill(status.label, status.tone), element('span', revision, 'hint mono'));
+    head.append(summary, time);
     const title = element('h2'); title.append(sourceButton(row));
     card.append(head, title, element('p', row.reason, 'activity-reason'));
     if (attempt) {
@@ -852,10 +863,13 @@ function streamListener() {
 window.addEventListener('pagehide', () => listenerEvents?.close());
 
 /* ------------------------------------------------------------------ boot */
+let initializing = false, initialized = false, bootstrapFragment = location.hash.slice(1);
+history.replaceState(null, '', '/');
 async function initialize() {
-  const fragment = location.hash.slice(1); history.replaceState(null, '', '/');
+  const fragment = bootstrapFragment;
   if (fragment) { try { csrf = (await api('/api/bootstrap', {}, { Authorization: `Bearer ${fragment}` })).csrf; } catch { csrf = (await api('/api/session')).csrf; } }
   else csrf = (await api('/api/session')).csrf;
+  bootstrapFragment = '';
   await load({ forms: true });
   streamListener();
   setInterval(async () => {
@@ -865,6 +879,19 @@ async function initialize() {
     try { await load(); } catch (error) { notify(error.message, false, true); } finally { pollBusy = false; }
   }, 1500);
 }
+async function startWorkspace() {
+  if (initializing || initialized) return;
+  initializing = true; $('retry-initialize').hidden = true; $('startup').className = 'notice'; $('startup').setAttribute('role', 'status');
+  setText('startup-message', 'Loading Journal…');
+  try {
+    await initialize(); initialized = true;
+    $('workspace').inert = false; $('workspace').setAttribute('aria-busy', 'false'); $('startup').hidden = true;
+  } catch {
+    setText('startup-message', 'Journal could not load. Retry to read the saved state. If the session expired, reopen Journal from its private launcher.');
+    $('retry-initialize').hidden = false; $('startup').className = 'notice error'; $('startup').setAttribute('role', 'alert');
+  } finally { initializing = false; }
+}
+$('retry-initialize').addEventListener('click', startWorkspace);
 renderThemes();
-initialize().catch(error => notify(error.message, false, true));
+startWorkspace();
 initializeDesktop().catch(error => { $('app-update-status').textContent = 'Desktop status unavailable'; notify(error.message || 'Desktop status could not be read.', false, true); });

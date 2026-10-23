@@ -24,11 +24,11 @@ export function updatePresentation(update = {}) {
 }
 
 export function modelPresentation(model = {}) {
-  const common = { percent: progress(model.percent), message: text(model.message), visible: true, busy: false, label: 'Set up local model' };
+  const common = { state: model.state, title: 'Set up the local model', percent: progress(model.percent), message: text(model.message), visible: true, busy: false, label: 'Set up local model' };
   switch (model.state) {
     case 'ready': return { ...common, visible: false, label: 'Local model ready' };
-    case 'installing': return { ...common, busy: true, label: 'Setting up local model…' };
-    case 'error': return { ...common, label: 'Retry model setup' };
+    case 'installing': return { ...common, title: 'Preparing the local model', busy: true, label: 'Starting local model…' };
+    case 'error': return { ...common, title: 'Restart the local model', label: 'Retry local model' };
     case 'missing': return common;
     default: return { ...common, visible: false, busy: true, label: 'Checking local model…' };
   }
@@ -90,7 +90,8 @@ export function entryReadingCore(entry, book = '') {
 
 const RESULT = { submitted: ['submitted', 'pos'], partial: ['partly submitted', 'warn'], blocked: ['refused', 'neg'], unknown: ['unconfirmed', 'warn'], pending: ['submitting', 'info'], sending: ['submitting', 'info'], processing: ['reviewing', 'info'], review: ['not submitted', 'warn'], waiting: ['waiting', 'warn'], resolved: ['owner resolved', ''] };
 const DECISION = { candidate: ['flagged', 'info'], review: ['review suggested', 'info'], ignore: ['no action', ''], ticket: ['ticket', 'info'] };
-export function activityStatus(row = {}) {
+export function activityStatus(row = {}, { historical = false } = {}) {
+  if (historical && row.kind === 'research_check' && ['waiting', 'processing'].includes(row.status)) return { label: row.reviewStatus === 'failed' ? 'earlier review failed' : 'earlier review unfinished', tone: '' };
   if (row.kind === 'research_check' && row.status === 'waiting') return { label: row.reviewStatus === 'failed' ? 'needs attention' : 'review unfinished', tone: 'warn' };
   if (row.status === 'processing' && row.decision !== 'ticket' && row.activeReview !== true) return { label: 'review unfinished', tone: 'warn' };
   const [label, tone] = RESULT[row.status] ?? (row.status === 'observed' ? DECISION[row.decision] : null) ?? [text(row.status) || 'noted', ''];
@@ -112,7 +113,7 @@ const LISTENER_RESULT = {
 export function listenerResult(entry) {
   if (!entry?.ticket && !entry?.listener) return null;
   if (!entry.ticket && entry.listener?.status === 'processing' && entry.listener.activeReview !== true) return { ...activityStatus(entry.listener), group: 'open' };
-  if (!entry.ticket && entry.listener?.kind === 'research_check' && entry.listener.status === 'waiting') return { ...activityStatus(entry.listener), group: 'open' };
+  if (!entry.ticket && entry.listener?.kind === 'research_check' && entry.listener.status === 'waiting') return { ...activityStatus(entry.listener, { historical: entry.listener.version < entry.version }), group: 'open' };
   if (!entry.ticket && entry.listener?.status === 'observed') {
     const result = activityStatus(entry.listener);
     return { ...result, group: 'decided' };
@@ -131,7 +132,7 @@ export function matchesResultFilter(entry, filter) {
   return filter === 'tickets' ? Boolean(entry.ticket) : result.group === filter;
 }
 
-const STAGES = Object.freeze({ sync: 'Read Journal', reconcile: 'Check earlier orders', queued: 'Queued', read: 'Read entry', model: 'Model review', decision: 'Decision', validate: 'Check limits', waiting: 'Waiting', submit: 'Submit', result: 'Result', error: 'Needs attention', idle: 'Idle', paused: 'Paused' });
+const STAGES = Object.freeze({ sync: 'Read Journal', reconcile: 'Check earlier orders', queued: 'Queued', read: 'Read entry', model: 'Model review', model_ready: 'Model ready', decision: 'Decision', validate: 'Check limits', waiting: 'Waiting', submit: 'Submit', result: 'Result', error: 'Needs attention', idle: 'Idle', paused: 'Paused' });
 export function processStage(stage) { return STAGES[stage] ?? 'Activity'; }
 
 // A counted position is shown only when the Listener reported both whole numbers.
@@ -149,6 +150,7 @@ export function processingPresentation(listener = {}, enabled = false) {
   }
   if (!enabled) return { state: 'off', title: 'Off', label: 'Listener off', message: 'Turn on the Listener to run a check.', tone: '', busy: false, position: null };
   if (listener.lastError) return { state: 'error', title: 'Needs attention', label: 'Needs attention', message: text(listener.lastError), tone: 'warn', busy: false, position: null };
+  if (listener.modelRecovery) return { state: 'ready', title: 'Model ready', label: 'Model ready', message: text(current?.message), tone: '', busy: false, position: null };
   if (current?.stage === 'paused') return { state: 'paused', title: 'Paused', label: 'Paused', message: text(current.message) || 'The last check paused before it finished.', tone: 'warn', busy: false, position: null };
   if (listener.modelReview?.status === 'not_run') return { state: 'ready', title: 'No model run', label: 'No model run', message: text(listener.modelReview.reason), tone: '', busy: false, position: null };
   if (listener.modelReview?.status === 'skipped') return { state: 'paused', title: 'Review skipped', label: 'Review skipped', message: text(listener.modelReview.reason), tone: 'warn', busy: false, position: null };
@@ -254,16 +256,17 @@ export function modelCoverageLabel(coverage, { received = false } = {}) {
   if (!coverage || coverage.unit !== 'UTF-16' || !Number.isSafeInteger(coverage.bodyUnits) || !Number.isSafeInteger(coverage.totalBodyUnits)
     || coverage.bodyUnits < 0 || coverage.totalBodyUnits < coverage.bodyUnits) return 'Review coverage unavailable';
   return coverage.bodyTruncated
-    ? received ? `Excerpt only: first ${formatCount(coverage.bodyUnits)} of ${formatCount(coverage.totalBodyUnits)} characters. The rest was not sent to the model.`
-      : `Prepared excerpt: first ${formatCount(coverage.bodyUnits)} of ${formatCount(coverage.totalBodyUnits)} characters. Remaining text is excluded from this review.`
-    : `${received ? 'Full note body supplied' : 'Prepared note body'} · ${formatCount(coverage.bodyUnits)} characters`;
+    ? received ? `Excerpt only: first ${formatCount(coverage.bodyUnits)} of ${formatCount(coverage.totalBodyUnits)} UTF-16 text units. The rest was not sent to the model.`
+      : `Prepared excerpt: first ${formatCount(coverage.bodyUnits)} of ${formatCount(coverage.totalBodyUnits)} UTF-16 text units. Remaining text is excluded from this review.`
+    : `${received ? 'Full note body supplied' : 'Prepared note body'} · ${formatCount(coverage.bodyUnits)} UTF-16 text units`;
 }
 
 export function activityMetadata(row, source = null) {
   const revision = listenerRevisionPresentation({ version: source?.version, listener: row })?.label
     ?? (Number.isSafeInteger(row.version) && row.version > 0 ? `v${formatCount(row.version)}` : 'revision unknown');
   const completed = row.status === 'observed' && Number.isFinite(Date.parse(row.completedAtUtc));
-  return { revision, clock: completed ? row.completedAtUtc : row.atUtc, clockLabel: completed ? 'Completed' : 'Recorded' };
+  return { revision, clock: completed ? row.completedAtUtc : row.atUtc, clockLabel: completed ? 'Completed' : 'Recorded',
+    historical: Boolean(source && Number.isSafeInteger(row.version) && row.version > 0 && row.version < source.version) };
 }
 
 // lastModelOutput is written only after the model response and settings pass the
