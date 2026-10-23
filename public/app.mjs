@@ -325,7 +325,7 @@ function fillSettings() {
   const settings = snapshot.settings, risk = settings.risk ?? {};
   $('enabled').checked = settings.enabled; $('enabled-label').textContent = settings.enabled ? 'On' : 'Off';
   $('execution').checked = settings.executionEnabled;
-  for (const id of ['max-ticket', 'max-leverage']) $(id).placeholder = settings.executionEnabled ? 'Required' : 'Not set';
+  for (const id of ['max-order', 'max-ticket', 'max-leverage']) $(id).placeholder = settings.executionEnabled ? 'Required' : 'Not set';
   for (const radio of document.querySelectorAll('input[name=source]')) radio.checked = radio.value === settings.source;
   ensureOption($('interval'), settings.intervalSeconds, `${formatCount(settings.intervalSeconds)} seconds`); $('interval').value = String(settings.intervalSeconds);
   ensureOption($('max-age'), settings.maxSignalAgeSeconds, `${formatCount(Math.round(settings.maxSignalAgeSeconds / 60))} minutes`); $('max-age').value = String(settings.maxSignalAgeSeconds);
@@ -405,7 +405,7 @@ $('check-now').addEventListener('click', async event => {
   // after the shared action helper releases its temporary button lock.
   renderStatus();
 });
-$('ticket-example').textContent = '```flusso-orders\n' + JSON.stringify(TICKET_EXAMPLE, null, 2) + '\n```';
+for (const id of ['ticket-example', 'editor-ticket-example']) $(id).textContent = '```flusso-orders\n' + JSON.stringify(TICKET_EXAMPLE, null, 2) + '\n```';
 
 /* --------------------------------------------------------------- journal */
 function renderEntries() {
@@ -515,12 +515,12 @@ function renderDetail() {
     head.append(element('h3', row.ticket.kind === 'close' ? 'Close ticket' : 'Order ticket'), row.ticket.ticket?.id ? element('code', row.ticket.ticket.id) : element('span'));
     section.append(head);
     const outcome = listenerResult(row);
-    if (outcome) {
+    if (outcome && (!row.ticket.error || row.listener)) {
       const line = element('p', null, 'hint ticket-result');
       line.append(pill(outcome.label, outcome.tone), document.createTextNode(row.listener ? ` ${when(row.listener.atUtc)}${row.listener.reason ? ` · ${row.listener.reason}` : ''}` : ' The listener has not acted on this ticket yet.'));
       section.append(line);
     }
-    if (row.ticket.error) section.append(element('p', row.ticket.error, 'hint'));
+    if (row.ticket.error) section.append(element('p', row.ticket.error, 'hint'), element('p', 'Fix this ticket before the Listener can act on it.', 'hint'));
     else section.append(row.ticket.kind === 'close' ? positionsTable(row.ticket.ticket.positionIds) : ordersTable(row.ticket.ticket.orders));
     detail.append(section);
   }
