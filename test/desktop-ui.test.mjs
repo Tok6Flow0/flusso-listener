@@ -40,7 +40,7 @@ test('a local service outage explains recovery without exposing raw browser fetc
   const api = source.slice(source.indexOf('async function api('), source.indexOf('async function action('));
   const context = { csrf: 'synthetic-csrf', fetch: async () => { throw new TypeError('Failed to fetch'); } };
   runInNewContext(api, context);
-  await assert.rejects(context.api('/api/status'), /Journal lost its connection to its local service.*Retry/);
+  await assert.rejects(context.api('/api/status'), /Journal lost its connection to its local service/);
   context.fetch = async () => ({ ok: false, status: 403, json: async () => ({ error: 'The session expired. Reopen Journal.' }) });
   await assert.rejects(context.api('/api/status'), error => error.status === 403 && /The session expired/.test(error.message));
   context.fetch = async () => ({ ok: true, status: 201, json: async () => { throw new SyntaxError('Truncated reply.'); } });
@@ -1064,10 +1064,10 @@ test('an uncertain notebook create retains its original request through dismissa
     runInNewContext(source.slice(source.indexOf('function initialLocalSaveRefusal('), source.indexOf('async function action(')), context);
     runInNewContext(handlers, context); const submit = () => callbacks.get('notebook-form:submit')({ preventDefault() {}, submitter: get('create-notebook') });
     callbacks.get('new-notebook:click')(); submit(); callbacks.get('cancel-notebook:click')(); reject(failure); await jobs[0];
-    assert.equal(get('notebook-name').readOnly, true); assert.equal(get('notebook-name').value, 'Original requested name'); assert.equal(notices.length, 0, 'The persistent reminder replaces the duplicate toast.'); assert.equal(get('notebook-dialog-title').textContent, 'Notebook save unconfirmed'); assert.equal(get('notebook-save-state').hidden, false); assert.match(get('notebook-save-message').textContent, /unconfirmed/); assert.equal(get('cancel-notebook').textContent, 'Close with save unconfirmed'); callbacks.get('resume-notebook-save:click')(); assert.equal(get('notebook-dialog').open, true); assert.equal(get('notebook-save-state').hidden, true, 'The resumed modal has one error presentation.');
+    assert.equal(get('notebook-name').readOnly, true); assert.equal(get('notebook-name').value, 'Original requested name'); assert.equal(notices.length, 0, 'The persistent reminder replaces the duplicate toast.'); assert.equal(get('notebook-dialog-title').textContent, 'Notebook save unconfirmed'); assert.equal(get('new-notebook').hidden, true); assert.equal(get('notebook-retry-hint').hidden, false); assert.equal(get('notebook-save-state').hidden, false); assert.match(get('notebook-save-message').textContent, /unconfirmed/); assert.equal(get('cancel-notebook').textContent, 'Close with save unconfirmed'); callbacks.get('resume-notebook-save:click')(); assert.equal(get('notebook-dialog').open, true); assert.equal(get('notebook-save-state').hidden, true, 'The resumed modal has one error presentation.');
     callbacks.get('new-notebook:click')(); get('notebook-name').value = 'Changed DOM must not change retry'; submit(); await jobs[1];
     assert.equal(requests.length, 2); assert.deepEqual(requests[1], requests[0]); assert.equal(requests[0].headers['Idempotency-Key'], 'intent-1');
-    assert.equal(get('notebook-save-state').hidden, true); assert.equal(get('notebook-save-message').textContent, ''); assert.equal(get('notebook-name').readOnly, false); assert.equal(get('notebook-name').value, ''); assert.match(notices.at(-1).message, /Notebook added, but the list could not refresh/);
+    assert.equal(get('notebook-save-state').hidden, true); assert.equal(get('notebook-save-message').textContent, ''); assert.equal(get('new-notebook').hidden, false); assert.equal(get('notebook-retry-hint').hidden, true); assert.equal(get('notebook-name').readOnly, false); assert.equal(get('notebook-name').value, ''); assert.match(notices.at(-1).message, /Notebook added, but the list could not refresh/);
     callbacks.get('new-notebook:click')(); get('notebook-name').value = 'Original requested name'; submit(); await jobs[2];
     assert.equal(requests[2].headers['Idempotency-Key'], 'intent-2', 'An intentional same-named notebook is a new operation after confirmed success.');
   }

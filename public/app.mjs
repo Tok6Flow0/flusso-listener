@@ -57,7 +57,7 @@ function notifyPollFailure(message) {
 async function api(path, body, headers = {}) {
   let response;
   try { response = await fetch(path, { method: body === undefined ? 'GET' : 'POST', headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json', 'x-flusso-csrf': csrf }), ...headers }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }); }
-  catch { throw new Error('Journal lost its connection to its local service. Retry when the service is available.'); }
+  catch { throw new Error('Journal lost its connection to its local service.'); }
   let value;
   try { value = await response.json(); } catch { throw new Error('Journal received an incomplete or unreadable response.'); }
   if (!response.ok) throw Object.assign(new Error(value.error || 'That did not work. Try again.'), { status: response.status }); return value;
@@ -925,9 +925,10 @@ let notebookSaving = false, notebookIntent = null;
 function renderNotebookSaveState() {
   const pending = Boolean(notebookIntent && (notebookSaving || notebookIntent.uncertain));
   $('notebook-save-state').hidden = !pending || $('notebook-dialog').open;
-  $('notebook-save-message').textContent = pending && notebookSaving ? 'Your notebook is saving. Closing the dialog does not cancel the request.' : pending ? `Notebook save unconfirmed. ${$('notebook-error').textContent} Review and retry the original request before leaving Journal.` : '';
+  $('notebook-save-message').textContent = pending && notebookSaving ? 'Your notebook is saving. Closing the dialog does not cancel the request.' : pending ? `Notebook save unconfirmed. ${$('notebook-error').textContent}` : '';
   $('notebook-dialog-title').textContent = pending ? notebookSaving ? 'Saving notebook' : 'Notebook save unconfirmed' : 'New notebook';
-  $('new-notebook').textContent = pending ? 'Review notebook save' : 'New notebook';
+  $('new-notebook').hidden = pending;
+  $('notebook-retry-hint').hidden = !notebookIntent?.uncertain;
   $('cancel-notebook').textContent = pending && notebookSaving ? 'Close while saving' : pending ? 'Close with save unconfirmed' : 'Cancel';
 }
 function openNotebookDialog() { if (!notebookIntent) $('notebook-error').hidden = true; $('notebook-dialog').showModal(); renderNotebookSaveState(); }

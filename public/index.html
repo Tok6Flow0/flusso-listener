@@ -55,11 +55,11 @@
       <header class="view-head">
         <h1>Journal</h1>
         <div class="head-actions">
+          <button id="new-entry" type="button" class="primary"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg>New entry</button>
           <label>Filter by notebook<select id="journal-filter"><option value="">All notebooks</option></select></label>
           <label>Listener result<select id="result-filter"></select></label>
           <button id="new-notebook" type="button" aria-haspopup="dialog" aria-controls="notebook-dialog">New notebook</button>
           <button id="sync" type="button" class="icon-button" title="Sync cloud Journal" aria-label="Sync cloud Journal"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16 10a6 6 0 0 1-10.4 4.1M4 10a6 6 0 0 1 10.4-4.1"/><path d="M14.5 2.5v3.6h-3.6M5.5 17.5v-3.6h3.6"/></svg></button>
-          <button id="new-entry" type="button" class="primary"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg>New entry</button>
         </div>
       </header>
       <p class="hint" id="journal-coverage">Showing the loaded entries.</p>
@@ -200,7 +200,7 @@
 </div>
 <dialog id="notebook-dialog" class="discard-dialog notebook-dialog" aria-labelledby="notebook-dialog-title">
   <h2 id="notebook-dialog-title">New notebook</h2>
-  <form id="notebook-form"><label>Notebook name<input id="notebook-name" maxlength="120" required autofocus></label><p id="notebook-error" class="hint" role="alert" hidden></p><div class="form-actions"><button id="cancel-notebook" type="button">Cancel</button><button id="create-notebook" type="submit" class="primary">Create notebook</button></div></form>
+  <form id="notebook-form"><label>Notebook name<input id="notebook-name" maxlength="120" required autofocus aria-describedby="notebook-retry-hint"></label><p id="notebook-retry-hint" class="hint" hidden>The original submitted name is fixed until this save is confirmed.</p><p id="notebook-error" class="hint" role="alert" hidden></p><div class="form-actions"><button id="cancel-notebook" type="button">Cancel</button><button id="create-notebook" type="submit" class="primary">Create notebook</button></div></form>
 </dialog>
 <dialog id="discard-entry" class="discard-dialog" aria-labelledby="discard-entry-title" aria-describedby="discard-entry-description">
   <h2 id="discard-entry-title">Discard this draft?</h2>
