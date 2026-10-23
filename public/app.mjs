@@ -258,7 +258,7 @@ async function load({ forms = false } = {}) {
   if (connectionKey(snapshot.cloud) !== accountsKey && !$('view-listener').hidden) loadAccounts();
   renderStatus();
   $('journal-coverage').textContent = snapshot.limits?.entries ? `Showing up to ${formatCount(snapshot.limits.entries)} recent entries.` : 'Showing the loaded entries.';
-  $('activity-coverage').textContent = snapshot.limits?.activity ? `Latest completed research and unfinished check per revision, plus receipts. Showing up to ${formatCount(snapshot.limits.activity)} saved rows and the last completed response; unconfirmed results stay first.` : 'Recent decisions and order receipts. Unconfirmed results stay on top.';
+  $('activity-coverage').textContent = snapshot.limits?.activity ? `Latest review per note version and order receipts. Unconfirmed results stay first; up to ${formatCount(snapshot.limits.activity)} saved results plus the last completed response.` : 'Recent decisions and order receipts. Unconfirmed results stay on top.';
   if (!desktop) $('model-state').textContent = snapshot.model.installed ? 'Qwen3 1.7B is ready through Ollama.' : snapshot.model.available ? 'Ollama is running. Download the model:' : 'Start Ollama, then download the model:';
   $('sync').disabled = !snapshot.cloud.connected;
   const notebookOptions = snapshot.notebooks.map(row => [row.origin, row.id, row.name]);
@@ -281,7 +281,7 @@ function renderStatus() {
   $('listener-dot-label').textContent = streamDisconnected ? 'Reconnecting' : !settings.enabled ? 'Off' : listener.lastError ? 'Needs attention' : listener.busy ? 'Reading' : 'On';
   // The schedule lives here; the review desk owns state, errors and the next action.
   const interval = intervalLabel(settings.intervalSeconds), parts = [];
-  const lastCheck = listener.lastCheckedAtUtc ? `Last checked ${when(listener.lastCheckedAtUtc, true)}` : listener.modelReview?.startedAtUtc ? `Last review recorded ${when(listener.modelReview.startedAtUtc, true)} · check completion unavailable` : 'Not checked yet';
+  const lastCheck = listener.lastCheckedAtUtc ? `Last checked ${when(listener.lastCheckedAtUtc, true)}` : listener.busy && listener.modelReview?.startedAtUtc ? `Check started ${when(listener.modelReview.startedAtUtc, true)}` : listener.modelReview?.startedAtUtc ? `Last review recorded ${when(listener.modelReview.startedAtUtc, true)} · check completion unavailable` : 'Not checked yet';
   if (!settings.enabled) parts.push(lastCheck);
   else {
     if (interval) parts.push(`Checks ${interval} after the previous check finishes`);

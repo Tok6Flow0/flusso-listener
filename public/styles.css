@@ -135,7 +135,9 @@ main{min-width:0;width:100%;max-width:1320px;margin:0 auto;padding:30px 40px 56p
 .view-head{display:flex;align-items:center;justify-content:space-between;gap:12px 16px;flex-wrap:wrap;margin-bottom:22px;min-height:40px}
 .title-block{display:grid;gap:6px;min-width:0}
 .head-actions{display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap}
-.head-actions select{width:auto;min-width:160px;max-width:240px}
+.journal-filters{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.journal-filters label{flex:0 1 240px;min-width:160px}
+.journal-filters select{width:100%}
 .status-line{color:var(--c-ink-4);font-size:var(--fs-body-sm);overflow-wrap:anywhere}
 .status-line.warn{color:var(--c-warn-deep)}
 .card{background:var(--c-surface);border:1px solid var(--c-line);border-radius:14px;padding:22px;margin-bottom:16px;min-width:0}
@@ -486,10 +488,11 @@ tr:last-child td{border-bottom:0}
   .editor-head{top:62px}
   .journal-layout:has(#editor:not([hidden])) .entry-pane{display:none}
   #view-journal:has(#editor:not([hidden])) .head-actions>*:not(#new-notebook){display:none}
+  #view-journal:has(#editor:not([hidden])) .journal-filters{display:none}
   .field-grid{grid-template-columns:minmax(0,1fr)}
   .card{padding:18px}
   .head-actions{width:100%}
-  .head-actions select{flex:1 1 140px;min-width:0;max-width:none}
+  .journal-filters label{flex:1 1 140px;min-width:0}
   .model-setup{flex-wrap:wrap}
   .model-setup>button{flex:1 1 100%}
   .update-corner{right:12px;bottom:12px;max-width:calc(100vw - 24px)}

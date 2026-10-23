@@ -333,6 +333,20 @@ test('a hidden verdict returns keyboard focus to visible process state and keyed
 
 });
 
+test('first running check shows its start, while only a completed earlier check uses Last checked', async () => {
+  const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
+  const render = source.slice(source.indexOf('function renderStatus()'), source.indexOf('  const pending = snapshot.attempts')) + '}';
+  const nodes = new Map(), get = id => { if (!nodes.has(id)) nodes.set(id, { classList: { toggle() {} } }); return nodes.get(id); };
+  const context = { $: get, snapshot: { settings: { enabled: true, intervalSeconds: 60 }, listener: { busy: true, modelReview: { startedAtUtc: '2026-10-23T10:00:00Z' } } }, streamDisconnected: false,
+    intervalLabel: () => '1 minute', when: value => value, setText: (id, value) => { get(id).textContent = value; } };
+  runInNewContext(render, context); context.renderStatus();
+  assert.match(get('last-check').textContent, /Check started 2026-10-23T10:00:00Z/);
+  assert.doesNotMatch(get('last-check').textContent, /Last review|completion unavailable/);
+  context.snapshot.listener.lastCheckedAtUtc = '2026-10-23T09:59:00Z'; context.renderStatus();
+  assert.match(get('last-check').textContent, /Last checked 2026-10-23T09:59:00Z/);
+  assert.doesNotMatch(get('last-check').textContent, /Check started/);
+});
+
 test('last-check summary uses only retained terminal evidence and distinguishes finished, recorded and unavailable clocks', async () => {
   const { latestCheckPresentation } = await import('../public/desktop-ui.mjs');
   const review = { id: 'check', status: 'failed', reason: 'The actual recorded failure.', startedAtUtc: '2026-10-23T10:00:00Z', completedAtUtc: '2026-10-23T10:00:03Z' };
