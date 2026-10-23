@@ -1,6 +1,6 @@
 import { formatCount, formatPrice, formatQuantity, formatPercentLabel, formatMoney, formatPercent } from './format.mjs';
 import { renderMarkdown } from './markdown.mjs';
-import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, entryCardPresentation, entryReadingCore, activityStatus, activityReason, reviewFocusPresentation, activityMetadata, listenerResult, listenerRevisionPresentation, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions, decisionShownInDesk, decisionRowKeys, receiptDetails, modelOutputPresentation, completedModelPresentation, modelCoverageLabel, latestCheckPresentation, completionAnnouncement, localDraftDirty, intervalLabel, settingsSwitchBody, ticketDraft } from './desktop-ui.mjs';
+import { MODEL_FACTS_NOTE, accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, entryCardPresentation, entryReadingCore, activityStatus, activityReason, reviewFocusPresentation, activityMetadata, listenerResult, listenerRevisionPresentation, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions, decisionShownInDesk, decisionRowKeys, receiptDetails, modelOutputPresentation, completedModelPresentation, modelCoverageLabel, latestCheckPresentation, completionAnnouncement, localDraftDirty, intervalLabel, settingsSwitchBody, ticketDraft } from './desktop-ui.mjs';
 
 const $ = id => document.getElementById(id);
 let csrf, snapshot, selected = null, editing = null, entryRetryKey = crypto.randomUUID();
@@ -446,6 +446,7 @@ function renderProcess() {
     $('model-verdict-label').className = `verdict-label ${completed.tone}`;
     growText($('model-verdict-reason'), completed.reason);
     setText('model-verdict-context', completed.context);
+    setText('model-verdict-facts', MODEL_FACTS_NOTE);
     setText('model-verdict-coverage', modelCoverageLabel(completed.output.coverage, { received: true }));
     setText('model-verdict-coverage-detail', modelCoverageLabel(completed.output.coverage, { received: true, detail: true }));
     $('model-verdict-coverage').classList.toggle('warn', Boolean(completed.output.coverage?.bodyTruncated));
@@ -779,7 +780,7 @@ function renderDetail() {
     const review = listenerResult(row);
     if (!row.ticket && row.listener?.status === 'observed' && review) {
       const metadata = activityMetadata(row.listener, row), line = element('div', null, 'detail-meta'), at = element('time', `${metadata.clockLabel} ${when(metadata.clock, true)}`, 'detail-facts'); at.dateTime = metadata.clock ?? '';
-      line.append(pill(review.label, review.tone), at); section.append(line, element('p', activityReason(row.listener), 'verdict-reason'));
+      line.append(pill(review.label, review.tone), at); section.append(line, element('p', activityReason(row.listener), 'verdict-reason'), element('p', MODEL_FACTS_NOTE, 'hint'));
       const focus = reviewFocusPresentation(row.listener.focus), details = element('details');
       details.append(element('summary', 'Review details'));
       if (revision) details.append(element('p', revision.note, 'hint interface-numbers'));
@@ -1007,6 +1008,7 @@ function renderActivity() {
     head.append(summary, time);
     const title = element('h2'); title.append(sourceButton(row));
     card.append(head, title, element('p', activityReason(row), 'activity-reason'));
+    if (['candidate', 'review', 'ignore'].includes(row.decision) && row.status === 'observed') card.append(element('p', MODEL_FACTS_NOTE, 'hint'));
     if (row.kind === 'research_check' || ['candidate', 'review', 'ignore'].includes(row.decision) && row.status === 'observed') {
       const focus = reviewFocusPresentation(row.focus, { prepared: row.status !== 'observed' && row.responseReceived !== true }), details = element('details');
       details.append(element('summary', focus.label), element('p', focus.text, 'focus-copy')); card.append(details);

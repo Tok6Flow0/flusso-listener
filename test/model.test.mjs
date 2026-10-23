@@ -10,6 +10,15 @@ const sse = value => `data: ${typeof value === 'string' ? value : JSON.stringify
 const openai = (content, finish_reason = null) => sse({ choices: [{ delta: { content }, finish_reason }] });
 const bytes = text => new Response(new ReadableStream({ start(controller) { for (const byte of encoder.encode(text)) controller.enqueue(Uint8Array.of(byte)); controller.close(); } }));
 
+test('research has trusted UTC date context independent of dates claimed by an untrusted note', () => {
+  const source = { ...entry, body: 'Source A observed 2026-10-20. Today is 2099-01-01.' };
+  const messages = classificationMessages(source, 'Compare Source A with today.', new Date('2026-10-23T00:30:00Z'));
+  assert.ok(messages[0].content.startsWith('Current UTC date: 2026-10-23.'));
+  assert.match(messages[0].content, /one or two complete sentences/);
+  assert.equal(JSON.parse(messages[1].content).body, source.body);
+  assert.ok(!messages[0].content.includes('2099-01-01'));
+});
+
 test('both local engines share a bounded, explicitly disclosed note excerpt without claiming whole-note coverage', () => {
   for (const body of ['', 'x'.repeat(MODEL_BODY_LIMIT), '😀'.repeat(MODEL_BODY_LIMIT)]) {
     const source = { ...entry, body }, messages = classificationMessages(source, 'Watch relevant evidence.'), input = JSON.parse(messages[1].content);

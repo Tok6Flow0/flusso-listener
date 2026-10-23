@@ -1,4 +1,5 @@
 import { formatCount } from './format.mjs';
+export const MODEL_FACTS_NOTE = 'Model response; facts not verified. Check the source before relying on it.';
 // Presentation only: identity and native capabilities remain owned by the backend.
 function text(value) { return typeof value === 'string' ? value.trim() : ''; }
 function progress(value) { return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null; }

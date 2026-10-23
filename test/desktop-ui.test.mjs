@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
-import { accountPresentation, updatePresentation, modelPresentation } from '../public/desktop-ui.mjs';
+import { MODEL_FACTS_NOTE, accountPresentation, updatePresentation, modelPresentation } from '../public/desktop-ui.mjs';
 
 test('unchanged visible notices announce once, recover without focus theft, and announce a later recurrence', async () => {
   const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
@@ -85,6 +85,7 @@ test('the Journal reader shows the current check before the preserved completed 
   assert.ok(all(check).some(node => node.textContent === 'Latest research check')); assert.ok(all(check).some(node => node.textContent === 'Actual latest failure.'));
   assert.ok(all(check).some(node => node.tag === 'time' && node.textContent === `Recorded ${recorded}/seconds · v2` && node.className === 'detail-facts'));
   assert.ok(all(live).some(node => node.textContent === 'Earlier response')); assert.ok(all(live).some(node => node.textContent === 'Preserved accepted words.'));
+  assert.ok(all(live).some(node => node.textContent === MODEL_FACTS_NOTE));
   assert.ok(all(live).some(node => node.textContent === 'Preserved accepted words.' && node.className === 'verdict-reason'), 'The same published words use the Listener prose style.');
   const metadataLine = all(live).find(node => node.className === 'detail-meta');
   assert.ok(!metadataLine.children.some(node => node.textContent === 'Listener off'), 'Current Off state must not be presented as the historical response state.');
@@ -219,7 +220,7 @@ test('a hidden verdict returns keyboard focus to visible process state and keyed
   const get = id => { if (!nodes.has(id)) nodes.set(id, node(id)); return nodes.get(id); };
   const context = {
     document, $: get, snapshot: { settings: { enabled: true }, entries: [], listener: { busy: true, modelOutput: null, events: [] } },
-    processingPresentation, modelOutputPresentation, completedModelPresentation, modelCoverageLabel, latestCheckPresentation, reviewFocusPresentation, completionAnnouncement, streamDisconnected: false, rawOpen: false, lastCompletionKey: null, completionFrame: null,
+    MODEL_FACTS_NOTE, processingPresentation, modelOutputPresentation, completedModelPresentation, modelCoverageLabel, latestCheckPresentation, reviewFocusPresentation, completionAnnouncement, streamDisconnected: false, rawOpen: false, lastCompletionKey: null, completionFrame: null,
     setText: (id, value) => { get(id).textContent = value; }, interfaceText: (target, value) => { target.textContent = value; }, growText: (target, value) => { target.textContent = value; },
     changed: (key, value) => { const serialized = JSON.stringify(value); if (keys.get(key) === serialized) return false; keys.set(key, serialized); return true; },
     element: (tag, content) => node(tag, content), sourceButton: (_row, title) => node(`source-${++sourceButtons}`, title), when: value => value,
@@ -241,6 +242,7 @@ test('a hidden verdict returns keyboard focus to visible process state and keyed
   context.snapshot.listener.lastModelOutput = { ...output, decision: 'review', reason: 'Public model wording.', atUtc: '2026-10-23T10:00:04Z' };
   context.renderProcess();
   assert.equal(get('model-verdict-kicker').textContent, 'Local model response · format checked');
+  assert.equal(get('model-verdict-facts').textContent, MODEL_FACTS_NOTE);
   assert.equal(get('model-verdict-reason').textContent, 'Public model wording.'); assert.equal(metadata.children[1], button); assert.equal(sourceButtons, 2);
   assert.equal(metadata.hidden, true, 'The completed card owns this run’s source metadata.');
   assert.equal(document.activeElement, get('model-verdict-label'), 'Focus leaves the now-hidden duplicate source row.');
@@ -1023,6 +1025,7 @@ test('Activity timestamps use a single data text node with the actual clock labe
     decisionItems: rows => rows.map(row => ({ value: { row, ...ui.activityMetadata(row, { version: 2 }) } })), changed: () => true, reconcileRows: (_list, items, render) => { card = render(items[0].value); },
     element: make, pill: (text, tone) => make('span', text, tone), sourceButton: () => make('button', 'Source note'), when: (clock, seconds) => `${clock}/${seconds ? 'seconds' : 'minutes'}` };
   runInNewContext(fn, context); context.renderActivity(); const time = card.children[0].children.find(node => node.tag === 'time');
+  assert.ok(card.children.some(node => node.textContent === MODEL_FACTS_NOTE));
   assert.equal(time.textContent, 'Completed 2026-10-23T10:00:04Z/seconds'); assert.equal(time.className, 'mono'); assert.equal(time.children.length, 0); assert.equal(time.dateTime, row.completedAtUtc);
 });
 
