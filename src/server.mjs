@@ -4,11 +4,11 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { InputError, ID, object, settingsInput, text, THEMES } from './schema.mjs';
 import { listenCallback, openBrowser } from './browser.mjs';
-import { modelStatus } from './model.mjs';
+import { modelStatus, MODEL_BODY_LIMIT } from './model.mjs';
 import { readTicket } from './orders.mjs';
 import { describeEntryHandoff } from './handoff.mjs';
 
-const STATUS_LIMITS = Object.freeze({ entries: 500, activity: 100, attempts: 100 });
+const STATUS_LIMITS = Object.freeze({ entries: 500, activity: 100, attempts: 100, modelBodyUnits: MODEL_BODY_LIMIT });
 
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']], ['/app.mjs', ['app.mjs', 'text/javascript; charset=utf-8']],

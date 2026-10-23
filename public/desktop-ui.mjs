@@ -146,6 +146,7 @@ export function processingPresentation(listener = {}, enabled = false) {
   if (!enabled) return { state: 'off', title: 'Off', label: 'Listener off', message: 'Turn on the Listener to run a check.', tone: '', busy: false, position: null };
   if (listener.lastError) return { state: 'error', title: 'Needs attention', label: 'Needs attention', message: text(listener.lastError), tone: 'warn', busy: false, position: null };
   if (current?.stage === 'paused') return { state: 'paused', title: 'Paused', label: 'Paused', message: text(current.message) || 'The last check paused before it finished.', tone: 'warn', busy: false, position: null };
+  if (listener.modelReview?.status === 'not_run') return { state: 'ready', title: 'No model run', label: 'No model run', message: text(listener.modelReview.reason), tone: '', busy: false, position: null };
   const checked = Boolean(listener.lastCheckedAtUtc);
   return { state: checked ? 'complete' : 'ready', title: checked ? 'Checked' : 'Ready', label: checked ? 'Check complete' : 'Ready', message: text(current?.message) || 'Waiting for the next check.', tone: '', busy: false, position: null };
 }
@@ -226,6 +227,8 @@ export function modelOutputPresentation(output, published = null, { disconnected
   const live = output.status === 'streaming' && !disconnected;
   const startedAt = Date.parse(output.atUtc), publishedAt = Date.parse(published?.atUtc);
   const accepted = output.status === 'complete' && Boolean(published) && published.entryId === output.entryId && published.origin === output.origin
+    && (output.version == null && published.version == null || Number.isSafeInteger(output.version) && output.version > 0 && output.version === published.version)
+    && (output.checkId == null && published.checkId == null || output.checkId === published.checkId)
     && ['candidate', 'review', 'ignore'].includes(published.decision)
     && Number.isFinite(startedAt) && Number.isFinite(publishedAt) && publishedAt >= startedAt;
   const verdict = accepted ? { ...activityStatus({ status: 'observed', decision: published.decision }), reason: text(published.reason) } : null;
@@ -235,11 +238,33 @@ export function modelOutputPresentation(output, published = null, { disconnected
   const reading = !accepted && hasText ? streamedReason(output.text) : null;
   const draft = !reading ? null : output.status === 'streaming' ? reading.reason ?? '' : reading.reason || null;
   const draftLabel = draft === null ? null : output.status === 'streaming' ? 'Reason so far' : output.status === 'complete' ? 'Model reason' : 'Partial reason';
-  const note =output.status === 'streaming' ? (disconnected ? 'Reconnecting. Showing the last output received; nothing is accepted until the response completes.' : 'Partial output. Nothing is accepted until the response completes and passes validation.')
+  const note =output.status === 'streaming' ? (disconnected ? 'Reconnecting. Showing the last output received; nothing is accepted until the response completes.' : 'Format check pending. This is the model’s partial response, not a completed decision.')
     : ['failed', 'stopped'].includes(output.status) ? (hasText ? 'Partial output shown. It was not accepted as a decision.' : 'No output was received. Nothing was accepted.')
       : output.status === 'complete' && !accepted ? 'The response completed, but no accepted local decision matches it.' : null;
   const empty = hasText ? null : output.status === 'streaming' ? 'Waiting for the model’s first response token.' : 'The model returned no response.';
   return { status: output.status, label: disconnected && output.status === 'streaming' ? 'Reconnecting' : label, tone, live, accepted, verdict, draft, draftLabel, note, empty };
+}
+
+export function modelCoverageLabel(coverage) {
+  if (!coverage || coverage.unit !== 'UTF-16' || !Number.isSafeInteger(coverage.bodyUnits) || !Number.isSafeInteger(coverage.totalBodyUnits)
+    || coverage.bodyUnits < 0 || coverage.totalBodyUnits < coverage.bodyUnits) return 'Review coverage unavailable';
+  return coverage.bodyTruncated ? `Excerpt only: first ${formatCount(coverage.bodyUnits)} of ${formatCount(coverage.totalBodyUnits)} characters. The rest was not sent to the model.` : `Full note body supplied · ${formatCount(coverage.bodyUnits)} characters`;
+}
+
+// lastModelOutput is written only after the model response and settings pass the
+// server's checks. Keep its source and revision distinct from a later live run.
+export function completedModelPresentation(listener = {}, entries = []) {
+  const output = listener.lastModelOutput;
+  if (!output || !['review', 'ignore', 'candidate'].includes(output.decision) || !Number.isFinite(Date.parse(output.atUtc))) return null;
+  const source = entries.find(row => row.id === output.entryId && row.origin === output.origin);
+  const earlier = listener.modelReview?.id != null && output.checkId !== listener.modelReview.id
+    || listener.modelOutput?.status === 'streaming' || source?.version !== output.version || source?.handoff?.context?.inScope === false;
+  const revision = Number.isSafeInteger(output.version) && output.version > 0 ? `v${formatCount(output.version)}` : 'revision unknown';
+  const scope = source?.handoff?.context?.inScope;
+  const current = !source ? 'Source not loaded' : output.version !== source.version ? `Current note is v${formatCount(source.version)}` : 'Same note revision';
+  const status = { watching: 'Watching note', reviewed: 'Reviewed note', closed: 'Closed note' }[source?.status];
+  return { output, earlier, ...activityStatus({ status: 'observed', decision: output.decision }), reason: output.reason,
+    context: `${revision} · ${current}${status ? ` · ${status}` : ''}${scope === false ? ' · Outside selected filters' : scope === true ? ' · Matches selected filters' : ''}` };
 }
 
 // Keep this identity across streaming/idle updates. A new clock alone is not a

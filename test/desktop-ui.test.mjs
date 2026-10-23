@@ -100,19 +100,20 @@ test('the existing entry Save and Cancel controls sit in its heading and the out
 });
 
 test('a hidden verdict returns keyboard focus to visible process state and keyed source metadata survives token updates', async () => {
-  const { processingPresentation, modelOutputPresentation, completionAnnouncement } = await import('../public/desktop-ui.mjs');
+  const { processingPresentation, modelOutputPresentation, completedModelPresentation, modelCoverageLabel, completionAnnouncement } = await import('../public/desktop-ui.mjs');
   const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
   const render = source.slice(source.indexOf('function renderProcess()'), source.indexOf('function renderDecisions()'));
-  const document = { activeElement: { id: 'model-raw-toggle' } }, nodes = new Map(), keys = new Map(); let sourceButtons = 0;
+  const document = { activeElement: { id: 'model-output' } }, nodes = new Map(), keys = new Map(); let sourceButtons = 0;
   const node = (id, textContent = '') => ({ id, textContent, dataset: {}, children: [], scrollHeight: 0, scrollTop: 0, clientHeight: 0,
     replaceChildren(...children) { this.children = children; },
-    contains(target) { return id === 'model-verdict' && target?.id === 'model-raw-toggle' || this.children.includes(target); },
+    querySelector(tag) { return this.children.find(child => child.id === tag) ?? null; },
+    contains(target) { return target?.id === id || this.children.includes(target); },
     focus(options) { document.activeElement = this; this.focusOptions = options; }, setAttribute() {},
   });
   const get = id => { if (!nodes.has(id)) nodes.set(id, node(id)); return nodes.get(id); };
   const context = {
     document, $: get, snapshot: { settings: { enabled: true }, entries: [], listener: { busy: true, modelOutput: null, events: [] } },
-    processingPresentation, modelOutputPresentation, completionAnnouncement, streamDisconnected: false, rawOpen: false, lastCompletionKey: null, completionFrame: null,
+    processingPresentation, modelOutputPresentation, completedModelPresentation, modelCoverageLabel, completionAnnouncement, streamDisconnected: false, rawOpen: false, lastCompletionKey: null, completionFrame: null,
     setText: (id, value) => { get(id).textContent = value; }, growText: (target, value) => { target.textContent = value; },
     changed: (key, value) => { const serialized = JSON.stringify(value); if (keys.get(key) === serialized) return false; keys.set(key, serialized); return true; },
     element: (tag, content) => node(tag, content), sourceButton: (_row, title) => node(`source-${++sourceButtons}`, title), when: value => value,
@@ -122,7 +123,7 @@ test('a hidden verdict returns keyboard focus to visible process state and keyed
   assert.equal(document.activeElement, get('process-state')); assert.equal(get('process-state').textContent, 'Reading');
   assert.equal(get('model-verdict').hidden, true); assert.equal(document.activeElement.focusOptions, undefined, 'The browser may reveal the newly focused visible state.');
   const output = { entryId: 'research', origin: 'local', title: 'Source research', version: 2, atUtc: '2026-10-23T10:00:00Z', status: 'streaming', text: '{"decision":"review","reason":"Public model' };
-  context.snapshot.entries = [{ id: output.entryId, origin: output.origin }]; context.snapshot.listener.modelOutput = output;
+  context.snapshot.entries = [{ id: output.entryId, origin: output.origin, version: output.version }]; context.snapshot.listener.modelOutput = output;
   context.renderProcess();
   const metadata = get('model-output-source'), button = metadata.children[1]; button.focus();
   assert.equal(metadata.children[0].textContent, 'Source note'); assert.equal(metadata.children[2].textContent, `Check started ${output.atUtc}`); assert.equal(metadata.children[2].dateTime, output.atUtc);
@@ -132,7 +133,38 @@ test('a hidden verdict returns keyboard focus to visible process state and keyed
   context.snapshot.listener.lastModelOutput = { ...output, decision: 'review', reason: 'Public model wording.', atUtc: '2026-10-23T10:00:04Z' };
   context.renderProcess();
   assert.equal(get('model-verdict-kicker').textContent, 'Local model response · format checked');
-  assert.equal(get('model-verdict-reason').textContent, 'Public model wording.'); assert.equal(metadata.children[1], button); assert.equal(sourceButtons, 1);
+  assert.equal(get('model-verdict-reason').textContent, 'Public model wording.'); assert.equal(metadata.children[1], button); assert.equal(sourceButtons, 2);
+  assert.equal(metadata.hidden, true, 'The completed card owns this run’s source metadata.');
+  assert.equal(document.activeElement, get('model-verdict-label'), 'Focus leaves the now-hidden duplicate source row.');
+  const acceptedReason = get('model-verdict-reason'), acceptedSource = get('model-verdict-source').children[1];
+  acceptedReason.focus(); context.snapshot.listener.busy = true;
+  context.snapshot.listener.modelReview = { id: 2, status: 'running' };
+  context.snapshot.listener.modelOutput = { ...output, checkId: 2, atUtc: '2026-10-23T10:01:00Z', status: 'streaming', text: '{"decision":"review","reason":"Next actual words' };
+  context.renderProcess();
+  assert.equal(get('model-verdict').hidden, false); assert.equal(get('model-verdict-reason'), acceptedReason);
+  assert.equal(acceptedReason.textContent, 'Public model wording.'); assert.equal(document.activeElement, acceptedReason);
+  assert.equal(get('model-verdict-source').children[1], acceptedSource);
+  assert.equal(get('model-draft-reason').textContent, 'Next actual words');
+  assert.equal(get('model-draft-label').textContent, 'Response arriving');
+  assert.equal(metadata.hidden, false, 'A new stream shows its own source separately from the completed card.');
+  assert.match(get('model-verdict-kicker').textContent, /^Earlier/);
+  acceptedSource.focus(); context.snapshot.listener.busy = false;
+  context.snapshot.listener.modelOutput.status = 'complete';
+  context.snapshot.listener.lastModelOutput = { ...context.snapshot.listener.modelOutput, decision: 'review', reason: 'Second completed reason.', atUtc: '2026-10-23T10:01:04Z' };
+  context.renderProcess();
+  assert.equal(get('model-verdict-source').children[1], acceptedSource, 'A new completion clock cannot replace the same source button.');
+  assert.equal(document.activeElement, acceptedSource); assert.equal(sourceButtons, 3, 'Only the separate new-stream metadata created a source button.');
+  assert.equal(get('model-verdict-source').querySelector('time').textContent, 'Completed 2026-10-23T10:01:04Z');
+  assert.equal(get('model-verdict-source').querySelector('time').dateTime, '2026-10-23T10:01:04Z');
+  get('model-output').focus(); context.rawOpen = true;
+  context.snapshot.listener.busy = true; context.snapshot.listener.modelReview = { id: 3, status: 'running' };
+  context.snapshot.listener.modelOutput = { ...context.snapshot.listener.modelOutput, checkId: 3, status: 'streaming', text: '' };
+  context.renderProcess(); assert.equal(document.activeElement, get('process-state'));
+  assert.equal(get('model-output').hidden, true); assert.equal(document.activeElement.focusOptions, undefined);
+  acceptedSource.focus(); context.snapshot.listener.lastModelOutput = { ...context.snapshot.listener.lastModelOutput, entryId: 'different-source', title: 'Different source' };
+  context.renderProcess();
+  assert.equal(document.activeElement, get('model-verdict-label'), 'A genuinely different source transfers focus before replacing its metadata.');
+
 });
 
 test('a saving clean entry cannot be replaced, closed or navigated away from', async () => {
@@ -143,6 +175,42 @@ test('a saving clean entry cannot be replaced, closed or navigated away from', a
   runInNewContext(guards, context);
   context.showEditor(); assert.equal(context.leaveEditor(), false); context.closeEditor(); context.switchView('activity');
   assert.equal(notices.length, 4); assert.ok(notices.every(message => message.includes('still saving')));
+});
+
+test('separate empty ticket insertions have distinct durable IDs even in the same minute; existing tickets are not rewritten', async () => {
+  const { ticketDraft } = await import('../public/desktop-ui.mjs');
+  const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
+  const insert = source.slice(source.indexOf('function insertTicket('), source.indexOf("$('insert-ticket').addEventListener"));
+  let sequence = 0; const body = { value: '', focus() {} }, status = {};
+  const context = { crypto: { randomUUID: () => `unique-${++sequence}` }, ticketDraft, $: id => id === 'entry-body' ? body : status,
+    TICKET_FENCE: /^(```|~~~)[ \t]*flusso-(?:orders|close)[ \t]*\n[\s\S]*?^\1[ \t]*$/gm, updateDraftProtection() {}, notify() {} };
+  runInNewContext(insert, context);
+  context.insertTicket(); const first = body.value; assert.match(first, /ticket-unique-1/); assert.match(first, /"orders": \[\]/);
+  context.insertTicket(true); assert.equal(body.value, first, 'Clicking again preserves the inserted identity and draft.');
+  body.value = ''; context.insertTicket(true); assert.match(body.value, /ticket-unique-3/); assert.match(body.value, /"positionIds": \[\]/);
+  assert.notEqual(JSON.parse(first.split('\n').slice(1, -2).join('\n')).id, JSON.parse(body.value.split('\n').slice(1, -2).join('\n')).id);
+});
+
+test('completed responses distinguish earlier checks, known revisions and canonical scope without guessing eligibility', async () => {
+  const { completedModelPresentation, modelCoverageLabel, processingPresentation, modelOutputPresentation } = await import('../public/desktop-ui.mjs');
+  const published = { entryId: 'source', origin: 'local', version: 1, checkId: 7, decision: 'review', reason: 'Actual unchanged reason.', atUtc: '2026-10-23T12:00:00Z' };
+  const source = { id: 'source', origin: 'local', version: 1, handoff: { context: { inScope: true } } };
+  const listener = { lastModelOutput: published, modelReview: { id: 8, status: 'not_run', reason: 'No model was run.' } };
+  const earlier = completedModelPresentation(listener, [source]);
+  assert.equal(earlier.earlier, true); assert.equal(earlier.reason, published.reason); assert.match(earlier.context, /v1 · Same note revision · Matches selected filters/);
+  const changed = completedModelPresentation({ lastModelOutput: published }, [{ ...source, version: 2, handoff: { context: { inScope: false } } }]);
+  assert.equal(changed.earlier, true); assert.match(changed.context, /v1 · Current note is v2 · Outside selected filters/);
+  const closed = completedModelPresentation(listener, [{ ...source, status: 'closed', version: 2 }]);
+  assert.match(closed.context, /Current note is v2 · Closed note · Matches selected filters/);
+  assert.match(completedModelPresentation(listener, []).context, /Source not loaded/);
+  assert.match(completedModelPresentation({ lastModelOutput: { ...published, version: null } }, [source]).context, /revision unknown/);
+  assert.equal(processingPresentation(listener, true).title, 'No model run');
+  assert.match(modelCoverageLabel({ bodyUnits: 2000, totalBodyUnits: 2100, bodyTruncated: true, unit: 'UTF-16' }), /first 2,000 of 2,100 characters\. The rest was not sent to the model\./);
+  assert.match(modelCoverageLabel({ bodyUnits: 40, totalBodyUnits: 40, bodyTruncated: false, unit: 'UTF-16' }), /Full note body supplied · 40 characters/);
+  assert.equal(modelCoverageLabel(null), 'Review coverage unavailable');
+  const output = { ...published, text: '{}', status: 'complete', atUtc: '2026-10-23T11:59:59Z' };
+  assert.equal(modelOutputPresentation(output, { ...published, version: 2 }).accepted, false);
+  assert.equal(modelOutputPresentation(output, { ...published, checkId: 8 }).accepted, false);
 });
 
 test('account identity comes only from a connected account profile', () => {
@@ -269,7 +337,7 @@ test('partial or unmatched model output is never presented as an accepted decisi
   const published = { entryId: 'note-a', origin: 'local', decision: 'review', reason: 'Needs a quantity.', atUtc: '2026-10-22T17:20:04Z' };
   for (const status of ['streaming', 'failed', 'stopped']) {
     const view = modelOutputPresentation({ ...output, status }, published);
-    assert.equal(view.accepted, false); assert.equal(view.verdict, null); assert.match(view.note, /not accepted|Nothing is accepted/);
+    assert.equal(view.accepted, false); assert.equal(view.verdict, null); assert.match(view.note, /not accepted|Format check pending/);
   }
   const complete = modelOutputPresentation({ ...output, status: 'complete' }, published);
   assert.deepEqual([complete.accepted, complete.verdict], [true, { label: 'review suggested', tone: 'info', reason: 'Needs a quantity.' }]);
@@ -315,7 +383,7 @@ test('a streamed reason is a labelled draft until the same run is published', as
   const published = { entryId: 'note-a', origin: 'local', decision: 'review', reason: 'Needs a quantity.', atUtc: '2026-10-22T17:20:04Z' };
   const streaming = modelOutputPresentation({ ...base, status: 'streaming', text: '{"decision":"review","reason":"Needs a qua' }, published);
   assert.deepEqual([streaming.draft, streaming.draftLabel, streaming.verdict, streaming.accepted], ['Needs a qua', 'Reason so far', null, false]);
-  assert.match(streaming.note, /Nothing is accepted/);
+  assert.match(streaming.note, /Format check pending/);
   assert.equal(modelOutputPresentation({ ...base, status: 'streaming', text: '{"decision":"rev' }).draft, '');
   assert.equal(modelOutputPresentation({ ...base, status: 'streaming', text: 'Not JSON at all' }).draft, null);
   const stopped = modelOutputPresentation({ ...base, status: 'stopped', text: '{"decision":"review","reason":"Needs' });

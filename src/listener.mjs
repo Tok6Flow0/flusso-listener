@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { classifyEntry } from './model.mjs';
+import { classifyEntry, modelInputCoverage } from './model.mjs';
 import { buildOrderRequest, readTicket, withResult } from './orders.mjs';
 import { entryInScope as inScope, ticketSetupGap } from './handoff.mjs';
 
@@ -28,7 +28,7 @@ export function summarize(receipt, count, kind = 'orders') {
 export function createListener({ store, cloud, buildRequest = buildOrderRequest, classify = classifyEntry, clock = Date.now }) {
   let timer = null, busy = false, activeAbort = null, activeTick = null, stopped = false, scheduleGeneration = 0;
   const state = { running: false, busy: false, lastCheckedAtUtc: null, lastError: null, cloudComplete: null, cloudReason: null,
-    processing: null, events: [], lastModelOutput: null, modelOutput: null, sequence: 0 };
+    processing: null, events: [], lastModelOutput: null, modelOutput: null, modelReview: null, sequence: 0 };
   const subscribers = new Set();
   function changed() {
     state.sequence += 1;
@@ -187,6 +187,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
   async function runTick({ reviewLatest }) {
     busy = true; state.busy = true; activeAbort = new AbortController();
     state.processing = null;
+    const review = state.modelReview = { id: ++eventSequence, startedAtUtc: new Date(clock()).toISOString(), status: 'checking', reason: null };
     publish('read', 'Starting a Listener check.');
     try {
       const settings = store.settings(); state.lastError = null;
@@ -239,7 +240,9 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
         let decision;
         store.put('activity', activity.id, { ...activity, status: 'processing', reason: 'The local model is reading this note.' });
         publish('model', 'The local model is reading the note and preparing its response.', entry, { index, total });
-        state.modelOutput = { entryId: entry.id, title: entry.title, origin: entry.origin, version: entry.version, atUtc, text: '', status: 'streaming' };
+        review.status = 'running'; review.reason = null;
+        const coverage = modelInputCoverage(entry);
+        state.modelOutput = { entryId: entry.id, title: entry.title, origin: entry.origin, version: entry.version, checkId: review.id, coverage, atUtc, text: '', status: 'streaming' };
         changed();
         try {
           decision = await classify({ entry, instructions: settings.instructions, signal: activeAbort.signal, onOutput: delta => {
@@ -250,7 +253,7 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
           } });
         }
         catch (error) {
-          state.modelOutput.status = activeAbort.signal.aborted ? 'stopped' : 'failed'; changed();
+          state.modelOutput.status = review.status = activeAbort.signal.aborted ? 'stopped' : 'failed'; changed();
           if (activeAbort.signal.aborted) { store.put('activity', activity.id, { ...activity, status: 'waiting', reason: 'Model review paused before a decision. This note will be checked again when selected and the Listener is on.' }); break; }
           // Left unchecked so it is read again once the model is available.
           state.lastError = error?.message?.includes('local model') || error?.message?.includes('classification') ? error.message : 'The local model could not read a note.';
@@ -260,22 +263,30 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
         }
         const latestSettings = store.settings();
         if (activeAbort.signal.aborted || latestSettings.version !== settingsVersion || !latestSettings.enabled || !inScope(entry, latestSettings)) {
-          state.modelOutput.status = 'stopped'; changed();
+          state.modelOutput.status = review.status = 'stopped'; changed();
           store.put('activity', activity.id, { ...activity, status: 'waiting', reason: 'Listener settings changed before the model decision was accepted. This note will be checked again when selected and the Listener is on.' });
           break;
         }
         store.put('activity', activity.id, { ...activity, decision: decision.decision, reason: decision.reason, status: 'observed' });
         state.modelOutput.status = 'complete';
-        state.lastModelOutput = { entryId: entry.id, title: entry.title, origin: entry.origin, version: entry.version, decision: decision.decision, reason: decision.reason, atUtc: new Date(clock()).toISOString() };
+        review.status = 'complete';
+        state.lastModelOutput = { entryId: entry.id, title: entry.title, origin: entry.origin, version: entry.version, checkId: review.id, coverage, decision: decision.decision, reason: decision.reason, atUtc: new Date(clock()).toISOString() };
         publish('decision', decision.reason || `Model decision: ${decision.decision}.`, entry, { decision: decision.decision, index, total });
         publish('result', 'Research review complete. No order was requested for this note.', entry, { status: 'observed', index, total });
         store.put('checkpoint', key, { version: entry.version, state: 'observed', atUtc });
       }
-      if (reviewLatest && !researchEntry) publish('waiting', 'No reviewed or watching research note matches the selected notebooks and section. No model was run.');
+      if (review.status === 'checking') {
+        review.status = 'not_run';
+        review.reason = reviewLatest && !researchEntry ? 'No reviewed or watching research note matches the selected notebooks and section. No model was run.' : 'No research revision required model review in this check.';
+        publish('waiting', review.reason);
+      }
       state.lastCheckedAtUtc = new Date(clock()).toISOString();
     } catch { if (!activeAbort.signal.aborted) { state.lastError = 'The listener could not finish its check. Inspect retained receipts for any instruction already dispatched.'; publish('error', state.lastError); } }
     finally {
       busy = false; state.busy = false;
+      if (activeAbort.signal.aborted) review.status = 'stopped';
+      else if (state.lastError && review.status === 'checking') review.status = 'failed';
+      review.completedAtUtc = new Date(clock()).toISOString();
       publish(activeAbort.signal.aborted ? 'paused' : 'idle', activeAbort.signal.aborted ? 'Check paused after a settings change or shutdown. Retained attempts keep their original delivery state.' : (state.lastError || 'Check complete. Waiting for the next scheduled check.'));
       activeAbort = null;
     }

@@ -34,7 +34,7 @@ test('loopback GUI refuses wrong Host/Origin and unauthorized requests; session 
 test('authorized local Journal save/readback and version conflict flow use the same private store', async () => {
   const w = await appFixture(); try {
     await w.unlock(); const response = await w.post('/api/entries', note(w.store), { 'Idempotency-Key': 'original-api-research-key' }); assert.equal(response.status, 201); const saved = await response.json();
-    const status = await fetch(w.app.origin + '/api/status', { headers: { Cookie: w.cookie() } }).then(row => row.json()); assert.equal(status.entries[0].id, saved.id); assert.deepEqual(status.limits, { entries: 500, activity: 100, attempts: 100 });
+    const status = await fetch(w.app.origin + '/api/status', { headers: { Cookie: w.cookie() } }).then(row => row.json()); assert.equal(status.entries[0].id, saved.id); assert.deepEqual(status.limits, { entries: 500, activity: 100, attempts: 100, modelBodyUnits: 2000 });
     assert.equal((await w.post('/api/entries/' + saved.id, { ...note(w.store), version: 10 })).status, 409);
     assert.equal((await w.post('/api/entries', { ...note(w.store), execute: true })).status, 400);
   } finally { await w.close(); }

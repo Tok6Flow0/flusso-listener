@@ -482,6 +482,32 @@ test('a failed streamed answer retains its partial text as failed and leaves the
   } finally { await listener.stop(); await w.close(); }
 });
 
+test('a later check without selected research retains the exact earlier response and reports no model run', async () => {
+  const w = await workspace(), started = deferred(), finish = deferred(); let calls = 0;
+  const listener = createListener({ store: w.store, cloud: fakeCloud(), classify: async ({ onOutput }) => {
+    calls++; if (calls === 2) { onOutput('{"decision":"review","reason":"Second'); started.resolve(); await finish.promise; }
+    return { decision: 'review', reason: `Actual response ${calls}` };
+  }, clock: () => now });
+  try {
+    enable(w.store); const research = w.store.createEntry(note(w.store, { body: 'x'.repeat(2400), status: 'reviewed' })); listener.start();
+    await listener.tick({ reviewLatest: true }); const previous = listener.status().lastModelOutput;
+    assert.equal(previous.coverage.bodyUnits, 2000); assert.equal(previous.coverage.totalBodyUnits, 2400); assert.equal(previous.coverage.bodyTruncated, true);
+    assert.equal(previous.checkId, listener.status().modelReview.id);
+    const next = listener.tick({ reviewLatest: true }); await started.promise;
+    assert.deepEqual(listener.status().lastModelOutput, previous, 'The prior completed response remains available throughout streaming.');
+    assert.notEqual(listener.status().modelOutput.checkId, previous.checkId);
+    finish.resolve(); await next;
+    const accepted = listener.status().lastModelOutput;
+    w.store.updateEntry(research.id, { ...note(w.store), body: research.body, status: 'closed', version: research.version });
+    await listener.tick({ reviewLatest: true });
+    assert.equal(calls, 2); assert.deepEqual(listener.status().lastModelOutput, accepted);
+    assert.equal(listener.status().modelReview.status, 'not_run');
+    assert.notEqual(listener.status().modelReview.id, accepted.checkId);
+    assert.match(listener.status().modelReview.reason, /No model was run/);
+    assert.equal(w.store.all('attempt').length, 0);
+  } finally { finish.resolve(); await listener.stop(); await w.close(); }
+});
+
 
 test('every timer period calls the model for unchanged selected research without replaying a ticket', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });

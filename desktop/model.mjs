@@ -82,7 +82,7 @@ export function createDesktopModel({ directory, runtimeDirectory, existingModelP
     status: () => ({ ...state }), initialize: () => ensure(false), setup: () => ensure(true), stop,
     modelStatus: async () => ({ available: Boolean(endpoint), installed: state.state === 'ready', model: MODEL }),
     async classify({ entry, instructions = '', signal, onOutput }) {
-      if (!endpoint || state.state !== 'ready') throw new Error('Set up the desktop local model first. No execution was attempted.');
+      if (!endpoint || state.state !== 'ready') throw new Error('Set up the desktop local model first. The research review could not start.');
       const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }, redirect: 'error', signal: AbortSignal.any([lifetime.signal, ...(signal ? [signal] : []), AbortSignal.timeout(90000)]), body: JSON.stringify({ model: 'qwen3-1.7b', stream: true, temperature: 0, max_tokens: 256, chat_template_kwargs: { enable_thinking: false }, response_format: { type: 'json_schema', json_schema: { name: 'classification', strict: true, schema: decisionSchema } }, messages: classificationMessages(entry, instructions) }) });
       if (!response.ok) throw new Error('The desktop local model is unavailable.');
       return readClassificationStream(response, { protocol: 'openai', onOutput });

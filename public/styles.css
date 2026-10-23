@@ -235,7 +235,7 @@ tr:last-child td{border-bottom:0}
 .verdict[data-state=draft] .verdict-reason{color:var(--c-ink-3)}
 .review-desk[data-live=true] .verdict[data-state=draft]{border-color:var(--c-teal-soft)}
 .verdict[data-state=draft]:not([hidden])~.output-raw::after{content:none}
-.verdict .link-button{justify-self:start}
+.output-frame>.link-button{justify-self:start}
 .output-raw{margin:0;min-height:96px;max-height:clamp(160px,42vh,520px);overflow-y:auto;overscroll-behavior:contain;white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--fs-body-sm);line-height:var(--lh-relaxed);color:var(--c-ink-2);transition:border-color .3s,box-shadow .3s}
 .output-frame[data-status=streaming] .output-raw{min-height:160px}
 .review-desk[data-live=true] .output-raw{border-color:var(--c-teal-soft);box-shadow:inset 0 0 0 1px rgba(var(--c-teal-rgb),.08)}

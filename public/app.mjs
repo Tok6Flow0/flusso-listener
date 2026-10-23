@@ -1,6 +1,6 @@
 import { formatCount, formatPrice, formatQuantity, formatPercentLabel, formatMoney, formatPercent } from './format.mjs';
 import { renderMarkdown } from './markdown.mjs';
-import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, entryCardPresentation, entryReadingCore, activityStatus, listenerResult, listenerRevisionPresentation, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions, decisionShownInDesk, decisionRowKeys, receiptDetails, modelOutputPresentation, completionAnnouncement, localDraftDirty, intervalLabel, settingsSwitchBody, ticketDraft } from './desktop-ui.mjs';
+import { accountPresentation, updatePresentation, modelPresentation, THEME_OPTIONS, resolveTheme, entryStatus, entryCardPresentation, entryReadingCore, activityStatus, listenerResult, listenerRevisionPresentation, RESULT_FILTERS, matchesResultFilter, processStage, processingPresentation, latestDecisions, decisionShownInDesk, decisionRowKeys, receiptDetails, modelOutputPresentation, completedModelPresentation, modelCoverageLabel, completionAnnouncement, localDraftDirty, intervalLabel, settingsSwitchBody, ticketDraft } from './desktop-ui.mjs';
 
 const $ = id => document.getElementById(id);
 let csrf, snapshot, selected = null, editing = null, entryRetryKey = crypto.randomUUID();
@@ -290,7 +290,7 @@ function openEntry(entry) {
 
 // The raw response stays one click away whenever its reason is shown as prose.
 let rawOpen = false;
-$('model-raw-toggle').addEventListener('click', () => { rawOpen = !rawOpen; renderProcess(); if (rawOpen) $('model-output').focus({ preventScroll: true }); });
+$('model-raw-toggle').addEventListener('click', () => { rawOpen = !rawOpen; renderProcess(); if (rawOpen) $('model-output').focus(); });
 
 // Appends only what arrived, and follows new text only while the reader is already
 // at the end of it. Scrolling up to read holds the position; the page never moves.
@@ -315,6 +315,8 @@ function renderProcess() {
   const { listener, settings } = snapshot, output = listener.modelOutput;
   const state = processingPresentation(listener, settings.enabled);
   const view = modelOutputPresentation(output, listener.lastModelOutput, { disconnected: streamDisconnected, enabled: settings.enabled, busy: listener.busy });
+  const completed = completedModelPresentation(listener, snapshot.entries);
+  const earlier = listener.modelReview?.id != null && output?.checkId !== listener.modelReview.id;
   const desk = $('review-desk');
   desk.dataset.state = state.state; desk.dataset.live = String(view.live);
   setText('process-state', state.title);
@@ -324,19 +326,19 @@ function renderProcess() {
 
   $('output-frame').dataset.status = view.status;
   setText('model-output-heading', !settings.enabled && output ? 'Last model response' : 'Model output');
-  setText('model-output-status', !settings.enabled && view.status === 'complete' ? 'Last check complete' : view.label); $('model-output-status').className = `output-status ${!settings.enabled && view.status === 'complete' ? '' : view.tone}`;
-  $('model-output-status').hidden = settings.enabled && view.accepted;
+  setText('model-output-status', earlier && output ? 'Earlier response' : !settings.enabled && view.status === 'complete' ? 'Last check complete' : view.label); $('model-output-status').className = `output-status ${!settings.enabled && view.status === 'complete' ? '' : view.tone}`;
+  $('model-output-status').hidden = settings.enabled && view.accepted && !earlier;
   if (changed('model-output-source', output ? [output.entryId, output.origin, output.title, output.atUtc, snapshot.entries.some(row => row.id === output.entryId && row.origin === output.origin)] : null)) {
     const source = $('model-output-source');
     if (output) { const time = element('time', `Check started ${when(output.atUtc, true)}`); time.dateTime = output.atUtc; source.replaceChildren(element('span', 'Source note', 'hint'), sourceButton(output, output.title || 'Journal entry'), time); }
     else source.replaceChildren();
-    source.hidden = !output;
   }
-  // One block carries the reason from its first streamed words to the accepted
-  // decision; only a validated, matching run earns the decision label.
-  const summary = view.verdict ? { state: 'accepted', kicker: 'Local model response · format checked', label: view.verdict.label, tone: view.verdict.tone, reason: view.verdict.reason || 'The model gave no reason.' }
-    : view.draft !== null ? { state: 'draft', kicker: view.draftLabel, label: view.live ? 'validation pending' : 'not accepted', tone: '', reason: view.draft } : null;
-  const announcement = listener.busy ? null : completionAnnouncement(view, output, lastCompletionKey, listener.lastError);
+  // A new stream has its own draft. The last completed reason remains readable
+  // in the same DOM node, labelled with its own source, revision and completion.
+  const draft = view.draft !== null;
+  setText('model-input-coverage', output ? modelCoverageLabel(output.coverage) : '');
+  $('model-input-coverage').hidden = !output || view.accepted;
+  const announcement = listener.busy || earlier && !listener.lastError ? null : completionAnnouncement(view, output, lastCompletionKey, listener.lastError);
   if (listener.busy || (!view.accepted && !['failed', 'stopped'].includes(view.status) && !listener.lastError)) {
     cancelAnimationFrame(completionFrame); setText('model-completion', '');
   } else if (announcement) {
@@ -347,20 +349,44 @@ function renderProcess() {
     cancelAnimationFrame(completionFrame);
     completionFrame = requestAnimationFrame(() => { if (lastCompletionKey === announcement.key) setText('model-completion', announcement.message); });
   }
-  // Keep the raw answer open if a keyboard reader is using it as the reason appears.
-  if (summary && $('model-output').contains(document.activeElement)) rawOpen = true;
-  // Scheduled checks must not strand a keyboard reader inside a hidden summary.
-  if (!summary && $('model-verdict').contains(document.activeElement)) $('process-state').focus();
-  $('model-verdict').hidden = !summary;
-  if (summary) {
-    $('model-verdict').dataset.state = summary.state;
-    setText('model-verdict-kicker', summary.kicker);
-    setText('model-verdict-label', summary.label.charAt(0).toUpperCase() + summary.label.slice(1)); $('model-verdict-label').className = `verdict-label ${summary.tone}`;
-    growText($('model-verdict-reason'), summary.reason);
-    setText('model-raw-toggle', rawOpen ? 'Hide raw response' : 'Show raw response'); $('model-raw-toggle').setAttribute('aria-expanded', String(rawOpen));
+  if ((draft || view.accepted) && output?.text && $('model-output').contains(document.activeElement)) rawOpen = true;
+  const rawHidden = !output?.text || ((draft || view.accepted) && !rawOpen);
+  // Scheduled checks may hide the current raw answer/draft. Browser scrolling
+  // must expose the visible focus target, rather than leave it above the viewport.
+  if ((rawHidden && $('model-output').contains(document.activeElement))
+    || (!draft && $('model-draft').contains(document.activeElement))
+    || (!completed && $('model-verdict').contains(document.activeElement))
+    || (!output?.text && document.activeElement === $('model-raw-toggle'))) $('process-state').focus();
+  $('model-draft').hidden = !draft;
+  if (draft) {
+    setText('model-draft-kicker', view.live ? 'Format check pending' : view.draftLabel);
+    setText('model-draft-label', view.live ? 'Response arriving' : 'Response not accepted');
+    growText($('model-draft-reason'), view.draft);
   }
+  $('model-verdict').hidden = !completed;
+  if (completed) {
+    $('model-verdict').dataset.state = 'accepted';
+    setText('model-verdict-kicker', `${completed.earlier ? 'Earlier local' : 'Local'} model response · format checked`);
+    setText('model-verdict-label', completed.label.charAt(0).toUpperCase() + completed.label.slice(1));
+    $('model-verdict-label').className = `verdict-label ${completed.tone}`;
+    growText($('model-verdict-reason'), completed.reason);
+    setText('model-verdict-context', completed.context);
+    setText('model-verdict-coverage', modelCoverageLabel(completed.output.coverage));
+    const source = completed.output;
+    const metadata = $('model-verdict-source');
+    if (changed('model-verdict-source', [source.entryId, source.origin, source.title, snapshot.entries.some(row => row.id === source.entryId && row.origin === source.origin)])) {
+      if (metadata.contains(document.activeElement)) $('model-verdict-label').focus();
+      metadata.replaceChildren(element('span', 'Source note', 'hint'), sourceButton(source, source.title || 'Journal entry'), element('time'));
+    }
+    const time = metadata.querySelector('time'); time.textContent = `Completed ${when(source.atUtc, true)}`; time.dateTime = source.atUtc;
+  }
+  const sourceHidden = !output || view.accepted;
+  if (sourceHidden && $('model-output-source').contains(document.activeElement)) $('model-verdict-label').focus();
+  $('model-output-source').hidden = sourceHidden;
+  setText('model-raw-toggle', rawOpen ? 'Hide raw response' : 'Show raw response');
+  $('model-raw-toggle').setAttribute('aria-expanded', String(rawOpen)); $('model-raw-toggle').hidden = !output?.text || !(draft || view.accepted);
   renderOutputText(output);
-  $('model-output').hidden = !output?.text || (Boolean(summary) && !rawOpen);
+  $('model-output').hidden = rawHidden;
   setText('model-output-note', view.note ?? ''); $('model-output-note').hidden = !view.note;
   setText('model-output-empty', view.empty ?? ''); $('model-output-empty').hidden = !view.empty;
 
@@ -386,7 +412,7 @@ function renderDecisions() {
   const all = latestDecisions(snapshot.activity, published, { limit: null });
   const latest = all.filter(row => !decisionShownInDesk(row, output, published)).slice(0, 5);
   const panel = $('latest-decisions').closest('section'), hidden = all.length > 0 && !latest.length;
-  if (hidden && panel.contains(document.activeElement)) $('model-verdict-label').focus({ preventScroll: true });
+  if (hidden && panel.contains(document.activeElement)) $('model-verdict-label').focus();
   panel.hidden = hidden;
   const items = decisionItems(latest, row => ({ enabled: snapshot.settings.enabled }));
   if (!changed('decisions', items)) return;
@@ -445,7 +471,8 @@ function renderRiskValidation() {
       input.required = snapshot.settings.executionEnabled;
     }
     input.setAttribute('aria-invalid', String(Boolean(error)));
-    if (error) input.setAttribute('aria-describedby', message.id); else input.removeAttribute('aria-describedby');
+    const descriptions = [error ? message.id : null, input.id === 'max-leverage' ? 'max-leverage-scope' : null].filter(Boolean);
+    if (descriptions.length) input.setAttribute('aria-describedby', descriptions.join(' ')); else input.removeAttribute('aria-describedby');
     message.textContent = error; message.hidden = !error;
   }
   return firstInvalid;
@@ -703,7 +730,7 @@ function closeEditor({ focus = false } = {}) {
   if (focus) (document.querySelector('.entry-card.selected') ?? $('new-entry')).focus();
 }
 function insertTicket(close = false) {
-  const id = `ticket-${new Date().toISOString().slice(0, 16).replace(/[-:]/g, '')}`;
+  const id = `ticket-${crypto.randomUUID()}`;
   const body = $('entry-body'), block = '```' + (close ? 'flusso-close' : 'flusso-orders') + '\n' + JSON.stringify(ticketDraft(id, close), null, 2) + '\n```\n';
   if (TICKET_FENCE.test(body.value)) { TICKET_FENCE.lastIndex = 0; notify('This entry already has an action ticket.'); return; }
   TICKET_FENCE.lastIndex = 0; body.value = `${body.value.trimEnd()}${body.value.trim() ? '\n\n' : ''}${block}`; $('entry-status').value = 'watching'; updateDraftProtection(); body.focus();
