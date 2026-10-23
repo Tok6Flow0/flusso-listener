@@ -328,13 +328,13 @@ function renderProcess() {
   $('model-output-status').hidden = settings.enabled && view.accepted;
   if (changed('model-output-source', output ? [output.entryId, output.origin, output.title, output.atUtc, snapshot.entries.some(row => row.id === output.entryId && row.origin === output.origin)] : null)) {
     const source = $('model-output-source');
-    if (output) { const time = element('time', when(output.atUtc, true)); time.dateTime = output.atUtc; source.replaceChildren(sourceButton(output, output.title || 'Journal entry'), time); }
+    if (output) { const time = element('time', `Check started ${when(output.atUtc, true)}`); time.dateTime = output.atUtc; source.replaceChildren(element('span', 'Source note', 'hint'), sourceButton(output, output.title || 'Journal entry'), time); }
     else source.replaceChildren();
     source.hidden = !output;
   }
   // One block carries the reason from its first streamed words to the accepted
   // decision; only a validated, matching run earns the decision label.
-  const summary = view.verdict ? { state: 'accepted', kicker: 'Validated response', label: view.verdict.label, tone: view.verdict.tone, reason: view.verdict.reason || 'The model gave no reason.' }
+  const summary = view.verdict ? { state: 'accepted', kicker: 'Local model response · format checked', label: view.verdict.label, tone: view.verdict.tone, reason: view.verdict.reason || 'The model gave no reason.' }
     : view.draft !== null ? { state: 'draft', kicker: view.draftLabel, label: view.live ? 'validation pending' : 'not accepted', tone: '', reason: view.draft } : null;
   const announcement = listener.busy ? null : completionAnnouncement(view, output, lastCompletionKey, listener.lastError);
   if (listener.busy || (!view.accepted && !['failed', 'stopped'].includes(view.status) && !listener.lastError)) {
@@ -350,7 +350,7 @@ function renderProcess() {
   // Keep the raw answer open if a keyboard reader is using it as the reason appears.
   if (summary && $('model-output').contains(document.activeElement)) rawOpen = true;
   // Scheduled checks must not strand a keyboard reader inside a hidden summary.
-  if (!summary && $('model-verdict').contains(document.activeElement)) $('model-output-heading').focus({ preventScroll: true });
+  if (!summary && $('model-verdict').contains(document.activeElement)) $('process-state').focus();
   $('model-verdict').hidden = !summary;
   if (summary) {
     $('model-verdict').dataset.state = summary.state;
@@ -391,7 +391,7 @@ function renderDecisions() {
   const items = decisionItems(latest, row => ({ enabled: snapshot.settings.enabled }));
   if (!changed('decisions', items)) return;
   reconcileRows($('latest-decisions'), items.length ? items : [{ key: 'empty', value: null }], value => {
-    if (!value) return element('p', 'No decisions yet. Validated model responses and order results appear here after a check.', 'empty');
+    if (!value) return element('p', 'No decisions yet. Local model responses and order results appear here after a check.', 'empty');
     const { row, enabled } = value;
     const item = element('article', null, 'decision-row'), top = element('div', null, 'decision-top'), source = element('div', null, 'decision-source'), status = activityStatus(row);
     const time = element('time', when(row.atUtc, true)); time.dateTime = row.atUtc;

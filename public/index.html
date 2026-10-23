@@ -91,7 +91,7 @@
           <header class="desk-head">
             <span class="agent" aria-hidden="true"><span class="agent-mark"><img src="/flusso-mark.png" alt="" width="44" height="44"></span><span class="agent-dot"></span></span>
             <div class="desk-state">
-              <p class="desk-state-line"><strong id="process-state" class="process-state">Off</strong><span id="process-stage" class="stage-chip" hidden></span></p>
+              <p class="desk-state-line"><strong id="process-state" class="process-state" tabindex="-1">Off</strong><span id="process-stage" class="stage-chip" hidden></span></p>
               <p id="process-message" class="process-message"></p>
             </div>
           </header>
@@ -103,7 +103,7 @@
             </div>
             <div id="model-output-source" class="output-source" hidden></div>
             <div id="model-verdict" class="verdict" hidden>
-              <div class="verdict-head"><p id="model-verdict-kicker" class="verdict-kicker">Validated response</p><h3 id="model-verdict-label" class="verdict-label" tabindex="-1"></h3></div>
+              <div class="verdict-head"><p id="model-verdict-kicker" class="verdict-kicker">Local model response · format checked</p><h3 id="model-verdict-label" class="verdict-label" tabindex="-1"></h3></div>
               <p id="model-verdict-reason" class="verdict-reason"></p>
               <button id="model-raw-toggle" type="button" class="link-button" aria-expanded="false" aria-controls="model-output">Show raw response</button>
             </div>
@@ -113,15 +113,15 @@
           </div>
         </section>
         <div class="listener-secondary">
-          <section class="decisions-panel" aria-labelledby="decisions-heading">
-            <div class="panel-head"><h2 id="decisions-heading">Latest decisions</h2><button id="all-activity" type="button" class="link-button">Recent activity</button></div>
-            <div id="latest-decisions" class="latest-decisions"></div>
-          </section>
           <details class="ops-log">
             <summary><span>Operations log</span><span id="process-count" class="ops-count mono"></span></summary>
             <ol id="process-events" class="process-events" aria-label="Processing updates"></ol>
             <p id="process-events-empty" class="empty">Journal reads, checks, validation and receipts are listed here during a check.</p>
           </details>
+          <section class="decisions-panel" aria-labelledby="decisions-heading">
+            <div class="panel-head"><h2 id="decisions-heading">Latest decisions</h2><button id="all-activity" type="button" class="link-button">Recent activity</button></div>
+            <div id="latest-decisions" class="latest-decisions"></div>
+          </section>
         </div>
         <section id="listener-configuration" class="listener-configuration" aria-labelledby="configuration-heading" hidden>
         <div class="configuration-head"><h2 id="configuration-heading">Listener settings</h2><button id="close-configuration" type="button" class="ghost">Close</button></div>

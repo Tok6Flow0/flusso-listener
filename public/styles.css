@@ -208,7 +208,7 @@ tr:last-child td{border-bottom:0}
 .review-desk[data-state=reviewing] .agent::before{animation:breathe 2.8s ease-in-out infinite}
 .desk-state{display:grid;gap:4px;min-width:0;flex:1}
 .desk-state-line{display:flex;align-items:center;gap:6px 12px;flex-wrap:wrap}
-.process-state{font-size:var(--fs-title);font-weight:var(--fw-semibold);line-height:var(--lh-snug);color:var(--c-ink)}
+.process-state{font-size:var(--fs-body-lg);font-weight:var(--fw-semibold);line-height:var(--lh-snug);color:var(--c-ink)}
 .review-desk[data-state=error] .process-state,.review-desk[data-state=paused] .process-state{color:var(--c-warn-deep)}
 .stage-chip{display:inline-flex;align-items:center;min-height:22px;padding:0 8px;border-radius:6px;background:var(--c-teal-wash);border:1px solid var(--c-teal-soft);color:var(--c-teal-deep);font:var(--fw-regular) var(--fs-label)/1 var(--font-mono);text-transform:uppercase;letter-spacing:var(--ls-label);animation:fade .2s ease}
 .process-message{font-size:var(--fs-body);color:var(--c-ink-3);max-width:95ch;overflow-wrap:anywhere}

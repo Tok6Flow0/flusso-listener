@@ -94,6 +94,45 @@ test('the existing entry Save and Cancel controls sit in its heading and the out
   assert.equal((form.match(/id="cancel-edit"/g) ?? []).length, 1); assert.equal((form.match(/>Save<\/button>/g) ?? []).length, 1);
   assert.match(html, /<h2 id="model-output-heading" class="sr-only"/); assert.match(html, /<h3 id="model-verdict-label"/);
   assert.match(html, /aria-labelledby="model-output-heading"/); assert.doesNotMatch(html, /Accepted local decision/);
+  assert.match(html, /id="process-state" class="process-state" tabindex="-1"/);
+  assert.match(html, /Local model response · format checked/);
+  assert.ok(html.indexOf('<details class="ops-log">') < html.indexOf('<section class="decisions-panel"'), 'Operations remains before the changing preview panel.');
+});
+
+test('a hidden verdict returns keyboard focus to visible process state and keyed source metadata survives token updates', async () => {
+  const { processingPresentation, modelOutputPresentation, completionAnnouncement } = await import('../public/desktop-ui.mjs');
+  const source = await readFile(new URL('../public/app.mjs', import.meta.url), 'utf8');
+  const render = source.slice(source.indexOf('function renderProcess()'), source.indexOf('function renderDecisions()'));
+  const document = { activeElement: { id: 'model-raw-toggle' } }, nodes = new Map(), keys = new Map(); let sourceButtons = 0;
+  const node = (id, textContent = '') => ({ id, textContent, dataset: {}, children: [], scrollHeight: 0, scrollTop: 0, clientHeight: 0,
+    replaceChildren(...children) { this.children = children; },
+    contains(target) { return id === 'model-verdict' && target?.id === 'model-raw-toggle' || this.children.includes(target); },
+    focus(options) { document.activeElement = this; this.focusOptions = options; }, setAttribute() {},
+  });
+  const get = id => { if (!nodes.has(id)) nodes.set(id, node(id)); return nodes.get(id); };
+  const context = {
+    document, $: get, snapshot: { settings: { enabled: true }, entries: [], listener: { busy: true, modelOutput: null, events: [] } },
+    processingPresentation, modelOutputPresentation, completionAnnouncement, streamDisconnected: false, rawOpen: false, lastCompletionKey: null, completionFrame: null,
+    setText: (id, value) => { get(id).textContent = value; }, growText: (target, value) => { target.textContent = value; },
+    changed: (key, value) => { const serialized = JSON.stringify(value); if (keys.get(key) === serialized) return false; keys.set(key, serialized); return true; },
+    element: (tag, content) => node(tag, content), sourceButton: (_row, title) => node(`source-${++sourceButtons}`, title), when: value => value,
+    renderOutputText() {}, decisionItems: () => [], reconcileRows() {}, cancelAnimationFrame() {}, requestAnimationFrame: callback => { callback(); return 1; },
+  };
+  runInNewContext(render, context); context.renderProcess();
+  assert.equal(document.activeElement, get('process-state')); assert.equal(get('process-state').textContent, 'Reading');
+  assert.equal(get('model-verdict').hidden, true); assert.equal(document.activeElement.focusOptions, undefined, 'The browser may reveal the newly focused visible state.');
+  const output = { entryId: 'research', origin: 'local', title: 'Source research', version: 2, atUtc: '2026-10-23T10:00:00Z', status: 'streaming', text: '{"decision":"review","reason":"Public model' };
+  context.snapshot.entries = [{ id: output.entryId, origin: output.origin }]; context.snapshot.listener.modelOutput = output;
+  context.renderProcess();
+  const metadata = get('model-output-source'), button = metadata.children[1]; button.focus();
+  assert.equal(metadata.children[0].textContent, 'Source note'); assert.equal(metadata.children[2].textContent, `Check started ${output.atUtc}`); assert.equal(metadata.children[2].dateTime, output.atUtc);
+  output.text += ' wording.'; context.renderProcess();
+  assert.equal(metadata.children[1], button); assert.equal(document.activeElement, button); assert.equal(sourceButtons, 1);
+  context.snapshot.listener.busy = false; output.status = 'complete'; output.text = '{"decision":"review","reason":"Public model wording."}';
+  context.snapshot.listener.lastModelOutput = { ...output, decision: 'review', reason: 'Public model wording.', atUtc: '2026-10-23T10:00:04Z' };
+  context.renderProcess();
+  assert.equal(get('model-verdict-kicker').textContent, 'Local model response · format checked');
+  assert.equal(get('model-verdict-reason').textContent, 'Public model wording.'); assert.equal(metadata.children[1], button); assert.equal(sourceButtons, 1);
 });
 
 test('a saving clean entry cannot be replaced, closed or navigated away from', async () => {
