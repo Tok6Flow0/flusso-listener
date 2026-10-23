@@ -57,9 +57,9 @@ function notifyPollFailure(message) {
 async function api(path, body, headers = {}) {
   let response;
   try { response = await fetch(path, { method: body === undefined ? 'GET' : 'POST', headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json', 'x-flusso-csrf': csrf }), ...headers }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }); }
-  catch { throw new Error('Journal could not reach its local service. Keep Journal running, or reopen it to reconnect.'); }
+  catch { throw new Error('Journal lost its connection to its local service. Retry when the service is available.'); }
   let value;
-  try { value = await response.json(); } catch { throw new Error('Journal received an incomplete or unreadable response. The result could not be confirmed.'); }
+  try { value = await response.json(); } catch { throw new Error('Journal received an incomplete or unreadable response.'); }
   if (!response.ok) throw Object.assign(new Error(value.error || 'That did not work. Try again.'), { status: response.status }); return value;
 }
 function initialLocalSaveRefusal(error) {
@@ -659,9 +659,11 @@ function renderEntries() {
   reconcileRows($('entry-list'), items, row => {
     if (row.empty) {
       const empty = element('div', null, 'empty list-empty');
-      const button = element('button', row.hasEntries ? 'Show all entries' : 'Write the first entry', 'link-button'); button.type = 'button';
-      button.addEventListener('click', () => { if (row.hasEntries) { $('journal-filter').value = ''; $('result-filter').value = ''; renderEntries(); } else showEditor(); });
-      empty.append(element('p', row.hasEntries ? 'No entries match these filters.' : 'Your Journal is empty.'), button);
+      empty.append(element('p', row.hasEntries ? 'No entries match these filters.' : 'Your Journal is empty.'));
+      if (row.hasEntries) {
+        const button = element('button', 'Show all entries', 'link-button'); button.type = 'button';
+        button.addEventListener('click', () => { $('journal-filter').value = ''; $('result-filter').value = ''; renderEntries(); }); empty.append(button);
+      }
       return empty;
     }
     const button = element('button', null, 'entry-card'); button.type = 'button';
@@ -718,10 +720,8 @@ function renderDetail() {
     if (!changed('entry-detail:core', { empty: true, hasEntries: Boolean(snapshot?.entries.length) })) return;
     detail.setAttribute('aria-label', 'Selected entry');
     const empty = element('div', null, 'empty-art'), mark = element('img'); mark.src = '/flusso-mark.png'; mark.alt = ''; mark.width = mark.height = 40;
-    const write = element('button', snapshot?.entries.length ? 'New entry' : 'Write the first entry'); write.type = 'button';
-    write.addEventListener('click', () => showEditor());
-    empty.append(mark, element('p', snapshot?.entries.length ? 'Pick an entry to read it, or write a new one.' : 'Write research, questions or an explicit order ticket. Notes stay on this computer unless you copy them.'), write);
-    detail.replaceChildren(empty); if (editFocused) write.focus({ preventScroll: true }); return;
+    empty.append(mark, element('p', snapshot?.entries.length ? 'Pick an entry to read it, or use New entry to write one.' : 'Start with New entry above. Write research, questions or an explicit order ticket. Notes stay on this computer unless you copy them.'));
+    detail.replaceChildren(empty); if (editFocused) $('new-entry').focus({ preventScroll: true }); return;
   }
   const row = selected, book = notebookName(row);
   if (changed('entry-detail:core', entryReadingCore(row, book))) {
@@ -924,14 +924,17 @@ $('entry-form').addEventListener('submit', event => {
 let notebookSaving = false, notebookIntent = null;
 function renderNotebookSaveState() {
   const pending = Boolean(notebookIntent && (notebookSaving || notebookIntent.uncertain));
-  $('notebook-save-state').hidden = !pending;
-  $('notebook-save-message').textContent = pending && notebookSaving ? 'Your notebook is saving. Closing the dialog does not cancel the request.' : pending ? 'Notebook save unconfirmed. Review and retry the original request before leaving Journal.' : '';
+  $('notebook-save-state').hidden = !pending || $('notebook-dialog').open;
+  $('notebook-save-message').textContent = pending && notebookSaving ? 'Your notebook is saving. Closing the dialog does not cancel the request.' : pending ? `Notebook save unconfirmed. ${$('notebook-error').textContent} Review and retry the original request before leaving Journal.` : '';
+  $('notebook-dialog-title').textContent = pending ? notebookSaving ? 'Saving notebook' : 'Notebook save unconfirmed' : 'New notebook';
+  $('new-notebook').textContent = pending ? 'Review notebook save' : 'New notebook';
   $('cancel-notebook').textContent = pending && notebookSaving ? 'Close while saving' : pending ? 'Close with save unconfirmed' : 'Cancel';
 }
-function openNotebookDialog() { if (!notebookIntent) $('notebook-error').hidden = true; $('notebook-dialog').showModal(); }
+function openNotebookDialog() { if (!notebookIntent) $('notebook-error').hidden = true; $('notebook-dialog').showModal(); renderNotebookSaveState(); }
 $('new-notebook').addEventListener('click', openNotebookDialog);
 $('resume-notebook-save').addEventListener('click', openNotebookDialog);
-$('cancel-notebook').addEventListener('click', () => $('notebook-dialog').close());
+$('cancel-notebook').addEventListener('click', () => { $('notebook-dialog').close(); renderNotebookSaveState(); });
+$('notebook-dialog').addEventListener('close', renderNotebookSaveState);
 $('notebook-form').addEventListener('submit', event => {
   event.preventDefault(); if (notebookSaving) return;
   notebookSaving = true;
@@ -947,10 +950,10 @@ $('notebook-form').addEventListener('submit', event => {
         if (!intent.uncertain && initialLocalSaveRefusal(error)) notebookIntent = null;
         else intent.uncertain = true;
         updateDraftProtection();
-        const message = notebookIntent ? `${error.message} Notebook creation is unconfirmed. Retry to check the same request.` : error.message;
+        const message = error.message;
         input.value = intent.name;
         $('notebook-error').textContent = message; $('notebook-error').hidden = false;
-        if (!$('notebook-dialog').open) notify(message, false, true);
+        if (!notebookIntent && !$('notebook-dialog').open) notify(message, false, true);
         return;
       }
       confirmed = true; notebookIntent = null; input.value = ''; $('notebook-dialog').close(); renderNotebookSaveState(); updateDraftProtection();

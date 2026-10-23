@@ -40,11 +40,11 @@ test('a local service outage explains recovery without exposing raw browser fetc
   const api = source.slice(source.indexOf('async function api('), source.indexOf('async function action('));
   const context = { csrf: 'synthetic-csrf', fetch: async () => { throw new TypeError('Failed to fetch'); } };
   runInNewContext(api, context);
-  await assert.rejects(context.api('/api/status'), /Journal could not reach its local service.*reopen it to reconnect/);
+  await assert.rejects(context.api('/api/status'), /Journal lost its connection to its local service.*Retry/);
   context.fetch = async () => ({ ok: false, status: 403, json: async () => ({ error: 'The session expired. Reopen Journal.' }) });
   await assert.rejects(context.api('/api/status'), error => error.status === 403 && /The session expired/.test(error.message));
   context.fetch = async () => ({ ok: true, status: 201, json: async () => { throw new SyntaxError('Truncated reply.'); } });
-  await assert.rejects(context.api('/api/notebooks', { name: 'Unconfirmed' }), error => error.name === 'Error' && /incomplete or unreadable response.*could not be confirmed/.test(error.message) && error.status === undefined && !/Truncated reply/.test(error.message));
+  await assert.rejects(context.api('/api/notebooks', { name: 'Unconfirmed' }), error => error.name === 'Error' && /incomplete or unreadable response/.test(error.message) && error.status === undefined && !/Truncated reply/.test(error.message));
 });
 
 test('interface prose keeps numbers mono without making its whole sentence a data readout', async () => {
@@ -1040,7 +1040,7 @@ test('dismissed pending notebook creation cannot submit twice and its later refu
       action: (_button, work) => jobs.push(work()), notify: (message, success, error) => notices.push({ message, success, error }) };
     runInNewContext(source.slice(source.indexOf('function initialLocalSaveRefusal('), source.indexOf('async function action(')), context);
     runInNewContext(handlers, context); callbacks.get('new-notebook:click')(); const submit = () => callbacks.get('notebook-form:submit')({ preventDefault() {}, submitter: get('create-notebook') });
-    submit(); assert.equal(get('notebook-save-state').hidden, false); assert.match(get('notebook-save-message').textContent, /does not cancel/); assert.equal(get('cancel-notebook').textContent, 'Close while saving'); if (dismiss === 'cancel') callbacks.get('cancel-notebook:click')(); else get('notebook-dialog').close();
+    submit(); assert.equal(get('notebook-save-state').hidden, true, 'The modal owns the active save message.'); assert.match(get('notebook-save-message').textContent, /does not cancel/); assert.equal(get('cancel-notebook').textContent, 'Close while saving'); if (dismiss === 'cancel') callbacks.get('cancel-notebook:click')(); else get('notebook-dialog').close();
     callbacks.get('new-notebook:click')(); submit(); assert.equal(requests, 1); assert.equal(get('notebook-name').disabled, true);
     get('notebook-dialog').close(); reject(Object.assign(new Error('The actual create request was refused.'), { status: 400 })); await jobs[0];
     assert.equal(get('notebook-save-state').hidden, true); assert.equal(get('cancel-notebook').textContent, 'Cancel'); assert.equal(get('notebook-dialog').open, false); assert.equal(get('notebook-name').value, 'Retained name'); assert.equal(get('notebook-name').disabled, false); assert.equal(get('create-notebook').disabled, false);
@@ -1064,7 +1064,7 @@ test('an uncertain notebook create retains its original request through dismissa
     runInNewContext(source.slice(source.indexOf('function initialLocalSaveRefusal('), source.indexOf('async function action(')), context);
     runInNewContext(handlers, context); const submit = () => callbacks.get('notebook-form:submit')({ preventDefault() {}, submitter: get('create-notebook') });
     callbacks.get('new-notebook:click')(); submit(); callbacks.get('cancel-notebook:click')(); reject(failure); await jobs[0];
-    assert.equal(get('notebook-name').readOnly, true); assert.equal(get('notebook-name').value, 'Original requested name'); assert.match(notices[0].message, /unconfirmed/); assert.equal(get('notebook-save-state').hidden, false); assert.match(get('notebook-save-message').textContent, /unconfirmed/); assert.equal(get('cancel-notebook').textContent, 'Close with save unconfirmed'); callbacks.get('resume-notebook-save:click')(); assert.equal(get('notebook-dialog').open, true);
+    assert.equal(get('notebook-name').readOnly, true); assert.equal(get('notebook-name').value, 'Original requested name'); assert.equal(notices.length, 0, 'The persistent reminder replaces the duplicate toast.'); assert.equal(get('notebook-dialog-title').textContent, 'Notebook save unconfirmed'); assert.equal(get('notebook-save-state').hidden, false); assert.match(get('notebook-save-message').textContent, /unconfirmed/); assert.equal(get('cancel-notebook').textContent, 'Close with save unconfirmed'); callbacks.get('resume-notebook-save:click')(); assert.equal(get('notebook-dialog').open, true); assert.equal(get('notebook-save-state').hidden, true, 'The resumed modal has one error presentation.');
     callbacks.get('new-notebook:click')(); get('notebook-name').value = 'Changed DOM must not change retry'; submit(); await jobs[1];
     assert.equal(requests.length, 2); assert.deepEqual(requests[1], requests[0]); assert.equal(requests[0].headers['Idempotency-Key'], 'intent-1');
     assert.equal(get('notebook-save-state').hidden, true); assert.equal(get('notebook-save-message').textContent, ''); assert.equal(get('notebook-name').readOnly, false); assert.equal(get('notebook-name').value, ''); assert.match(notices.at(-1).message, /Notebook added, but the list could not refresh/);
