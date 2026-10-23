@@ -126,7 +126,7 @@
               <div class="verdict-head"><p id="model-verdict-kicker" class="verdict-kicker">Local model response · format checked</p><h3 id="model-verdict-label" class="verdict-label" tabindex="-1"></h3></div>
               <div id="model-verdict-source" class="output-source"></div>
               <p id="model-verdict-context" class="hint" data-interface-numbers="true"></p>
-              <p id="model-verdict-reason" class="verdict-reason"></p>
+              <p id="model-verdict-reason" class="verdict-reason interface-numbers"></p>
               <p id="model-verdict-facts" class="hint"></p>
               <p id="model-verdict-coverage" class="output-note" data-interface-numbers="true"></p>
               <details id="model-verdict-focus"><summary id="model-verdict-focus-summary">Review details</summary><p id="model-verdict-coverage-detail" class="hint" data-interface-numbers="true"></p><p id="model-verdict-focus-label" class="hint"></p><p id="model-verdict-focus-text" class="focus-copy"></p></details>
@@ -165,6 +165,8 @@
           </section>
           <section class="card trade-card">
             <div class="card-head"><h3>Auto-trade</h3><label class="switch"><input id="execution" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span class="sr-only">Auto-trade</span></label></div>
+            <p class="hint">Optional. Research reviews work with Auto-trade off.</p>
+            <details id="trade-settings"><summary>Account and order limits</summary>
             <p class="hint">Any <code>flusso-orders</code> or <code>flusso-close</code> ticket from the notebooks you pick, written within the window below and not yet acted on, is submitted or refused, even if it arrived while the app was closed. Included with Flusso Automate and Pro; each order counts toward your plan’s daily connected-order allowance. Set maximums per order, per ticket and for leverage before enabling auto-trade.</p>
             <div id="execution-draft-warning" class="hint" role="status" hidden><p>Save your changes before turning Auto-trade on. Switches use saved settings.</p><button type="submit">Save changes</button></div>
             <div class="field-grid">
@@ -180,6 +182,7 @@
               <label class="switch switch-row"><input id="write-back" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span>Note results on the entry</span></label>
             </div>
             <details><summary>Ticket format</summary><div class="code-scroll"><pre id="ticket-example"></pre></div><p class="hint">Format example, not current market data. This JSON alone is not an executable ticket. Quantity is in venue contracts. Use instrument ids from Flusso market facts. Your limits above tighten each order’s own conditions.</p></details>
+            </details>
           </section>
           <section class="card" id="model-card">
             <h3>Local model</h3>

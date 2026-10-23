@@ -55,6 +55,8 @@ test('interface prose keeps numbers mono without making its whole sentence a dat
   runInNewContext(helper, context); const text = 'Checks 60 seconds after completion · v2 · first 2,000 UTF-16 text units'; context.setText('mixed', text);
   assert.equal(node.textContent, text); assert.deepEqual(node.children.filter(row => row.className === 'mono').map(row => row.textContent), ['60', '2', '2,000', '16']);
   const children = node.children; context.setText('mixed', text); assert.equal(node.children, children, 'Unchanged text keeps its DOM and selection.');
+  const dated = 'Source A: 2026-10-20; today: 2026-10-23. Exact model text 到'; context.setText('mixed', dated);
+  assert.equal(node.textContent, dated); assert.deepEqual(node.children.filter(row => row.className === 'mono').map(row => row.textContent), ['2026-10-20', '2026-10-23']);
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   for (const id of ['last-check', 'model-input-coverage', 'model-verdict-context', 'model-verdict-coverage', 'process-count']) {
     const tag = html.match(new RegExp(`<[^>]+id="${id}"[^>]*>`))?.[0]; assert.match(tag, /data-interface-numbers="true"/); assert.doesNotMatch(tag, /class="[^"]*\bmono\b/);
@@ -86,7 +88,7 @@ test('the Journal reader shows the current check before the preserved completed 
   assert.ok(all(check).some(node => node.tag === 'time' && node.textContent === `Recorded ${recorded}/seconds · v2` && node.className === 'detail-facts'));
   assert.ok(all(live).some(node => node.textContent === 'Earlier response')); assert.ok(all(live).some(node => node.textContent === 'Preserved accepted words.'));
   assert.ok(all(live).some(node => node.textContent === MODEL_FACTS_NOTE));
-  assert.ok(all(live).some(node => node.textContent === 'Preserved accepted words.' && node.className === 'verdict-reason'), 'The same published words use the Listener prose style.');
+  assert.ok(all(live).some(node => node.textContent === 'Preserved accepted words.' && node.className === 'verdict-reason interface-numbers'), 'The same published words use the Listener prose style.');
   const metadataLine = all(live).find(node => node.className === 'detail-meta');
   assert.ok(!metadataLine.children.some(node => node.textContent === 'Listener off'), 'Current Off state must not be presented as the historical response state.');
   const disclosure = all(live).find(node => node.tag === 'details' && node.children[0]?.textContent === 'Review details');

@@ -102,7 +102,7 @@ function decisionItems(rows, details) {
 // Writes only real changes, so live regions announce a state once rather than on every token.
 function interfaceText(node, value) {
   if (node.textContent === value) return;
-  node.replaceChildren(...value.split(/(\d+(?:[.,:]\d+)*)/g).map((part, index) => index % 2 ? element('span', part, 'mono') : document.createTextNode(part)));
+  node.replaceChildren(...value.split(/(\b\d{4}-\d{2}-\d{2}\b|\d+(?:[.,:]\d+)*)/g).map((part, index) => index % 2 ? element('span', part, 'mono') : document.createTextNode(part)));
 }
 function setText(id, value) {
   const node = $(id); if (node.textContent === value) return;
@@ -261,6 +261,8 @@ async function load({ forms = false } = {}) {
   $('activity-coverage').textContent = snapshot.limits?.activity ? `Latest review per note version and order receipts. Unconfirmed results stay first; up to ${formatCount(snapshot.limits.activity)} saved results plus the last completed response.` : 'Recent decisions and order receipts. Unconfirmed results stay on top.';
   if (!desktop) $('model-state').textContent = snapshot.model.installed ? 'Qwen3 1.7B is ready through Ollama.' : snapshot.model.available ? 'Ollama is running. Download the model:' : 'Start Ollama, then download the model:';
   $('sync').disabled = !snapshot.cloud.connected;
+  $('sync').title = snapshot.cloud.connected ? 'Sync cloud Journal' : 'Connect Flusso to sync cloud Journal';
+  $('sync').setAttribute('aria-label', $('sync').title);
   const notebookOptions = snapshot.notebooks.map(row => [row.origin, row.id, row.name]);
   if (changed('journal-notebook-options', notebookOptions)) {
     const selectedFilter = $('journal-filter').value;
@@ -444,7 +446,7 @@ function renderProcess() {
     setText('model-verdict-kicker', `${completed.earlier ? 'Earlier local' : 'Local'} model response · format checked`);
     setText('model-verdict-label', completed.label.charAt(0).toUpperCase() + completed.label.slice(1));
     $('model-verdict-label').className = `verdict-label ${completed.tone}`;
-    growText($('model-verdict-reason'), completed.reason);
+    interfaceText($('model-verdict-reason'), completed.reason);
     setText('model-verdict-context', completed.context);
     setText('model-verdict-facts', MODEL_FACTS_NOTE);
     setText('model-verdict-coverage', modelCoverageLabel(completed.output.coverage, { received: true }));
@@ -529,6 +531,7 @@ function fillSettings() {
   $('enabled').checked = settings.enabled; $('enabled-label').textContent = settings.enabled ? 'On' : 'Turn on';
   $('enabled').setAttribute('aria-label', settings.enabled ? 'Listener on' : 'Turn on Listener');
   $('execution').checked = settings.executionEnabled;
+  if (changed('trade-settings-mode', settings.executionEnabled)) $('trade-settings').open = settings.executionEnabled;
   for (const radio of document.querySelectorAll('input[name=source]')) radio.checked = radio.value === settings.source;
   ensureOption($('interval'), settings.intervalSeconds, intervalLabel(settings.intervalSeconds) ?? 'Unavailable interval'); $('interval').value = String(settings.intervalSeconds);
   ensureOption($('max-age'), settings.maxSignalAgeSeconds, `${formatCount(Math.round(settings.maxSignalAgeSeconds / 60))} minutes`); $('max-age').value = String(settings.maxSignalAgeSeconds);
@@ -609,6 +612,7 @@ async function saveSwitch(id, field, message) {
     riskValidationActive = true;
     const invalid = renderRiskValidation();
     if (invalid) {
+      $('trade-settings').open = true;
       $(id).checked = snapshot.settings.executionEnabled;
       configureListener(true); reveal(invalid, 'center'); invalid.focus({ preventScroll: true }); return;
     }
@@ -780,7 +784,7 @@ function renderDetail() {
     const review = listenerResult(row);
     if (!row.ticket && row.listener?.status === 'observed' && review) {
       const metadata = activityMetadata(row.listener, row), line = element('div', null, 'detail-meta'), at = element('time', `${metadata.clockLabel} ${when(metadata.clock, true)}`, 'detail-facts'); at.dateTime = metadata.clock ?? '';
-      line.append(pill(review.label, review.tone), at); section.append(line, element('p', activityReason(row.listener), 'verdict-reason'), element('p', MODEL_FACTS_NOTE, 'hint'));
+      line.append(pill(review.label, review.tone), at); section.append(line, element('p', activityReason(row.listener), 'verdict-reason interface-numbers'), element('p', MODEL_FACTS_NOTE, 'hint'));
       const focus = reviewFocusPresentation(row.listener.focus), details = element('details');
       details.append(element('summary', 'Review details'));
       if (revision) details.append(element('p', revision.note, 'hint interface-numbers'));
@@ -1007,7 +1011,7 @@ function renderActivity() {
     const summary = element('div', null, 'activity-status'); summary.append(pill(status.label, status.tone), element('span', revision, 'hint mono'));
     head.append(summary, time);
     const title = element('h2'); title.append(sourceButton(row));
-    card.append(head, title, element('p', activityReason(row), 'activity-reason'));
+    card.append(head, title, element('p', activityReason(row), ['candidate', 'review', 'ignore'].includes(row.decision) && row.status === 'observed' ? 'activity-reason verdict-reason interface-numbers' : 'activity-reason'));
     if (['candidate', 'review', 'ignore'].includes(row.decision) && row.status === 'observed') card.append(element('p', MODEL_FACTS_NOTE, 'hint'));
     if (row.kind === 'research_check' || ['candidate', 'review', 'ignore'].includes(row.decision) && row.status === 'observed') {
       const focus = reviewFocusPresentation(row.focus, { prepared: row.status !== 'observed' && row.responseReceived !== true }), details = element('details');

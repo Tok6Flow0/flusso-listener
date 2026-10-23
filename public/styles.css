@@ -535,3 +535,7 @@ tr:last-child td{border-bottom:0}
 
 /* The full current response is beside this index; Activity shows retained results per revision. */
 .decision-excerpt{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+
+/* Preserve exact completed prose while keeping dates and numbers readable. */
+.interface-numbers .mono{white-space:nowrap}
+.activity-reason.verdict-reason{font-family:var(--font-serif);font-size:var(--fs-title-sm);font-weight:var(--fw-medium);color:var(--c-ink)}
