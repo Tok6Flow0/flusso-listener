@@ -48,7 +48,7 @@ export function describeEntryHandoff({ entry, settings, checkpoint = null, activ
   }[mismatch]);
   const research = 'No explicit flusso-orders or flusso-close ticket is present. Research and model classifications do not authorize submission.';
   if (entry.status !== 'watching') return result(entry.status, kind === 'research' && entry.status === 'reviewed'
-    ? `Reviewed research can be reviewed again when it is the newest selected note and the Listener is on. ${research}`
+    ? `This note is re-checked each period while it is the newest selected note and the Listener is on. ${research}`
     : `This entry is ${entry.status}; only watching entries can supply an action ticket.${kind === 'research' ? ` ${research}` : ''}`);
   if (currentCheckpoint?.state === 'baseline') return result('baselined', kind === 'research'
     ? `This existing revision was baselined. The newest selected research note is still reviewed each period while the Listener is on. ${research}`

@@ -455,7 +455,12 @@ tr:last-child td{border-bottom:0}
   .model-setup>button{flex:1 1 100%}
   .update-corner{right:12px;bottom:12px;max-width:calc(100vw - 24px)}
   .listener-head .switch-lg{margin-left:0}
-  .watch-summary{flex-basis:100%}
+  #view-listener{display:flex;flex-direction:column}
+  .listener-toolbar{order:1}
+  .listener-body{order:2}
+  .connect-hint{order:3;margin-top:18px;margin-bottom:0}
+  .watch-summary{flex-basis:100%;flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px;scrollbar-width:thin}
+  .watch-item{flex-shrink:0}
   .listener-actions{width:100%}
   .listener-actions>button{flex:1 1 auto}
   .desk-head{padding:16px;gap:12px}

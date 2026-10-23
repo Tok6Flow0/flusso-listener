@@ -178,7 +178,7 @@ function renderStatus() {
   const { settings, listener } = snapshot;
   const tone = !settings.enabled ? '' : listener.lastError ? 'warn' : 'on';
   $('listener-dot').className = `nav-dot ${tone}${settings.enabled && listener.busy ? ' busy' : ''}`;
-  $('listener-dot-label').textContent = !settings.enabled ? 'Off' : listener.lastError ? 'Needs attention' : listener.busy ? 'Reviewing' : 'On';
+  $('listener-dot-label').textContent = !settings.enabled ? 'Off' : listener.lastError ? 'Needs attention' : listener.busy ? 'Reading' : 'On';
   // The schedule lives here; the review desk owns state, errors and the next action.
   const interval = intervalLabel(settings.intervalSeconds), parts = [];
   if (!settings.enabled) parts.push('Not checking');
@@ -303,12 +303,17 @@ function renderProcess() {
 
 function renderDecisions() {
   const latest = latestDecisions(snapshot.activity, snapshot.listener.lastModelOutput);
-  if (!changed('decisions', [latest, snapshot.settings.enabled])) return;
+  const output = snapshot.listener.modelOutput, published = snapshot.listener.lastModelOutput;
+  const current = modelOutputPresentation(output, published).verdict ? published : null;
+  if (!changed('decisions', [latest, snapshot.settings.enabled, current])) return;
   $('latest-decisions').replaceChildren(...latest.map(row => {
     const item = element('article', null, 'decision-row'), top = element('div', null, 'decision-top'), source = element('div', null, 'decision-source'), status = activityStatus(row);
     const time = element('time', when(row.atUtc)); time.dateTime = row.atUtc;
     top.append(pill(status.label, status.tone), time); source.append(sourceButton(row));
-    item.append(top, source, element('p', row.reason || 'Processing this entry.', 'decision-excerpt')); return item;
+    item.append(top, source);
+    const shownInDesk = current && row.entryId === current.entryId && row.origin === current.origin && row.decision === current.decision && row.reason === current.reason;
+    if (!shownInDesk) item.append(element('p', row.reason || 'Processing this entry.', 'decision-excerpt'));
+    return item;
   }));
   if (!latest.length) $('latest-decisions').append(element('p', snapshot.settings.enabled ? 'No decisions yet. Each published model decision and order result is listed here after a check.' : 'No decisions yet. Turn the Listener on; published model decisions and order results are listed here.', 'empty'));
 }

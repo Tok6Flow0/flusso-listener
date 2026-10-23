@@ -62,7 +62,7 @@ test('displayed submission and uncertain results never imply an order was filled
     assert.equal(matchesResultFilter(entry, status === 'submitted' || status === 'partial' ? 'placed' : 'open'), true);
   }
   const note = { listener: { status: 'observed', decision: 'review' } };
-  assert.equal(listenerResult(note).label, 'review needed');
+  assert.equal(listenerResult(note).label, 'needs attention');
   assert.equal(matchesResultFilter(note, 'tickets'), false);
 });
 
@@ -85,7 +85,7 @@ test('the Listener names one coarse state and keeps paused, ready, checked and e
   assert.deepEqual([paused.state, paused.message], ['paused', 'Check paused after a settings change or shutdown.']);
   assert.equal(processingPresentation({ lastError: 'Model unavailable.', processing: { stage: 'paused' } }, true).state, 'error');
   const reviewing = processingPresentation({ busy: true, processing: { stage: 'model', index: 1, total: 2 } }, true);
-  assert.deepEqual([reviewing.state, reviewing.title, reviewing.label, reviewing.position], ['reviewing', 'Reviewing', 'Model review', { index: 1, total: 2 }]);
+  assert.deepEqual([reviewing.state, reviewing.title, reviewing.label, reviewing.position], ['reviewing', 'Reading', 'Model review', { index: 1, total: 2 }]);
   assert.equal(processingPresentation({ busy: true, processing: { stage: 'error' } }, true).state, 'error');
   for (const counts of [{}, { index: 0, total: 2 }, { index: 3, total: 2 }, { index: '1', total: 2 }, { index: 1.5, total: 2 }]) {
     assert.equal(processingPresentation({ busy: true, processing: { stage: 'read', ...counts } }, true).position, null);
@@ -107,7 +107,7 @@ test('partial or unmatched model output is never presented as an accepted decisi
     assert.equal(view.accepted, false); assert.equal(view.verdict, null); assert.match(view.note, /not accepted|Nothing is accepted/);
   }
   const complete = modelOutputPresentation({ ...output, status: 'complete' }, published);
-  assert.deepEqual([complete.accepted, complete.verdict], [true, { label: 'review needed', tone: 'warn', reason: 'Needs a quantity.' }]);
+  assert.deepEqual([complete.accepted, complete.verdict], [true, { label: 'needs attention', tone: 'warn', reason: 'Needs a quantity.' }]);
   for (const other of [null, { ...published, entryId: 'note-b' }, { ...published, origin: 'cloud' }, { ...published, atUtc: '2026-10-22T17:19:00Z' }, { ...published, atUtc: undefined }, { ...published, atUtc: 'invalid' }, { ...published, decision: 'submit' }]) {
     const view = modelOutputPresentation({ ...output, status: 'complete' }, other);
     assert.equal(view.accepted, false); assert.equal(view.verdict, null);

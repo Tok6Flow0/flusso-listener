@@ -58,7 +58,7 @@ export function entryStatus(entry) {
 }
 
 const RESULT = { submitted: ['submitted', 'pos'], partial: ['partly submitted', 'warn'], blocked: ['refused', 'neg'], unknown: ['unconfirmed', 'warn'], pending: ['submitting', 'info'], sending: ['submitting', 'info'], processing: ['reviewing', 'info'], review: ['not submitted', 'warn'], waiting: ['waiting', 'warn'], resolved: ['owner resolved', ''] };
-const DECISION = { candidate: ['flagged', 'info'], review: ['review needed', 'warn'], ignore: ['no action', ''], ticket: ['ticket', 'info'] };
+const DECISION = { candidate: ['flagged', 'info'], review: ['needs attention', 'warn'], ignore: ['no action', ''], ticket: ['ticket', 'info'] };
 export function activityStatus(row = {}) {
   const [label, tone] = RESULT[row.status] ?? (row.status === 'observed' ? DECISION[row.decision] : null) ?? [text(row.status) || 'noted', ''];
   return { label, tone };
@@ -110,7 +110,7 @@ export function processingPresentation(listener = {}, enabled = false) {
   const current = listener.processing;
   if (listener.busy) {
     const error = current?.stage === 'error';
-    return { state: error ? 'error' : 'reviewing', title: error ? 'Needs attention' : 'Reviewing', label: processStage(current?.stage), message: text(current?.message) || 'Checking Journal entries.', tone: error ? 'warn' : 'info', busy: true, position: position(current) };
+    return { state: error ? 'error' : 'reviewing', title: error ? 'Needs attention' : 'Reading', label: processStage(current?.stage), message: text(current?.message) || 'Checking Journal entries.', tone: error ? 'warn' : 'info', busy: true, position: position(current) };
   }
   if (!enabled) return { state: 'off', title: 'Off', label: 'Listener off', message: 'Not watching your Journal.', tone: '', busy: false, position: null };
   if (listener.lastError) return { state: 'error', title: 'Needs attention', label: 'Needs attention', message: text(listener.lastError), tone: 'warn', busy: false, position: null };
