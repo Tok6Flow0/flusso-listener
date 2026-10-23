@@ -285,6 +285,13 @@ jobs:
           RELEASE_CHANNEL: ${{ needs.plan.outputs.channel }}
         run: |
           tag="v${RELEASE_VERSION}"
+          # A pre-existing preview/production tag must identify these tested builds.
+          if tag_commit="$(gh api "repos/$GH_REPO/commits/$tag" --jq .sha 2>/dev/null)"; then
+            if [ "$tag_commit" != "$GITHUB_SHA" ]; then
+              echo 'Release tag does not identify the tested source; refusing to publish.' >&2
+              exit 1
+            fi
+          fi
           if gh release view "$tag" >/dev/null 2>&1; then
             echo 'Release already exists; refusing to overwrite immutable desktop assets.' >&2
             exit 1

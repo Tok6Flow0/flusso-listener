@@ -58,3 +58,10 @@ repository visibility. Required main checks are `Secret scan` and `Governance
 ownership`, with code-owner review and stale-approval dismissal. Aaron remains
 the only code owner; legitimate feature and security work follows reviewed PRs.
 Main and tag releases retain their previous version rules and platform matrix.
+
+If main advances while a reviewed release waits for approval, GitHub may reject
+its older workflow-changing SHA without `workflows:write`. Do not add a personal
+token to CI to work around this. Aaron can reserve the run's exact planned tag at
+its verified source SHA, then rerun only the failed publisher. The publisher
+verifies that any existing tag points at the tested SHA and refuses mismatches.
+Production publishing additionally requires an existing owner-created tag.
