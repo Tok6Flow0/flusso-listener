@@ -446,21 +446,21 @@ export function createCloudClient({ origin = 'https://flusso.stream', vault, fet
       body: { positionIds },
     };
     let preview;
-    try { preview = await mcp('act_in_flusso', args); }
-    catch { return blocked('Flusso could not prepare the close preview. No close was sent.'); }
+    try { preview = await mcp('act_in_flusso', args, { timeoutMs: 240000 }); }
+    catch { return blocked('Flusso could not prepare the close. No close was sent.'); }
     if (preview.error === 'operation_not_available') return blocked('Your Flusso plan or connection does not allow closing positions.');
-    if (preview.schemaVersion !== 'flusso.mcp_confirmation.v1' || preview.confirmationRequired !== true || typeof preview.confirmationToken !== 'string'
+    const directReceipt = object(preview?.result) && preview.ok === true && preview.result.schemaVersion === 'product.position_close_operation.v1';
+    if (!directReceipt && (preview.schemaVersion !== 'flusso.mcp_confirmation.v1' || preview.confirmationRequired !== true || typeof preview.confirmationToken !== 'string'
       || preview.operation?.operationId !== args.operationId || preview.request?.method !== 'POST'
       || preview.request?.path !== `/api/v1/me/trading-accounts/${accountId}/positions/close`
       || preview.request?.query !== null || preview.request?.headers?.['Idempotency-Key'] !== idempotencyKey
-      || !isDeepStrictEqual(preview.request?.body, args.body) || preview.effect?.liveTradingRequested !== true
-      || preview.effect?.destructive !== true || Date.parse(preview.expiresAtUtc) <= clock()
-      || !Number.isFinite(Date.parse(preview.expiresAtUtc))) {
-      return blocked(short(preview.message) || 'Flusso refused the close preview. No close was sent.');
+      || !isDeepStrictEqual(preview.request?.body, args.body) || preview.effect?.destructive !== true || Date.parse(preview.expiresAtUtc) <= clock()
+      || !Number.isFinite(Date.parse(preview.expiresAtUtc)))) {
+      return blocked(short(preview.message) || 'Flusso refused the close. No close was sent.');
     }
-    let value, dispatched = false;
+    let value = directReceipt ? preview : null, dispatched = directReceipt;
     try {
-      value = await mcp('act_in_flusso', { ...args, confirmed: true, confirmationToken: preview.confirmationToken }, {
+      if (!directReceipt) value = await mcp('act_in_flusso', { ...args, confirmed: true, confirmationToken: preview.confirmationToken }, {
         timeoutMs: ORDER_TIMEOUT_MS,
         beforeDispatch: async () => {
           requireGeneration(generation);
