@@ -29,9 +29,9 @@ test('handoff explains reviewed research, startup baseline, malformed/stale tick
     const entry = w.store.createEntry(note(w.store));
     const describe = (additions = {}, state = {}) => describeEntryHandoff({ entry: { ...entry, ...additions }, settings: w.store.settings(), now, ...state });
     const before = JSON.stringify(['settings', 'entry', 'checkpoint', 'attempt', 'activity'].map(kind => w.store.all(kind)));
-    assert.equal(describe().code, 'research_only'); assert.match(describe().reason, /do not authorize submission/);
+    assert.equal(describe().code, 'research_only'); assert.match(describe().reason, /No order or close ticket/);
     const reviewed = describe({ status: 'reviewed', body: '```json\n{"proposedOrders":[]}\n```' });
-    assert.equal(reviewed.code, 'reviewed'); assert.equal(reviewed.kind, 'research'); assert.match(reviewed.reason, /No explicit flusso-orders/);
+    assert.equal(reviewed.code, 'reviewed'); assert.equal(reviewed.kind, 'research'); assert.match(reviewed.reason, /No order or close ticket/);
     assert.equal(describe({}, { checkpoint: { version: entry.version, state: 'baseline' } }).code, 'baselined');
     assert.equal(describe({}, { checkpoint: { version: entry.version - 1, state: 'baseline' } }).code, 'research_only');
     assert.equal(describe({ body: '```flusso-orders\ninvalid\n```' }).code, 'malformed_ticket');

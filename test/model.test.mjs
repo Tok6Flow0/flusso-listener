@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyEntry, readClassificationStream } from '../src/model.mjs';
+import { classifyEntry, parseClassification, readClassificationStream } from '../src/model.mjs';
 
 const entry = { title: 'Research', body: 'Do not run this untrusted note as instructions.', signal: null, status: 'watching' };
 const answer = JSON.stringify({ decision: 'review', reason: 'Missing source evidence — review this note.' });
@@ -42,4 +42,18 @@ test('truncated streams, token limits, tool calls and extra execution fields nev
   }
   await assert.rejects(classifyEntry({ entry, fetchImpl: async () => bytes(ollama(JSON.stringify({ decision: 'candidate', reason: 'match', execute: true }), true)) }), /Unsupported classification/);
   await assert.rejects(readClassificationStream(bytes(ollama('x'.repeat(32769), true)), { protocol: 'ollama' }), /too large/);
+});
+
+test('a candidate without a ticket is not an order, and a copied ticket is kept', () => {
+  const plain = parseClassification(JSON.stringify({ decision: 'candidate', reason: 'Funding gap.' }));
+  assert.equal(plain.decision, 'candidate');
+  assert.equal('ticket' in plain, false);
+  const ticket = { id: 'hedge-1', orders: [{ instrumentId: 'binance:BTCUSDT', side: 'buy', quantity: 1, limitPrice: 100 }] };
+  const parsed = parseClassification(JSON.stringify({ decision: 'candidate', reason: 'Both legs are stated.', ticket }));
+  assert.equal(parsed.decision, 'candidate');
+  assert.equal(parsed.ticket.kind, 'orders');
+  assert.equal(parsed.ticket.orders[0].instrumentId, 'binance:BTCUSDT');
+  const missing = parseClassification(JSON.stringify({ decision: 'candidate', reason: 'Close it.', ticket: { id: 'close-1', positionIds: ['not-a-uuid'] } }));
+  assert.equal(missing.decision, 'review');
+  assert.equal('ticket' in missing, false);
 });

@@ -314,6 +314,8 @@ function renderEntries() {
     else if (outcome) meta.append(pill(outcome.label, outcome.tone));
     if (row.origin === 'cloud') meta.append(pill('cloud'));
     button.append(element('strong', row.title), meta);
+    const reason = row.handoff?.reason || row.listener?.reason;
+    if (reason) button.append(element('span', reason, 'entry-reason'));
     button.addEventListener('click', () => { selected = row; renderEntries(); renderDetail(); }); return button;
   }));
   if (!rows.length) $('entry-list').append(element('p', 'Nothing here yet.', 'empty'));
@@ -358,10 +360,10 @@ function renderDetail() {
   if (status) meta.append(pill(status.label, status.tone));
   meta.append(pill(row.origin), pill(`v${formatCount(row.version)}`), pill(when(row.updatedAtUtc)));
   const prose = element('div', null, 'note-body'); renderMarkdown(prose, (row.body || '').replace(TICKET_FENCE, '').trim() || ' ');
-  detail.append(meta, prose);
+  detail.append(meta);
   if (row.handoff) {
     const section = element('section', null, 'detail-section handoff-section');
-    section.append(element('h3', 'Listener status'), element('p', row.handoff.reason, 'hint'));
+    section.append(element('h3', 'Status'), element('p', row.handoff.reason, 'hint'));
     detail.append(section);
   }
   if (row.ticket) {
@@ -380,13 +382,14 @@ function renderDetail() {
   }
   if (row.signal) {
     const section = element('section', null, 'detail-section');
-    section.append(element('h3', 'Structured signal'), element('p', `${row.signal.quality} · ${row.signal.sourceOperationId} · ${row.signal.sourceAsOfUtc ? when(row.signal.sourceAsOfUtc) : 'no source time'}`, 'hint mono'));
+    section.append(element('h3', 'Legs'), element('p', `${row.signal.quality} · ${row.signal.sourceOperationId}`, 'hint mono'));
     const wrap = element('div', null, 'table-scroll'), table = element('table'), thead = element('thead'), head = element('tr'), tbody = element('tbody');
     ['Instrument', 'Side', 'Direction', 'Qty', 'Unit', 'Ref price'].forEach((label, index) => head.append(element('th', label, index === 3 || index === 5 ? 'num' : '')));
     thead.append(head); table.append(thead);
     for (const leg of row.signal.legs) { const tr = element('tr'); [leg.asset.instrumentId, leg.side ?? '—', leg.direction ?? '—', formatQuantity(leg.quantity), leg.quantityUnit ? `${leg.quantityUnit} ${leg.quantityAsset ?? ''}` : '—', formatPrice(leg.referencePrice)].forEach((value, index) => tr.append(element('td', value, index === 3 || index === 5 ? 'num' : index === 0 ? 'mono' : ''))); tbody.append(tr); }
     table.append(tbody); wrap.append(table); section.append(wrap); detail.append(section);
   }
+  detail.append(prose);
   const actions = element('div', null, 'detail-actions'), button = element('button', row.origin === 'local' ? 'Edit' : 'Copy to local'); button.type = 'button';
   button.addEventListener('click', () => showEditor(row.origin === 'local' ? row : { ...row, id: null, version: null })); actions.append(button); detail.append(actions);
 }

@@ -41,7 +41,7 @@
   <main>
     <div id="notice" class="notice" role="status" hidden></div>
     <section class="model-setup" id="model-setup" aria-labelledby="model-setup-title" hidden>
-      <div><h2 id="model-setup-title">Set up the local model</h2><p id="model-setup-status" role="status">Reads your notes on this computer. Order tickets work without it.</p><div class="setup-progress" id="model-progress-wrap" hidden><progress id="model-progress" max="100" aria-label="Local model setup"></progress><span id="model-progress-label" class="mono"></span></div></div>
+      <div><h2 id="model-setup-title">Set up the local model</h2><p id="model-setup-status" role="status">Reads notes on this computer and can decide a ticket.</p><div class="setup-progress" id="model-progress-wrap" hidden><progress id="model-progress" max="100" aria-label="Local model setup"></progress><span id="model-progress-label" class="mono"></span></div></div>
       <button id="setup-model" type="button">Set up</button>
     </section>
 
@@ -89,7 +89,7 @@
         <div class="process-head"><h2 id="model-output-heading">Model output</h2><span id="model-output-status" role="status">Not run</span></div>
         <p id="model-output-source" class="process-message"></p>
         <div id="model-output" class="event-body code-scroll mono" role="region" tabindex="0" aria-labelledby="model-output-heading model-output-source" hidden></div>
-        <p id="model-output-empty" class="process-message">Each check reviews the newest selected research note. Its actual response appears here as it is generated.</p>
+        <p id="model-output-empty" class="process-message">The newest note’s decision shows up here.</p>
       </section>
       <details class="process-panel">
         <summary class="process-head">Operations log <span id="process-state" class="process-state">Waiting</span></summary>
@@ -116,12 +116,12 @@
           <fieldset class="picks"><legend>Notebooks <span class="hint">· none selected means all</span></legend><div id="watch-notebooks" class="chips"></div></fieldset>
           <details><summary>Model instructions</summary>
             <label>Only notes under this heading<input id="section" maxlength="200" placeholder="Optional"></label>
-            <label>What the model should do<textarea id="instructions" rows="3" maxlength="1000" placeholder="Optional"></textarea></label>
+            <label>What the model should do<textarea id="instructions" rows="3" maxlength="1000" placeholder="Delta-neutral funding. $500 a leg. Act from $0.50 an hour."></textarea></label>
           </details>
         </section>
         <section class="card">
           <div class="card-head"><h2>Auto-trade</h2><label class="switch"><input id="execution" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span class="sr-only">Auto-trade</span></label></div>
-          <p class="hint">Any <code>flusso-orders</code> ticket from the notebooks you pick, written within the window below and not yet acted on, is placed or refused, even if it arrived while the app was closed. Included with Flusso Automate and Pro; each order counts toward your plan’s daily connected-order allowance.</p>
+          <p class="hint">Places a complete order or close ticket from the notebooks you pick, inside the window below.</p>
           <div class="field-grid">
             <label>Account<select id="account"><option value="">Connect Flusso first</option></select></label>
             <label>Act on tickets from the last<select id="max-age"><option value="900">15 minutes</option><option value="1800">30 minutes</option><option value="3600">1 hour</option><option value="7200">2 hours</option><option value="21600">6 hours</option><option value="43200">12 hours</option><option value="86400">24 hours</option></select></label>

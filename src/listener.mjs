@@ -268,7 +268,20 @@ export function createListener({ store, cloud, buildRequest = buildOrderRequest,
         state.modelOutput.status = 'complete';
         state.lastModelOutput = { entryId: entry.id, title: entry.title, origin: entry.origin, decision: decision.decision, reason: decision.reason, atUtc: new Date(clock()).toISOString() };
         publish('decision', decision.reason || `Model decision: ${decision.decision}.`, entry, { decision: decision.decision, index, total });
-        publish('result', 'This note has no explicit action ticket. Add a flusso-orders ticket with exact order fields, or flusso-close with owned position IDs, and set it to watching to submit an instruction.', entry, { status: 'observed', index, total });
+        if (decision.decision === 'candidate' && decision.ticket) {
+          const payload = { ...decision.ticket };
+          const name = payload.kind === 'close' ? 'flusso-close' : 'flusso-orders';
+          delete payload.kind;
+          const fenced = { ...entry, body: '```' + name + '\n' + JSON.stringify(payload) + '\n```\n' };
+          publish('validate', 'Validating the model ticket against freshness and local limits.', entry, { index, total });
+          const request = buildRequest({ entry: fenced, settings: store.settings(), now: clock() });
+          store.put('checkpoint', key, { version: entry.version, state: 'observed', atUtc });
+          const outcome = await placeTicket({ entry, request, activity: { ...activity, decision: 'candidate' }, settingsVersion, reconciled });
+          if (outcome === 'retry' || outcome === 'retry-stop') store.delete('checkpoint', key);
+          if (outcome === 'stop' || outcome === 'retry-stop') break;
+          continue;
+        }
+        publish('result', decision.reason ? `${decision.reason} A complete flusso-orders or flusso-close ticket is still required.` : 'The note did not include a complete flusso-orders or flusso-close ticket.', entry, { status: 'observed', index, total });
         store.put('checkpoint', key, { version: entry.version, state: 'observed', atUtc });
       }
       if (reviewLatest && !researchEntry) publish('waiting', 'No reviewed or watching research note matches the selected notebooks and section. No model was run.');

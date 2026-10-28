@@ -46,7 +46,7 @@ export function describeEntryHandoff({ entry, settings, checkpoint = null, activ
     notebook: 'This entry is outside the selected notebooks.',
     section: 'This entry does not contain the selected Markdown heading.',
   }[mismatch]);
-  const research = 'No explicit flusso-orders or flusso-close ticket is present. Research and model classifications do not authorize submission.';
+  const research = 'No order or close ticket is in this note yet.';
   if (entry.status !== 'watching') return result(entry.status, `This entry is ${entry.status}; only watching entries are considered.${kind === 'research' ? ` ${research}` : ''}`);
   if (currentCheckpoint?.state === 'baseline') return result('baselined', `This existing revision was baselined and will be skipped.${kind === 'research' ? ` ${research}` : ''}`);
   if (!settings.enabled) return result('listener_off', 'The Listener is off; no entry is checked or submitted.');
