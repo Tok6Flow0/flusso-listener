@@ -14,16 +14,15 @@ const archive = join(root, 'build', 'downloads', asset.archive);
 await verifiedDownload({ ...asset, destination: archive, signal: AbortSignal.timeout(180000) });
 const staging = join(root, 'build', 'downloads', `${target}-unpacked`);
 await rm(staging, { recursive: true, force: true }); await mkdir(staging, { recursive: true });
-async function run(command, args, env = process.env) {
+async function run(command, args) {
   await new Promise((resolve, reject) => {
-    const child = spawn(command, args, { shell: false, stdio: 'inherit', env });
+    const child = spawn(command, args, { shell: false, stdio: 'inherit' });
     child.once('error', reject); child.once('exit', code => code === 0 ? resolve() : reject(new Error('Runtime extraction failed.')));
   });
 }
-if (asset.archive.endsWith('.zip')) {
-  if (process.platform !== 'win32') throw new Error('Prepare Windows runtimes on the native Windows release runner.');
-  await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'Expand-Archive -LiteralPath $env:FLUSSO_ARCHIVE_TASK_PATH -DestinationPath $env:FLUSSO_RUNTIME_TASK_PATH -Force'], { ...process.env, FLUSSO_ARCHIVE_TASK_PATH: archive, FLUSSO_RUNTIME_TASK_PATH: staging });
-} else await run('tar', ['-xzf', archive, '-C', staging]);
+if (asset.archive.endsWith('.zip') && process.platform !== 'win32') throw new Error('Prepare Windows runtimes on the native Windows release runner.');
+// Windows ships libarchive's tar.exe, which reads ZIPs without PowerShell's .NET module.
+await run(process.platform === 'win32' ? 'tar.exe' : 'tar', ['-xf', archive, '-C', staging]);
 async function find(directory, name) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name);
