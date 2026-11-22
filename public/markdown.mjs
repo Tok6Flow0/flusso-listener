@@ -57,7 +57,11 @@ export function renderMarkdown(parent, markdown) {
       const head = document.createElement('thead'), tr = document.createElement('tr'); for (const cell of block.head) { const th = document.createElement('th'); inline(th, cell); tr.append(th); } head.append(tr); table.append(head);
       const body = document.createElement('tbody'); for (const row of block.rows) { const line = document.createElement('tr'); for (const cell of row) { const td = document.createElement('td'); if (/^[+\-−]?[$€£]?\d[\d,._\s]*(?:[KMBT]|%|bps)?$/i.test(cell.trim())) td.className = 'numeric'; inline(td, cell); line.append(td); } body.append(line); } table.append(body); wrap.append(table); parent.append(wrap); continue;
     }
-    if (block.type === 'code') { const wrap = document.createElement('div'); wrap.className = 'code-scroll'; const pre = document.createElement('pre'); pre.textContent = block.text; wrap.append(pre); parent.append(wrap); continue; }
+    if (block.type === 'code') {
+      const details = document.createElement('details'), summary = document.createElement('summary'), pre = document.createElement('pre');
+      details.className = 'note-code'; summary.textContent = 'Code block'; pre.textContent = block.text;
+      pre.tabIndex = 0; details.append(summary, pre); parent.append(details); continue;
+    }
     const node = document.createElement(block.type);
     if (block.items) for (const item of block.items) { const li = document.createElement('li'); if (item.value != null) li.value = item.value; inline(li, item.text); node.append(li); }
     else inline(node, block.text);

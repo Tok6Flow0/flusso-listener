@@ -77,29 +77,48 @@
     <section id="view-listener" class="view">
       <header class="view-head">
         <h1>Listener</h1>
-        <label class="switch switch-lg"><input id="enabled" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span id="enabled-label">Off</span></label>
+        <div class="listener-actions">
+          <label class="switch switch-lg"><input id="enabled" type="checkbox" aria-label="Enable Listener"><span class="switch-track" aria-hidden="true"></span><span id="enabled-label">Off</span></label>
+          <button id="check-now" type="button">Check now</button>
+          <button id="configure-listener" type="button" aria-expanded="false" aria-controls="listener-configuration">Settings</button>
+        </div>
       </header>
-      <p class="status-line" id="last-check">Not checked yet</p>
-      <div class="connect-hint" id="connect-hint" hidden><span>Connect Flusso for the cloud Journal and auto-trade.</span><button id="connect" type="button" class="primary">Connect</button></div>
-      <div class="listener-toolbar">
-        <div class="watch-summary" id="watch-summary"></div>
-        <div class="listener-actions"><button id="check-now" type="button">Check now</button><button id="configure-listener" type="button" class="primary" aria-expanded="false" aria-controls="listener-configuration">Configure Listener</button></div>
-      </div>
-      <section class="process-panel" aria-labelledby="model-output-heading">
-        <div class="process-head"><h2 id="model-output-heading">Model output</h2><span id="model-output-status" role="status">Not run</span></div>
-        <p id="model-output-source" class="process-message"></p>
-        <div id="model-output" class="event-body code-scroll mono" role="region" tabindex="0" aria-labelledby="model-output-heading model-output-source" hidden></div>
-        <p id="model-output-empty" class="process-message">The newest note’s decision shows up here.</p>
+      <section class="run-console" aria-labelledby="run-console-title">
+        <header class="console-head">
+          <h2 id="run-console-title"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m3 5 5 5-5 5m8 0h6"/></svg>Run console</h2>
+          <span id="last-check">Not checked yet</span>
+        </header>
+        <div class="console-body">
+          <div><p id="process-state" class="process-state" role="status">Waiting</p><p id="process-message" class="process-message"></p></div>
+          <dl class="watch-summary">
+            <div><dt>Notebooks</dt><dd id="watch-notebook-summary">—</dd></div>
+            <div><dt>Auto-trade</dt><dd id="watch-trading-summary">—</dd></div>
+            <div><dt>Account</dt><dd id="watch-account-summary">—</dd></div>
+          </dl>
+        </div>
+        <div class="console-tools">
+          <button type="button" data-inspect="model-transcript" aria-haspopup="dialog" aria-controls="run-inspector">Model transcript</button>
+          <button type="button" data-inspect="operations-log" aria-haspopup="dialog" aria-controls="run-inspector">Operations log</button>
+        </div>
       </section>
-      <details class="process-panel">
-        <summary class="process-head">Operations log <span id="process-state" class="process-state">Waiting</span></summary>
-        <p id="process-message" class="process-message"></p>
-        <ol id="process-events" class="process-events" aria-label="Processing updates"></ol>
-      </details>
+      <dialog id="run-inspector" aria-labelledby="inspector-heading">
+        <header class="console-head"><h2 id="inspector-heading">Run details</h2><button id="close-inspector" type="button" autofocus>Close</button></header>
+        <section class="inspector-content" id="model-transcript" hidden>
+          <p id="model-output-status">Not run</p>
+          <p id="model-output-source" class="console-source" hidden></p>
+          <pre id="model-output" tabindex="0" role="region" aria-labelledby="inspector-heading model-output-source" hidden></pre>
+          <p id="model-output-empty" class="console-placeholder">No model response recorded.</p>
+        </section>
+        <section class="inspector-content" id="operations-log" hidden>
+          <ol id="process-events" class="process-events" aria-label="Processing updates" hidden></ol>
+          <p id="process-events-empty" class="console-placeholder">No processing events recorded.</p>
+        </section>
+      </dialog>
       <section class="decisions-panel" aria-labelledby="decisions-heading">
         <div class="process-head"><h2 id="decisions-heading">Latest decisions</h2><button id="all-activity" type="button" class="link-button">View all activity</button></div>
         <div id="latest-decisions" class="latest-decisions"></div>
       </section>
+      <div class="connect-hint" id="connect-hint" hidden><span>Connect Flusso to sync notebooks or submit order tickets.</span><button id="connect" type="button">Connect account</button></div>
       <section id="listener-configuration" class="listener-configuration" aria-labelledby="configuration-heading" hidden>
       <div class="configuration-head"><h2 id="configuration-heading">Listener settings</h2><button id="close-configuration" type="button" class="ghost">Close settings</button></div>
       <form id="settings-form" class="settings">

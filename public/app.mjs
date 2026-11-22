@@ -172,14 +172,8 @@ function renderStatus() {
   const tone = !settings.enabled ? '' : listener.lastError ? 'warn' : 'on';
   $('listener-dot').className = `nav-dot ${tone}`;
   $('listener-dot-label').textContent = !settings.enabled ? 'Off' : listener.lastError ? 'Needs attention' : 'On';
-  const parts = [];
-  if (!settings.enabled) parts.push('Off. Turn it on to start watching.');
-  else if (listener.lastError) parts.push(listener.lastError);
-  else parts.push(listener.lastCheckedAtUtc ? `Last checked ${when(listener.lastCheckedAtUtc)}` : 'Waiting for the first check');
-  if (settings.enabled && listener.cloudComplete === false) parts.push('Cloud read incomplete');
-  if (settings.enabled) parts.push(settings.executionEnabled ? 'Auto-trade on' : 'Auto-trade off');
-  $('last-check').textContent = parts.join(' · ');
-  $('last-check').classList.toggle('warn', Boolean(settings.enabled && listener.lastError));
+  const lastCheck = listener.lastCheckedAtUtc ? `Last checked ${when(listener.lastCheckedAtUtc)}` : 'Not checked yet';
+  $('last-check').textContent = settings.enabled && listener.cloudComplete === false ? `${lastCheck} · Cloud read incomplete` : lastCheck;
   const pending = snapshot.attempts.filter(row => ['pending', 'unknown'].includes(row.status)).length;
   $('activity-count').hidden = !pending; $('activity-count').textContent = formatCount(pending);
   $('check-now').disabled = !settings.enabled || Boolean(listener.busy);
@@ -191,7 +185,9 @@ function renderWatchSummary() {
   const { settings, notebooks } = snapshot;
   const names = notebooks.filter(row => settings.notebookIds.includes(row.id)).map(row => row.name);
   const account = accounts.find(row => row.id === settings.accountId);
-  $('watch-summary').replaceChildren(element('span', names.length ? `Watching ${names.join(', ')}` : 'Watching all notebooks'), element('span', settings.executionEnabled ? 'Auto-trade on' : 'Auto-trade off'), element('span', account ? account.displayName || account.publicId : settings.accountId ? 'Account selected' : 'No trading account'));
+  $('watch-notebook-summary').textContent = names.length ? names.join(', ') : settings.notebookIds.length ? 'Selected notebooks' : 'All notebooks';
+  $('watch-trading-summary').textContent = settings.executionEnabled ? 'On' : 'Off';
+  $('watch-account-summary').textContent = account ? account.displayName || account.publicId : settings.accountId ? 'Account selected' : 'None selected';
 }
 
 function configureListener(open) {
@@ -205,26 +201,51 @@ $('close-configuration').addEventListener('click', () => configureListener(false
 $('all-activity').addEventListener('click', () => switchView('activity'));
 
 function sourceButton(row, label = row.title || 'Open Journal entry') {
-  const entry = snapshot.entries.find(item => item.id === row.entryId && (!row.origin || row.origin === item.origin));
-  if (!entry) return element('span', label);
+  const currentEntry = () => snapshot.entries.find(item => item.id === row.entryId && (!row.origin || row.origin === item.origin));
+  if (!currentEntry()) return element('span', label);
   const button = element('button', label, 'source-link'); button.type = 'button';
-  button.addEventListener('click', () => { selected = entry; switchView('journal'); renderEntries(); renderDetail(); $('entry-detail').scrollIntoView({ block: 'nearest' }); });
+  button.addEventListener('click', () => {
+    const entry = currentEntry();
+    if (!entry) return notify('This entry is no longer in the current Journal.');
+    if ($('run-inspector').open) $('run-inspector').close();
+    selected = entry; switchView('journal'); renderEntries(); $('entry-detail').scrollIntoView({ block: 'nearest' });
+    $('entry-detail').querySelector('h2')?.focus({ preventScroll: true });
+  });
   return button;
 }
 
-function renderProcess() {
+function renderTranscript() {
   const output = snapshot.listener.modelOutput;
-  const partial = output?.text ? 'partial output shown' : 'no output';
+  const partial = output?.text ? 'partial response' : 'no output';
   $('model-output-status').textContent = output ? ({ streaming: streamDisconnected ? 'Reconnecting · last received output' : 'Streaming', complete: 'Complete', failed: `Failed · ${partial}`, stopped: `Stopped · ${partial}` }[output.status] ?? 'Unavailable') : 'Not run';
+  if (!$('run-inspector').open || $('model-transcript').hidden) { $('model-output').hidden = true; $('model-output').textContent = ''; return; }
   $('model-output-source').hidden = !output;
-  $('model-output-source').textContent = output ? `${output.title} · ${when(output.atUtc)}` : '';
+  if (output && changed('transcript-source', [output.entryId, output.origin, output.title, output.atUtc, snapshot.entries.some(row => row.id === output.entryId && row.origin === output.origin)])) {
+    const time = element('time', when(output.atUtc)); time.dateTime = output.atUtc;
+    $('model-output-source').replaceChildren(sourceButton(output), time);
+  }
   $('model-output').hidden = !output?.text;
-  $('model-output').textContent = output?.text ?? '';
+  if ($('model-output').textContent !== (output?.text ?? '')) $('model-output').textContent = output?.text ?? '';
   $('model-output-empty').hidden = Boolean(output?.text);
-  if (output && !output.text) $('model-output-empty').textContent = output.status === 'streaming' ? 'Waiting for the model’s first response token.' : 'The model returned no response.';
+  if (!output?.text) $('model-output-empty').textContent = !output ? 'No model response recorded.' : output.status === 'streaming' ? 'Waiting for the first response.' : 'The model returned no response.';
+}
+for (const button of document.querySelectorAll('[data-inspect]')) {
+  button.addEventListener('click', () => {
+    $('inspector-heading').textContent = button.textContent;
+    $('model-transcript').hidden = button.dataset.inspect !== 'model-transcript';
+    $('operations-log').hidden = button.dataset.inspect !== 'operations-log';
+    $('run-inspector').showModal();
+    if (snapshot) renderTranscript();
+  });
+}
+$('close-inspector').addEventListener('click', () => $('run-inspector').close());
+$('run-inspector').addEventListener('close', () => { if (snapshot) renderTranscript(); });
 
+function renderProcess() {
+  renderTranscript();
   const state = processingPresentation(snapshot.listener, snapshot.settings.enabled);
-  $('process-state').textContent = state.label; $('process-state').className = `process-state ${state.tone}${state.busy ? ' busy' : ''}`;
+  if ($('process-state').textContent !== state.label) $('process-state').textContent = state.label;
+  $('process-state').className = `process-state ${state.tone}${state.busy ? ' busy' : ''}`;
   $('process-message').textContent = state.message;
   const events = (snapshot.listener.events ?? []).slice(-30);
   if (!changed('process-events', events)) return;
@@ -237,17 +258,31 @@ function renderProcess() {
     item.append(time, element('span', processStage(row.stage), 'event-stage'), body); return item;
   }));
   list.hidden = !events.length;
+  $('process-events-empty').hidden = Boolean(events.length);
   if (atBottom) list.scrollTop = list.scrollHeight;
 }
 
 function renderDecisions() {
   const latest = latestDecisions(snapshot.activity, snapshot.listener.lastModelOutput);
-  if (!changed('decisions', latest)) return;
-  $('latest-decisions').replaceChildren(...latest.map(row => {
+  const attempts = latest.map(row => row.attemptId && snapshot.attempts.find(attempt => attempt.id === row.attemptId));
+  if (!changed('decisions', [latest, attempts.map(attempt => attempt && Boolean(attempt.receipt?.lines?.length))])) return;
+  $('latest-decisions').replaceChildren(...latest.map((row, index) => {
     const item = element('article', null, 'decision-row'), source = element('div', null, 'decision-source'), status = activityStatus(row);
-    const time = element('time', when(row.atUtc)); time.dateTime = row.atUtc;
-    source.append(sourceButton(row), time);
-    item.append(source, pill(status.label, status.tone), element('p', row.reason || 'Processing this entry.')); return item;
+    const attempt = attempts[index], modelDecision = row.status === 'observed' && ['ignore', 'review', 'candidate'].includes(row.decision);
+    const provenance = element('span', null, 'decision-provenance'), time = element('time', when(row.atUtc)); time.dateTime = row.atUtc;
+    provenance.append(time);
+    if (row.version != null) provenance.append(element('span', `v${formatCount(row.version)}`));
+    source.append(sourceButton(row), provenance);
+    const description = element('div', null, 'decision-description');
+    if (modelDecision) description.append(element('small', 'Model review'));
+    description.append(element('p', row.reason || 'Processing this entry.'));
+    if (attempt && row.id) {
+      const receipt = element('button', attempt.receipt?.lines?.length ? 'View receipt' : 'View request', 'link-button');
+      receipt.type = 'button';
+      receipt.addEventListener('click', () => { switchView('activity'); $(`activity-${row.id}`)?.focus(); });
+      description.append(receipt);
+    }
+    item.append(source, pill(status.label, status.tone), description); return item;
   }));
   if (!latest.length) $('latest-decisions').append(element('p', 'Published model summaries and order results will appear here after a check.', 'empty'));
 }
@@ -319,7 +354,14 @@ function renderEntries() {
     button.addEventListener('click', () => { selected = row; renderEntries(); renderDetail(); }); return button;
   }));
   if (!rows.length) $('entry-list').append(element('p', 'Nothing here yet.', 'empty'));
-  if (selected) { const current = snapshot.entries.find(row => row.id === selected.id && row.origin === selected.origin); if (current) { selected = current; renderDetail(); } }
+  if (selected) {
+    selected = snapshot.entries.find(row => row.id === selected.id && row.origin === selected.origin) ?? null;
+    if (selected) renderDetail();
+    else {
+      renderKeys.delete('selected-entry');
+      $('entry-detail').replaceChildren(element('p', 'Pick an entry or write a new one.', 'empty'));
+    }
+  }
 }
 function receiptDetailsCell(line) {
   const cell = element('td', null, 'wrap'), details = receiptDetails(line);
@@ -354,11 +396,20 @@ function positionsTable(positions, withResults = false) {
 }
 function renderDetail() {
   if (!selected) return;
-  const row = selected, detail = $('entry-detail'); detail.replaceChildren(element('h2', row.title));
+  const row = selected, notebook = snapshot.notebooks.find(item => item.id === row.notebookId && item.origin === row.origin);
+  if (!changed('selected-entry', [row, notebook?.name])) return;
+  const detail = $('entry-detail'), header = element('header', null, 'entry-detail-head');
+  const title = element('div');
+  if (notebook) title.append(element('p', notebook.name, 'entry-notebook-name'));
+  const heading = element('h2', row.title); heading.tabIndex = -1; title.append(heading);
+  const button = element('button', row.origin === 'local' ? 'Edit' : 'Copy to local'); button.type = 'button';
+  button.addEventListener('click', () => showEditor(row.origin === 'local' ? row : { ...row, id: null, version: null }));
+  header.append(title, button); detail.replaceChildren(header);
   const meta = element('div', null, 'detail-meta'), status = entryStatus(row);
   meta.append(pill(row.status, row.status === 'watching' ? 'info' : ''));
   if (status) meta.append(pill(status.label, status.tone));
-  meta.append(pill(row.origin), pill(`v${formatCount(row.version)}`), pill(when(row.updatedAtUtc)));
+  const time = element('time', when(row.updatedAtUtc)); time.dateTime = row.updatedAtUtc;
+  meta.append(element('span', `${row.origin} · v${formatCount(row.version)}`), time);
   const prose = element('div', null, 'note-body'); renderMarkdown(prose, (row.body || '').replace(TICKET_FENCE, '').trim() || ' ');
   detail.append(meta);
   if (row.handoff) {
@@ -390,8 +441,6 @@ function renderDetail() {
     table.append(tbody); wrap.append(table); section.append(wrap); detail.append(section);
   }
   detail.append(prose);
-  const actions = element('div', null, 'detail-actions'), button = element('button', row.origin === 'local' ? 'Edit' : 'Copy to local'); button.type = 'button';
-  button.addEventListener('click', () => showEditor(row.origin === 'local' ? row : { ...row, id: null, version: null })); actions.append(button); detail.append(actions);
 }
 function showEditor(row = null) {
   editing = row?.id ? row : null; entryRetryKey = crypto.randomUUID();
@@ -444,6 +493,7 @@ function renderActivity() {
   const attempts = new Map(snapshot.attempts.map(row => [row.id, row]));
   $('activity-list').replaceChildren(...snapshot.activity.map(row => {
     const card = element('article', null, 'activity-card'), head = element('div', null, 'activity-head'), status = activityStatus(row), attempt = row.attemptId ? attempts.get(row.attemptId) : null;
+    card.id = `activity-${row.id}`; card.tabIndex = -1;
     const time = element('time', when(row.atUtc)); time.dateTime = row.atUtc;
     const title = element('h2'); title.append(sourceButton(row));
     head.append(title, pill(status.label, status.tone), time);
